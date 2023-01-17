@@ -1,4 +1,4 @@
-from src.api.db import DataRegistryDB
+from dataregistry.api.db import DataRegistryDB
 from alembic import context
 from logging.config import fileConfig
 

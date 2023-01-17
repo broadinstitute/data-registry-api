@@ -15,6 +15,7 @@ It can also aid in operating the API as close to zero downtime while allowing da
 (3) edit both the upgrade and downgrade bits
     e.g. CREATE TABLE records(...) in the upgrade, DROP TABLE records in the downgrade
 (4) To apply the migration, run `alembic upgrade head`.
+(5) To downgrade a migration (or more), run `alembic downgrade -<n>` where <n> is the number of migrations to revert
 
 # Notes
 
@@ -28,3 +29,18 @@ It can also aid in operating the API as close to zero downtime while allowing da
         (i) To add a column, first change any API call to be agnostic to the additional column
         (ii) Run the migration
         (iii) Then change the API to use the additional column wherever needed
+
+# Running the server
+
+At the moment there are no env vars. The AWS credentials are stored directly on the server it is running on.
+The database configuration is fetched from AWS secrets manager.
+And the s3 bucket and secrets id are both hardcoded at the moment.
+
+To run the server simply:
+`python3.8 -m dataregistry.main serve`
+
+To test in a separate window (running it locally) you can use python to hit the server a la:
+`requests.post('http://localhost:5000/api/records', json={"name": "test 13", "description": "test description"})`
+
+For testing currently change the database and s3 bucket
+TODO: These should default to a dev version and on the server itself it should have an override to point to prod
