@@ -9,7 +9,6 @@ class DataRegistryDB:
         self.region = 'us-east-1'
         self.config = None
         self.url = None
-        self.engine = None
 
     def get_config(self):
         if self.config is None:
@@ -30,6 +29,4 @@ class DataRegistryDB:
             )
 
     def get_engine(self):
-        if self.engine is None:
-            self.engine = sqlalchemy.create_engine(self.get_url())
-        return self.engine
+        return sqlalchemy.create_engine(self.get_url())
