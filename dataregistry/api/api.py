@@ -1,5 +1,5 @@
 from botocore.exceptions import ClientError
-from dataregistry.api.db import DataRegistryDB
+from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api import query
 import fastapi
 import sqlalchemy
@@ -8,7 +8,7 @@ import sqlalchemy
 router = fastapi.APIRouter()
 
 # connect to database
-engine = DataRegistryDB().get_engine()
+engine = DataRegistryReadWriteDB().get_engine()
 
 
 @router.get('/records', response_class=fastapi.responses.ORJSONResponse)

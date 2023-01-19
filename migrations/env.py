@@ -1,4 +1,4 @@
-from dataregistry.api.db import DataRegistryDB
+from dataregistry.api.db import DataRegistryMigrationDB
 from alembic import context
 from logging.config import fileConfig
 
@@ -21,7 +21,7 @@ target_metadata = None
 # can be acquired:
 # my_important_option = config.get_main_option("my_important_option")
 # ... etc.
-db = DataRegistryDB()
+db = DataRegistryMigrationDB()
 
 
 def run_migrations_offline() -> None:
