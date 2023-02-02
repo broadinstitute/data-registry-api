@@ -1,8 +1,12 @@
+import json
+
 from dataregistry.api.domain import Record
 from dataregistry.api import s3
 import datetime
 import re
 from sqlalchemy.orm import Session
+
+from dataregistry.api.model import RecordRequest
 
 
 def get_all_records(engine):
@@ -22,7 +26,7 @@ def get_record(engine, index):
             r.id, 
             r.s3_bucket_id, 
             r.name, 
-            r.description, 
+            r.metadata, 
             r.created_at, 
             r.deleted_at_unix_time FROM records r WHERE r.id = {} 
         """.format(index)
@@ -38,17 +42,17 @@ def get_record(engine, index):
 
 def convert_name_to_s3_bucket_id(name):
     dt = datetime.datetime.now()
-    return '{}-{}'.format(re.sub('[^\w_-]+', '', name.replace(' ', '-')), dt.strftime('%Y-%m-%d-%H-%M-%S'))
+    return '{}-{}'.format(re.sub('[^\w-]+', '', name.replace(' ', '-')), dt.strftime('%Y-%m-%d-%H-%M-%S'))
 
 
-def insert_record(engine, data):
-    s3_record_id = convert_name_to_s3_bucket_id(data['name'])
+def insert_record(engine, data: RecordRequest):
+    s3_record_id = convert_name_to_s3_bucket_id(data.name)
     session = Session(engine)
     with session.begin():
         session.execute("""
-            INSERT INTO records (s3_bucket_id, name, description) VALUES("{}", "{}", "{}")
-        """.format(s3_record_id, data['name'], data['description']))
-        s3.create_record_directory(s3_record_id)
+            INSERT INTO records (s3_bucket_id, name, metadata) VALUES("{}", "{}", '{}')
+        """.format(s3_record_id, data.name, json.dumps(data.metadata)))
+        # s3.create_record_directory(s3_record_id)
     return s3_record_id
 
 

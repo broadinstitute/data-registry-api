@@ -6,3 +6,5 @@ orjson
 pymysql
 sqlalchemy
 uvicorn
+alembic
+pydantic

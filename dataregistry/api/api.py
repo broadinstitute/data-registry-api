@@ -1,8 +1,10 @@
-from botocore.exceptions import ClientError
-from dataregistry.api.db import DataRegistryReadWriteDB
-from dataregistry.api import query
 import fastapi
 import sqlalchemy
+from botocore.exceptions import ClientError
+
+from dataregistry.api import query
+from dataregistry.api.db import DataRegistryReadWriteDB
+from dataregistry.api.model import RecordRequest
 
 # create flask app; this will load .env
 router = fastapi.APIRouter()
@@ -32,16 +34,15 @@ async def api_records(index: int):
 
 
 @router.post('/records', response_class=fastapi.responses.ORJSONResponse)
-async def api_record_post(req: fastapi.Request):
+async def api_record_post(req: RecordRequest):
     """
     The body of the request contains the information to insert into the records db
     """
     try:
-        record_info = await req.json()
-        s3_record_id = query.insert_record(engine, record_info)
+        s3_record_id = query.insert_record(engine, req)
 
         return {
-            'name': record_info['name'],
+            'name': req.name,
             's3_record_id': s3_record_id
         }
     except sqlalchemy.exc.IntegrityError as e:

@@ -1,3 +1,5 @@
+import os
+
 from boto3.session import Session
 import json
 import sqlalchemy
@@ -20,19 +22,22 @@ class DataRegistryDB:
 
     def get_url(self):
         if self.url is None:
-            self.config = self.get_config()
-            self.url = '{engine}://{username}:{password}@{host}:{port}/{db}'.format(
-                engine=self.config['engine'] + ('+pymysql' if self.config['engine'] == 'mysql' else ''),
-                username=self.config[self.username_field],
-                password=self.config[self.password_field],
-                host=self.config['host'],
-                port=self.config['port'],
-                db=self.config['dbname']
-            )
+            if os.getenv('DATA_REGISTRY_DB_CONNECTION'):
+                self.url = os.getenv('DATA_REGISTRY_DB_CONNECTION')
+            else:
+                self.config = self.get_config()
+                self.url = '{engine}://{username}:{password}@{host}:{port}/{db}'.format(
+                    engine=self.config['engine'] + ('+pymysql' if self.config['engine'] == 'mysql' else ''),
+                    username=self.config[self.username_field],
+                    password=self.config[self.password_field],
+                    host=self.config['host'],
+                    port=self.config['port'],
+                    db=self.config['dbname']
+                )
         return self.url
 
     def get_engine(self):
-        return sqlalchemy.create_engine(self.get_url())
+        return sqlalchemy.create_engine(self.get_url(), pool_size=3, pool_pre_ping=True, pool_recycle=7200)
 
 
 class DataRegistryMigrationDB(DataRegistryDB):
