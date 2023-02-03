@@ -4,6 +4,8 @@ from boto3.session import Session
 import json
 import sqlalchemy
 
+from dataregistry.api.config import APP_CONFIG
+
 
 class DataRegistryDB:
     def __init__(self, username_field, password_field):
@@ -14,18 +16,12 @@ class DataRegistryDB:
         self.config = None
         self.url = None
 
-    def get_config(self):
-        if self.config is None:
-            client = Session().client('secretsmanager', region_name=self.region)
-            self.config = json.loads(client.get_secret_value(SecretId=self.secret_id)['SecretString'])
-        return self.config
-
     def get_url(self):
         if self.url is None:
             if os.getenv('DATA_REGISTRY_DB_CONNECTION'):
                 self.url = os.getenv('DATA_REGISTRY_DB_CONNECTION')
             else:
-                self.config = self.get_config()
+                self.config = APP_CONFIG
                 self.url = '{engine}://{username}:{password}@{host}:{port}/{db}'.format(
                     engine=self.config['engine'] + ('+pymysql' if self.config['engine'] == 'mysql' else ''),
                     username=self.config[self.username_field],
