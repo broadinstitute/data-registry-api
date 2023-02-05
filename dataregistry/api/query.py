@@ -52,7 +52,7 @@ def insert_record(engine, data: RecordRequest):
         session.execute("""
             INSERT INTO records (s3_bucket_id, name, metadata) VALUES("{}", "{}", '{}')
         """.format(s3_record_id, data.name, json.dumps(data.metadata)))
-        # s3.create_record_directory(s3_record_id)
+        s3.create_record_directory(s3_record_id)
     return s3_record_id
 
 
