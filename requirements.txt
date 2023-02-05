@@ -9,3 +9,4 @@ uvicorn
 alembic
 pydantic
 cryptography
+python-multipart
