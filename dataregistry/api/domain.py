@@ -15,7 +15,7 @@ class Record:
             "id": self.id,
             "s3_bucket_id": self.s3_bucket_id,
             "name": self.name,
-            "metadata": json.loads(self.metadata),
+            "metadata": json.loads(self.metadata) if self.metadata else None,
             "created_at": self.created_at,
             "deleted_at_unix_time": self.deleted_at_unix_time
         }
