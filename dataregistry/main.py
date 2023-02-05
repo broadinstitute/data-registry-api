@@ -1,5 +1,4 @@
 import click
-import fastapi
 import uvicorn
 
 
