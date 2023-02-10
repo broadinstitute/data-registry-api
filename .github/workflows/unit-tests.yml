@@ -1,0 +1,51 @@
+name: Tests
+
+on:
+  push:
+    branches:
+      - "main"
+
+  pull_request:
+    branches:
+      - "*"
+
+jobs:
+  lint:
+    name: Run tests
+
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        python-version: ["3.8"]
+
+
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Start MySQL
+        run: |
+          sh docker_db/docker_db.sh start
+
+      - name: Show dependencies
+        run: | 
+          pip list
+
+      - name: Test with pytest
+        env: # Or as an environment variable
+          DATA_REGISTRY_API_KEY: ${{ secrets.API_KEY }}
+        run: |
+          pytest
+
+      - name: Stop MySQL
+        run: |
+          sh docker_db/docker_db.sh stop
+

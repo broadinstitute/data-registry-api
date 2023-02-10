@@ -1,7 +1,6 @@
 import json
 
 from dataregistry.api.domain import Record
-from dataregistry.api import s3
 import datetime
 import re
 from sqlalchemy.orm import Session
@@ -42,7 +41,7 @@ def get_record(engine, index):
 
 def convert_name_to_s3_bucket_id(name):
     dt = datetime.datetime.now()
-    return '{}-{}'.format(re.sub('[^\w-]+', '', name.replace(' ', '-')), dt.strftime('%Y-%m-%d-%H-%M-%S'))
+    return '{}-{}'.format(re.sub(r'[^\w-]+', '', name.replace(' ', '-')), dt.strftime('%Y-%m-%d-%H-%M-%S'))
 
 
 def insert_record(engine, data: RecordRequest):
@@ -52,7 +51,6 @@ def insert_record(engine, data: RecordRequest):
         session.execute("""
             INSERT INTO records (s3_bucket_id, name, metadata) VALUES("{}", "{}", '{}')
         """.format(s3_record_id, data.name, json.dumps(data.metadata)))
-        s3.create_record_directory(s3_record_id)
     return s3_record_id
 
 
@@ -65,5 +63,4 @@ def delete_record(engine, index):
             UPDATE records r SET r.deleted_at_unix_time = UNIX_TIMESTAMP() WHERE r.id = {} 
             """.format(index)
         )
-        s3.delete_record_directory(s3_record_id)
     return s3_record_id
