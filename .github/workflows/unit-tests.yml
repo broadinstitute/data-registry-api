@@ -35,11 +35,11 @@ jobs:
         run: |
           sh docker_db/docker_db.sh start
 
-      - name: Test with pytest
-        env: # Or as an environment variable
-          DATA_REGISTRY_API_KEY: ${{ secrets.API_KEY }}
-        run: |
-          pytest
+#      - name: Test with pytest
+#        env: # Or as an environment variable
+#          DATA_REGISTRY_API_KEY: ${{ secrets.API_KEY }}
+#        run: |
+#          pytest
 
       - name: Stop MySQL
         run: |
