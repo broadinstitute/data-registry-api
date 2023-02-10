@@ -41,3 +41,7 @@ jobs:
         run: |
           pytest
 
+      - name: Stop MySQL
+        run: |
+          sh docker_db/docker_db.sh stop
+
