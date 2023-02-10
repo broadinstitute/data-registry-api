@@ -11,3 +11,4 @@ pydantic
 cryptography
 python-multipart
 pytest
+httpx
