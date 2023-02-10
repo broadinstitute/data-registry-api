@@ -1,7 +1,6 @@
 import json
 
 from dataregistry.api.domain import Record
-from dataregistry.api import s3
 import datetime
 import re
 from sqlalchemy.orm import Session
@@ -64,5 +63,4 @@ def delete_record(engine, index):
             UPDATE records r SET r.deleted_at_unix_time = UNIX_TIMESTAMP() WHERE r.id = {} 
             """.format(index)
         )
-        s3.delete_record_directory(s3_record_id)
     return s3_record_id

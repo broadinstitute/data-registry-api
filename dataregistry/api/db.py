@@ -1,11 +1,9 @@
 import os
 
-from boto3.session import Session
-import json
 import sqlalchemy
 from sqlalchemy.orm import sessionmaker
 
-from dataregistry.api.config import APP_CONFIG
+from dataregistry.api.config import get_sensitive_config
 
 
 class DataRegistryDB:
@@ -22,7 +20,7 @@ class DataRegistryDB:
             if os.getenv('DATA_REGISTRY_DB_CONNECTION'):
                 self.url = os.getenv('DATA_REGISTRY_DB_CONNECTION')
             else:
-                self.config = APP_CONFIG
+                self.config = get_sensitive_config()
                 self.url = '{engine}://{username}:{password}@{host}:{port}/{db}'.format(
                     engine=self.config['engine'] + ('+pymysql' if self.config['engine'] == 'mysql' else ''),
                     username=self.config[self.username_field],

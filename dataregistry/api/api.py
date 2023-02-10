@@ -1,4 +1,5 @@
 import logging
+import os
 
 import fastapi
 import sqlalchemy
@@ -8,7 +9,7 @@ from fastapi.security.api_key import APIKeyHeader
 from starlette.status import HTTP_403_FORBIDDEN
 
 from dataregistry.api import query, s3
-from dataregistry.api.config import APP_CONFIG
+from dataregistry.api.config import get_sensitive_config
 from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api.model import RecordRequest
 
@@ -20,7 +21,8 @@ logger = logging.getLogger(__name__)
 # connect to database
 engine = DataRegistryReadWriteDB().get_engine()
 api_key_header = APIKeyHeader(name="access_token", auto_error=False)
-valid_api_key = APP_CONFIG['apiKey']
+valid_api_key = os.getenv('DATA_REGISTRY_API_KEY') if os.getenv('DATA_REGISTRY_API_KEY') \
+    else get_sensitive_config()['apiKey']
 
 logger.info("Starting API")
 
