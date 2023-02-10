@@ -6,13 +6,13 @@ from alembic.config import Config
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
-from dataregistry.api.db import DataRegistryReadWriteDB
-
 # allow for a unit test db and a local dev db if desired
 if environ.get('DATA_REGISTRY_TEST_DB_CONNECTION'):
     environ['DATA_REGISTRY_DB_CONNECTION'] = environ['DATA_REGISTRY_TEST_DB_CONNECTION']
 else:
     environ['DATA_REGISTRY_DB_CONNECTION'] = 'mysql+pymysql://dataregistry:dataregistry@localhost:3307/dataregistry'
+
+from dataregistry.api.db import DataRegistryReadWriteDB
 
 from dataregistry.server import app
 

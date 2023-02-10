@@ -43,6 +43,3 @@ class DataRegistryMigrationDB(DataRegistryDB):
 class DataRegistryReadWriteDB(DataRegistryDB):
     def __init__(self):
         DataRegistryDB.__init__(self, 'registryUsername', 'registryPassword')
-
-
-SessionLocal = sessionmaker(autocommit=True, autoflush=True, bind=DataRegistryReadWriteDB().get_engine())
