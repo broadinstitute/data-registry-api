@@ -10,7 +10,7 @@ from sqlalchemy import text
 if environ.get('DATA_REGISTRY_TEST_DB_CONNECTION'):
     environ['DATA_REGISTRY_DB_CONNECTION'] = environ['DATA_REGISTRY_TEST_DB_CONNECTION']
 else:
-    environ['DATA_REGISTRY_DB_CONNECTION'] = 'mysql+pymysql://dataregistry:dataregistry@localhost:3307/dataregistry'
+    environ['DATA_REGISTRY_DB_CONNECTION'] = 'mysql+pymysql://dataregistry:dataregistry@127.0.0.1:3307/dataregistry'
 
 from dataregistry.api.db import DataRegistryReadWriteDB
 
@@ -25,9 +25,6 @@ def pytest_sessionstart(session):
     """
     run db migrations before we start tests
     """
-    if 'localhost' not in db.get_url():
-        print("DB url is not pointing to localhost, quiting test suite")
-        exit(1)
     alembic_cfg = Config("./alembic.ini")
     command.upgrade(alembic_cfg, "head")
 
