@@ -42,7 +42,7 @@ def get_record(engine, index):
 
 def convert_name_to_s3_bucket_id(name):
     dt = datetime.datetime.now()
-    return '{}-{}'.format(re.sub('[^\w-]+', '', name.replace(' ', '-')), dt.strftime('%Y-%m-%d-%H-%M-%S'))
+    return '{}-{}'.format(re.sub(r'[^\w-]+', '', name.replace(' ', '-')), dt.strftime('%Y-%m-%d-%H-%M-%S'))
 
 
 def insert_record(engine, data: RecordRequest):

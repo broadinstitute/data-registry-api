@@ -10,3 +10,4 @@ alembic
 pydantic
 cryptography
 python-multipart
+pytest
