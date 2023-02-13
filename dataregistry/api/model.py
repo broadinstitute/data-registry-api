@@ -67,9 +67,9 @@ class Record(BaseModel):
     data_submitter_email: EmailStr
     institution: str
     sex: Sex
-    global_sample_size: float
-    t1d_sample_size: float
-    bmi_adj_sample_size: float
+    global_sample_size: int
+    t1d_sample_size: int
+    bmi_adj_sample_size: int
     status: ResearchStatus = Field(title="Where the research is in the publication process")
     additional_data: str
 

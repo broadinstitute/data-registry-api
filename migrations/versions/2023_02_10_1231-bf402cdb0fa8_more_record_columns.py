@@ -18,19 +18,19 @@ depends_on = None
 
 def upgrade() -> None:
     conn = op.get_bind()
-    conn.execute(text("ALTER TABLE records add column data_source_type text"))
+    conn.execute(text("ALTER TABLE records add column data_source_type varchar(10)"))
     conn.execute(text("ALTER TABLE records add column data_source text"))
-    conn.execute(text("ALTER TABLE records add column data_type text"))
-    conn.execute(text("ALTER TABLE records add column genome_build text"))
-    conn.execute(text("ALTER TABLE records add column ancestry text"))
+    conn.execute(text("ALTER TABLE records add column data_type varchar(10)"))
+    conn.execute(text("ALTER TABLE records add column genome_build varchar(10)"))
+    conn.execute(text("ALTER TABLE records add column ancestry varchar(10)"))
     conn.execute(text("ALTER TABLE records add column data_submitter text"))
     conn.execute(text("ALTER TABLE records add column data_submitter_email text"))
     conn.execute(text("ALTER TABLE records add column institution text"))
-    conn.execute(text("ALTER TABLE records add column sex text"))
-    conn.execute(text("ALTER TABLE records add column global_sample_size text"))
-    conn.execute(text("ALTER TABLE records add column t1d_sample_size text"))
-    conn.execute(text("ALTER TABLE records add column bmi_adj_sample_size text"))
-    conn.execute(text("ALTER TABLE records add column status varchar(100)"))
+    conn.execute(text("ALTER TABLE records add column sex varchar(10)"))
+    conn.execute(text("ALTER TABLE records add column global_sample_size int"))
+    conn.execute(text("ALTER TABLE records add column t1d_sample_size int"))
+    conn.execute(text("ALTER TABLE records add column bmi_adj_sample_size int"))
+    conn.execute(text("ALTER TABLE records add column status varchar(10)"))
     conn.execute(text("ALTER TABLE records add column additional_data text"))
 
 
