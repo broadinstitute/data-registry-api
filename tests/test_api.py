@@ -1,7 +1,10 @@
 import os
 
+import pytest
 from fastapi.testclient import TestClient
 from starlette.status import HTTP_422_UNPROCESSABLE_ENTITY, HTTP_200_OK
+
+from dataregistry.api.model import Ancestry, DataFormat
 
 api_key = os.getenv('DATA_REGISTRY_API_KEY')
 
@@ -55,6 +58,14 @@ def test_post_then_delete_records(api_client: TestClient):
     records_in_db = api_client.get(api_path, headers={"access_token": api_key}).json()
     to_delete = next((record for record in records_in_db if record['name'] == 'to-delete'), None)
     assert to_delete is None
+
+
+@pytest.mark.parametrize("df", DataFormat.__members__.values())
+def test_valid_data_formats_post(api_client: TestClient, df: DataFormat):
+    new_record = example_json.copy()
+    new_record['data_format'] = df
+    response = api_client.post(api_path, headers={"access_token": api_key}, json=new_record)
+    assert response.status_code == HTTP_200_OK
 
 
 def test_invalid_record_post(api_client: TestClient):
