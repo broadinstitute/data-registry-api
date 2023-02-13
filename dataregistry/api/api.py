@@ -48,8 +48,7 @@ async def api_records():
             dependencies=[fastapi.Depends(get_api_key)])
 async def api_records(index: int):
     try:
-        record = query.get_record(engine, index)
-        return record.to_json()
+        return query.get_record(engine, index)
     except KeyError:
         raise fastapi.HTTPException(status_code=400, detail=f'Invalid index: {index}')
     except ValueError as e:
