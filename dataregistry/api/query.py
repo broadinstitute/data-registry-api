@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from dataregistry.api.model import Record, SavedRecord
 
 
-def get_all_records(engine) -> list[SavedRecord]:
+def get_all_records(engine) -> list:
     results = engine.execute(
         """
         SELECT s3_bucket_id, name, metadata, data_source_type, data_source, data_type, genome_build,
