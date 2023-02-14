@@ -14,7 +14,7 @@ valid_api_key = os.getenv('DATA_REGISTRY_API_KEY') if os.getenv('DATA_REGISTRY_A
 
 async def verify_token(access_token: str = Header()):
     if access_token != valid_api_key:
-        raise HTTPException(status_code=403, detail="access header invalid")
+        raise HTTPException(status_code=403, detail="access-token header invalid")
 
 
 # create web server
