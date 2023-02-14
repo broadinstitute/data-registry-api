@@ -1,42 +1,25 @@
 import logging
-import os
 
 import fastapi
 import sqlalchemy
 from botocore.exceptions import ClientError
 from fastapi import UploadFile
-from fastapi.security.api_key import APIKeyHeader
-from starlette.status import HTTP_403_FORBIDDEN
 
 from dataregistry.api import query, s3
-from dataregistry.api.config import get_sensitive_config
 from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api.model import Record
 
 router = fastapi.APIRouter()
 
-
 # get root logger
 logger = logging.getLogger(__name__)
 # connect to database
 engine = DataRegistryReadWriteDB().get_engine()
-api_key_header = APIKeyHeader(name="access_token", auto_error=False)
-valid_api_key = os.getenv('DATA_REGISTRY_API_KEY') if os.getenv('DATA_REGISTRY_API_KEY') \
-    else get_sensitive_config()['apiKey']
 
 logger.info("Starting API")
 
 
-async def get_api_key(request_api_key: str = fastapi.Security(api_key_header)):
-    if request_api_key == valid_api_key:
-        return api_key_header
-    else:
-        raise fastapi.HTTPException(
-            status_code=HTTP_403_FORBIDDEN, detail="Could not validate API KEY"
-        )
-
-
-@router.get('/records', response_class=fastapi.responses.ORJSONResponse, dependencies=[fastapi.Depends(get_api_key)])
+@router.get('/records', response_class=fastapi.responses.ORJSONResponse)
 async def api_records():
     try:
         return query.get_all_records(engine)
@@ -44,8 +27,7 @@ async def api_records():
         raise fastapi.HTTPException(status_code=400, detail=str(e))
 
 
-@router.get('/records/{index}', response_class=fastapi.responses.ORJSONResponse,
-            dependencies=[fastapi.Depends(get_api_key)])
+@router.get('/records/{index}', response_class=fastapi.responses.ORJSONResponse)
 async def api_records(index: int):
     try:
         return query.get_record(engine, index)
@@ -55,7 +37,7 @@ async def api_records(index: int):
         raise fastapi.HTTPException(status_code=400, detail=str(e))
 
 
-@router.post("/uploadfile/{recordid}", dependencies=[fastapi.Depends(get_api_key)])
+@router.post("/uploadfile/{recordid}")
 async def upload_file_for_record(record_name: str, file: UploadFile):
     try:
         upload = s3.initiate_multi_part(record_name, file.filename)
@@ -78,7 +60,7 @@ async def upload_file_for_record(record_name: str, file: UploadFile):
     return {"message": f"Successfully uploaded {file.filename}"}
 
 
-@router.post('/records', response_class=fastapi.responses.ORJSONResponse, dependencies=[fastapi.Depends(get_api_key)])
+@router.post('/records', response_class=fastapi.responses.ORJSONResponse)
 async def api_record_post(req: Record):
     """
     The body of the request contains the information to insert into the records db
@@ -96,8 +78,7 @@ async def api_record_post(req: Record):
         raise fastapi.HTTPException(status_code=400, detail=str(e))
 
 
-@router.delete('/records/{index}', response_class=fastapi.responses.ORJSONResponse,
-               dependencies=[fastapi.Depends(get_api_key)])
+@router.delete('/records/{index}', response_class=fastapi.responses.ORJSONResponse)
 async def api_record_delete(index: int):
     """
     Soft delete both the database (by setting the `deleted` field to the current timestamp)
