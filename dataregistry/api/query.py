@@ -4,6 +4,7 @@ import re
 
 from sqlalchemy.orm import Session
 
+from dataregistry.api import s3
 from dataregistry.api.model import Record, SavedRecord
 
 
@@ -63,6 +64,7 @@ def insert_record(engine, data: Record):
             :data_source, :data_type, :genome_build, :ancestry, :data_submitter, :data_submitter_email, :institution, 
             :sex, :global_sample_size, :t1d_sample_size, :bmi_adj_sample_size, :status, :additional_data)
         """, sql_params)
+        s3.create_record_directory(s3_record_id)
     return s3_record_id
 
 
@@ -75,4 +77,5 @@ def delete_record(engine, index):
             UPDATE records r SET r.deleted_at_unix_time = UNIX_TIMESTAMP() WHERE r.id = {} 
             """.format(index)
         )
+        s3.delete_record_directory(s3_record_id)
     return s3_record_id

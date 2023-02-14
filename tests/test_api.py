@@ -1,7 +1,9 @@
 import os
 
+import boto3
 import pytest
 from fastapi.testclient import TestClient
+from moto import mock_s3
 from starlette.status import HTTP_422_UNPROCESSABLE_ENTITY, HTTP_200_OK
 
 from dataregistry.api.model import DataFormat
@@ -38,14 +40,24 @@ def test_get_records(api_client: TestClient):
     assert len(response.json()) == 0
 
 
+@mock_s3
 def test_post_records(api_client: TestClient):
+    set_up_moto_bucket()
     response = api_client.post(api_path,
                                headers={ACCESS_TOKEN: api_key},
                                json=example_json)
     assert response.status_code == HTTP_200_OK
 
 
+def set_up_moto_bucket():
+    # We need to create the bucket since this is all in Moto's 'virtual' AWS account
+    conn = boto3.resource("s3", region_name="us-east-1")
+    conn.create_bucket(Bucket="dig-data-registry")
+
+
+@mock_s3
 def test_post_then_delete_records(api_client: TestClient):
+    set_up_moto_bucket()
     new_record = example_json.copy()
     new_record['name'] = 'to-delete'
     response = api_client.post(api_path,
@@ -62,7 +74,9 @@ def test_post_then_delete_records(api_client: TestClient):
     assert to_delete is None
 
 
+@mock_s3
 def test_post_then_retrieve_by_id(api_client: TestClient):
+    set_up_moto_bucket()
     new_record = example_json.copy()
     new_record['name'] = 'to-retrieve'
     response = api_client.post(api_path,
@@ -76,7 +90,9 @@ def test_post_then_retrieve_by_id(api_client: TestClient):
 
 
 @pytest.mark.parametrize("df", DataFormat.__members__.values())
+@mock_s3
 def test_valid_data_formats_post(api_client: TestClient, df: DataFormat):
+    set_up_moto_bucket()
     new_record = example_json.copy()
     new_record['data_format'] = df
     response = api_client.post(api_path, headers={ACCESS_TOKEN: api_key}, json=new_record)
