@@ -48,6 +48,7 @@ def test_post_records(api_client: TestClient):
                                json=example_json)
     assert response.status_code == HTTP_200_OK
 
+
 def set_up_moto_bucket():
     # We need to create the bucket since this is all in Moto's 'virtual' AWS account
     conn = boto3.resource("s3", region_name="us-east-1")
