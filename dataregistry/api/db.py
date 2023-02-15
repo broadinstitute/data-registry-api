@@ -1,7 +1,6 @@
 import os
 
 import sqlalchemy
-from sqlalchemy.orm import sessionmaker
 
 from dataregistry.api.config import get_sensitive_config
 
