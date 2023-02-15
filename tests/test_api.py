@@ -105,3 +105,10 @@ def test_invalid_record_post(api_client: TestClient):
     new_record['ancestry'] = 'bad-ancestry'
     response = api_client.post(api_path, headers={ACCESS_TOKEN: api_key}, json=new_record)
     assert response.status_code == HTTP_422_UNPROCESSABLE_ENTITY
+
+
+def test_post_invalid_phenotype_data(api_client: TestClient):
+    new_record = example_json.copy()
+    new_record['phenotypes'] = '{"foo": "bar"}'  # this is valid json but we want an array pydantic should enforce this
+    response = api_client.post(api_path, headers={ACCESS_TOKEN: api_key}, json=new_record)
+    assert response.status_code == HTTP_422_UNPROCESSABLE_ENTITY
