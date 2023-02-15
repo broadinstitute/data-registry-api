@@ -11,7 +11,7 @@ from starlette.status import HTTP_403_FORBIDDEN
 from dataregistry.api import query, s3
 from dataregistry.api.config import get_sensitive_config
 from dataregistry.api.db import DataRegistryReadWriteDB
-from dataregistry.api.model import RecordRequest
+from dataregistry.api.model import Record
 
 router = fastapi.APIRouter()
 
@@ -39,8 +39,7 @@ async def get_api_key(request_api_key: str = fastapi.Security(api_key_header)):
 @router.get('/records', response_class=fastapi.responses.ORJSONResponse, dependencies=[fastapi.Depends(get_api_key)])
 async def api_records():
     try:
-        records = query.get_all_records(engine)
-        return [record.to_json() for record in records]
+        return query.get_all_records(engine)
     except ValueError as e:
         raise fastapi.HTTPException(status_code=400, detail=str(e))
 
@@ -49,8 +48,7 @@ async def api_records():
             dependencies=[fastapi.Depends(get_api_key)])
 async def api_records(index: int):
     try:
-        record = query.get_record(engine, index)
-        return record.to_json()
+        return query.get_record(engine, index)
     except KeyError:
         raise fastapi.HTTPException(status_code=400, detail=f'Invalid index: {index}')
     except ValueError as e:
@@ -81,7 +79,7 @@ async def upload_file_for_record(record_name: str, file: UploadFile):
 
 
 @router.post('/records', response_class=fastapi.responses.ORJSONResponse, dependencies=[fastapi.Depends(get_api_key)])
-async def api_record_post(req: RecordRequest):
+async def api_record_post(req: Record):
     """
     The body of the request contains the information to insert into the records db
     """

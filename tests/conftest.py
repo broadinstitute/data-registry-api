@@ -29,7 +29,6 @@ def pytest_sessionstart(session):
     command.upgrade(alembic_cfg, "head")
 
 
-@pytest.fixture(scope="module", autouse=True)
 def before_each_test():
     """
     runs before each test
@@ -41,6 +40,7 @@ def before_each_test():
         con.execute(text("SET FOREIGN_KEY_CHECKS = 1"))
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def api_client():
+    before_each_test()
     return client
