@@ -66,6 +66,34 @@ def test_post_then_retrieve_by_id(api_client: TestClient):
     new_record = example_json.copy()
     new_record['name'] = 'to-retrieve'
     response = api_client.post(api_path,
+                               headers={"access_token": api_key},
+                               json=new_record)
+    assert response.status_code == HTTP_200_OK
+    records_in_db = api_client.get(api_path, headers={"access_token": api_key}).json()
+    to_retrieve = next((record for record in records_in_db if record['name'] == 'to-retrieve'), None)
+    response = api_client.get(f"{api_path}/{to_retrieve['id']}", headers={"access_token": api_key})
+    assert response.status_code == HTTP_200_OK
+
+
+@pytest.mark.parametrize("df", DataFormat.__members__.values())
+def test_valid_data_formats_post(api_client: TestClient, df: DataFormat):
+    new_record = example_json.copy()
+    new_record['data_format'] = df
+    response = api_client.post(api_path, headers={"access_token": api_key}, json=new_record)
+    assert response.status_code == HTTP_200_OK
+
+
+def test_invalid_record_post(api_client: TestClient):
+    new_record = example_json.copy()
+    new_record['ancestry'] = 'bad-ancestry'
+    response = api_client.post(api_path, headers={"access_token": api_key}, json=new_record)
+    assert response.status_code == HTTP_422_UNPROCESSABLE_ENTITY
+
+
+def test_post_then_retrieve_by_id(api_client: TestClient):
+    new_record = example_json.copy()
+    new_record['name'] = 'to-retrieve'
+    response = api_client.post(api_path,
                                headers={ACCESS_TOKEN: api_key},
                                json=new_record)
     assert response.status_code == HTTP_200_OK
