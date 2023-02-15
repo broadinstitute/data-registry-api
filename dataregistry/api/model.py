@@ -66,6 +66,7 @@ class Record(BaseModel):
     data_submitter: str
     data_submitter_email: EmailStr
     institution: str
+    phenotypes: list
     sex: Sex
     global_sample_size: int
     t1d_sample_size: int
@@ -91,6 +92,7 @@ class Record(BaseModel):
                 "bmi_adj_sample_size": 19,
                 "status": "open",
                 "additional_data": "Lorem ipsum..",
+                "phenotypes": ["T2D", "T1D"],
                 "metadata": {"some_key": "some_value"}
             }
         }

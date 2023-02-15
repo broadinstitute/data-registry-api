@@ -29,6 +29,7 @@ example_json = {
     "t1d_sample_size": 12,
     "bmi_adj_sample_size": 19,
     "status": "open",
+    "phenotypes": ["BUN", "SmokingFGint"],
     "additional_data": "Lorem ipsum..",
     "metadata": {"foo": 11}
 }
