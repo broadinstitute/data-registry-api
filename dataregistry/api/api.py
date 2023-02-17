@@ -38,7 +38,8 @@ async def api_records(index: int):
 
 
 @router.post("/uploadfile/{data_type}/{phenotype}/{record_name}/{record_id}")
-async def upload_file_for_record(data_type: str, phenotype: str, record_name: str, record_id: int, file: UploadFile):
+async def upload_file_for_record(data_type: str, phenotype: str, record_name: str, record_id: int, file: UploadFile,
+                                 response: fastapi.Response):
     try:
         file_path = f"{data_type}/{record_name}/{phenotype}"
         upload = s3.initiate_multi_part(file_path, file.filename)
@@ -56,6 +57,7 @@ async def upload_file_for_record(data_type: str, phenotype: str, record_name: st
         query.insert_data_set(engine, record_id, record_name, phenotype, data_type, file.filename)
     except Exception as e:
         logger.exception("There was a problem uploading file", e)
+        response.status_code = 400
         return {"message": "There was an error uploading the file"}
     finally:
         await file.close()

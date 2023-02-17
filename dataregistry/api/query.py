@@ -2,6 +2,7 @@ import datetime
 import json
 import re
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from dataregistry.api import s3
@@ -68,15 +69,14 @@ def insert_record(engine, data: Record):
     return s3_record_id
 
 
-def insert_data_set(engine, record_id: int, s3_bucket_id: str, description: str, data_type: str, name: str):
-    session = Session(engine)
-    with session.begin():
-        sql_params = {'record_id': record_id, 's3_bucket_id': s3_bucket_id, 'description': description,
+def insert_data_set(engine, record_id: int, s3_bucket_id: str, phenotype: str, data_type: str, name: str):
+    with engine.connect() as conn:
+        sql_params = {'record_id': record_id, 's3_bucket_id': s3_bucket_id, 'phenotype': phenotype,
                       'data_type': data_type, 'name': name}
-        session.execute("""
-            INSERT INTO datasets (record_id, s3_bucket_id, name, description, data_type) 
-            VALUES(:record_id, :s3_bucket_id, :name, :description, :data_type)
-        """, sql_params)
+        conn.execute(text("""
+            INSERT INTO datasets (record_id, s3_bucket_id, name, phenotype, data_type) 
+            VALUES(:record_id, :s3_bucket_id, :name, :phenotype, :data_type)
+        """), **sql_params)
 
 
 def delete_record(engine, index):
