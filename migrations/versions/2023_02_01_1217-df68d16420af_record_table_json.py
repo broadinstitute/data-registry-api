@@ -6,6 +6,7 @@ Create Date: 2023-02-01 12:17:13.325236
 
 """
 from alembic import op
+from sqlalchemy import text
 
 # revision identifiers, used by Alembic.
 revision = 'df68d16420af'
@@ -16,11 +17,11 @@ depends_on = None
 
 def upgrade() -> None:
     conn = op.get_bind()
-    conn.execute("ALTER TABLE records drop column description")
-    conn.execute("ALTER TABLE records add column metadata json")
+    conn.execute(text("ALTER TABLE records drop column description"))
+    conn.execute(text("ALTER TABLE records add column metadata json"))
 
 
 def downgrade() -> None:
     conn = op.get_bind()
-    conn.execute("ALTER TABLE records add column description varchar(45)")
-    conn.execute("ALTER TABLE records drop column metadata")
+    conn.execute(text("ALTER TABLE records add column description varchar(45)"))
+    conn.execute(text("ALTER TABLE records drop column metadata"))
