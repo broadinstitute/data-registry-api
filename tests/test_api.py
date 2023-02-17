@@ -91,13 +91,12 @@ def test_upload_file(api_client: TestClient):
     new_record = example_json.copy()
     record_name = 'file_upload_test'
     new_record['name'] = record_name
-    api_client.post(api_path,
-                    headers={ACCESS_TOKEN: api_key},
-                    json=new_record)
+    create_record_res = api_client.post(api_path, headers={ACCESS_TOKEN: api_key}, json=new_record)
+    assert create_record_res.status_code == HTTP_200_OK
     with open("tests/sample_upload.txt", "rb") as f:
-        upload_response = api_client.post(f"/api/uploadfile/GWAS/t1d/{record_name}/1", headers={ACCESS_TOKEN: api_key},
+        upload_response = api_client.post(f"/api/uploadfile/GWAS/t1d/{record_name}/{create_record_res.json()['record_id']}", headers={ACCESS_TOKEN: api_key},
                                           files={"file": f})
-        assert upload_response.status_code == 200
+        assert upload_response.status_code == HTTP_200_OK
     s3_conn = boto3.resource("s3", region_name="us-east-1")
     file_text = s3_conn.Object("dig-data-registry", f"GWAS/{record_name}/t1d/sample_upload.txt").get()["Body"].read()\
         .decode("utf-8")

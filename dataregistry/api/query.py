@@ -73,7 +73,8 @@ def insert_data_set(engine, record_id: int, s3_bucket_id: str, phenotype: str, d
         conn.execute(text("""
             INSERT INTO datasets (record_id, s3_bucket_id, name, phenotype, data_type) 
             VALUES(:record_id, :s3_bucket_id, :name, :phenotype, :data_type)
-        """), **sql_params)
+        """), sql_params)
+        conn.commit()
 
 
 def delete_record(engine, index):
