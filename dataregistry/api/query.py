@@ -2,6 +2,7 @@ import datetime
 import json
 import re
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from dataregistry.api import s3
@@ -66,6 +67,16 @@ def insert_record(engine, data: Record):
         """, sql_params)
         s3.create_record_directory(s3_record_id)
     return s3_record_id
+
+
+def insert_data_set(engine, record_id: int, s3_bucket_id: str, phenotype: str, data_type: str, name: str):
+    with engine.connect() as conn:
+        sql_params = {'record_id': record_id, 's3_bucket_id': s3_bucket_id, 'phenotype': phenotype,
+                      'data_type': data_type, 'name': name}
+        conn.execute(text("""
+            INSERT INTO datasets (record_id, s3_bucket_id, name, phenotype, data_type) 
+            VALUES(:record_id, :s3_bucket_id, :name, :phenotype, :data_type)
+        """), **sql_params)
 
 
 def delete_record(engine, index):

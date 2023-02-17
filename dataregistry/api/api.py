@@ -37,22 +37,27 @@ async def api_records(index: int):
         raise fastapi.HTTPException(status_code=400, detail=str(e))
 
 
-@router.post("/uploadfile/{recordid}")
-async def upload_file_for_record(record_name: str, file: UploadFile):
+@router.post("/uploadfile/{data_type}/{phenotype}/{record_name}/{record_id}")
+async def upload_file_for_record(data_type: str, phenotype: str, record_name: str, record_id: int, file: UploadFile,
+                                 response: fastapi.Response):
     try:
-        upload = s3.initiate_multi_part(record_name, file.filename)
+        file_path = f"{data_type}/{record_name}/{phenotype}"
+        upload = s3.initiate_multi_part(file_path, file.filename)
         part_number = 1
         parts = []
-        while contents := await file.read(1024 * 1024 * 5):
-            upload_part_response = s3.put_bytes(record_name, file.filename, contents, upload, part_number)
+        # read and put 50 mb at a time--is that too small?
+        while contents := await file.read(1024 * 1024 * 50):
+            upload_part_response = s3.put_bytes(file_path, file.filename, contents, upload, part_number)
             parts.append({
                 'PartNumber': part_number,
                 'ETag': upload_part_response['ETag']
             })
             part_number = part_number + 1
-        s3.finalize_upload(record_name, file.filename, parts, upload)
+        s3.finalize_upload(file_path, file.filename, parts, upload)
+        query.insert_data_set(engine, record_id, record_name, phenotype, data_type, file.filename)
     except Exception as e:
         logger.exception("There was a problem uploading file", e)
+        response.status_code = 400
         return {"message": "There was an error uploading the file"}
     finally:
         await file.close()
