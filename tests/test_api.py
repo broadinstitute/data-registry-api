@@ -4,7 +4,7 @@ import boto3
 import pytest
 from fastapi.testclient import TestClient
 from moto import mock_s3
-from starlette.status import HTTP_422_UNPROCESSABLE_ENTITY, HTTP_200_OK
+from starlette.status import HTTP_422_UNPROCESSABLE_ENTITY, HTTP_200_OK, HTTP_400_BAD_REQUEST, HTTP_404_NOT_FOUND
 
 from dataregistry.api.model import DataFormat
 
@@ -64,14 +64,11 @@ def test_post_then_delete_records(api_client: TestClient):
                                headers={ACCESS_TOKEN: api_key},
                                json=new_record)
     assert response.status_code == HTTP_200_OK
-    records_in_db = api_client.get(api_path, headers={ACCESS_TOKEN: api_key}).json()
-    to_delete = next((record for record in records_in_db if record['name'] == 'to-delete'), None)
-    assert to_delete is not None
-    response = api_client.delete(f"{api_path}/{to_delete['id']}", headers={ACCESS_TOKEN: api_key})
+    record_id = response.json()['record_id']
+    response = api_client.delete(f"{api_path}/{record_id}", headers={ACCESS_TOKEN: api_key})
     assert response.status_code == HTTP_200_OK
-    records_in_db = api_client.get(api_path, headers={ACCESS_TOKEN: api_key}).json()
-    to_delete = next((record for record in records_in_db if record['name'] == 'to-delete'), None)
-    assert to_delete is None
+    get_by_id_res = api_client.get(f"{api_path}/{record_id}", headers={ACCESS_TOKEN: api_key})
+    assert get_by_id_res.status_code == HTTP_404_NOT_FOUND
 
 
 @mock_s3
@@ -83,9 +80,8 @@ def test_post_then_retrieve_by_id(api_client: TestClient):
                                headers={ACCESS_TOKEN: api_key},
                                json=new_record)
     assert response.status_code == HTTP_200_OK
-    records_in_db = api_client.get(api_path, headers={ACCESS_TOKEN: api_key}).json()
-    to_retrieve = next((record for record in records_in_db if record['name'] == 'to-retrieve'), None)
-    response = api_client.get(f"{api_path}/{to_retrieve['id']}", headers={ACCESS_TOKEN: api_key})
+    new_record_id = response.json()['record_id']
+    response = api_client.get(f"{api_path}/{new_record_id}", headers={ACCESS_TOKEN: api_key})
     assert response.status_code == HTTP_200_OK
 
 

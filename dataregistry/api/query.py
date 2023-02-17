@@ -33,7 +33,7 @@ def get_record(engine, index) -> SavedRecord:
             SELECT s3_bucket_id, name, metadata, data_source_type, data_source, data_type, genome_build,
                 ancestry, data_submitter, data_submitter_email, institution, sex, global_sample_size, t1d_sample_size, 
                 bmi_adj_sample_size, status, additional_data, deleted_at_unix_time as deleted_at, id, created_at
-                FROM records r WHERE r.id = :id 
+                FROM records r WHERE r.id = :id and deleted_at_unix_time = 0
             """), {'id': index}
         ).first()
 
@@ -53,7 +53,7 @@ def insert_record(engine, data: Record):
     with engine.connect() as conn:
         sql_params = data.dict()
         sql_params.update({'s3_bucket_id': s3_record_id, 'metadata': json.dumps(data.metadata)})
-        conn.execute(text("""
+        res = conn.execute(text("""
             INSERT INTO records (s3_bucket_id, name, metadata, data_source_type, data_source, data_type, genome_build,
             ancestry, data_submitter, data_submitter_email, institution, sex, global_sample_size, t1d_sample_size, 
             bmi_adj_sample_size, status, additional_data) VALUES(:s3_bucket_id, :name, :metadata, :data_source_type, 
@@ -62,7 +62,7 @@ def insert_record(engine, data: Record):
         """), sql_params)
         conn.commit()
         s3.create_record_directory(s3_record_id)
-    return s3_record_id
+    return s3_record_id, res.lastrowid
 
 
 def delete_record(engine, index):
