@@ -12,19 +12,14 @@ from dataregistry.api.model import Record, SavedRecord
 def get_all_records(engine) -> list:
     results = engine.execute(
         """
-        SELECT s3_bucket_id, name, metadata, data_source_type, data_source, data_type, genome_build,
+        SELECT s3_bucket_id, name, data_source_type, data_source, data_type, genome_build, credible_set,
             ancestry, data_submitter, data_submitter_email, institution, sex, global_sample_size, t1d_sample_size, 
             bmi_adj_sample_size, status, additional_data, deleted_at_unix_time as deleted_at, id, created_at 
             FROM records WHERE deleted_at_unix_time = 0
         """
     ).fetchall()
 
-    return [SavedRecord(**fix_json(dict(result))) for result in results]
-
-
-def fix_json(r: dict) -> dict:
-    r.update({'metadata': json.loads(r['metadata'])})
-    return r
+    return [SavedRecord(**dict(result)) for result in results]
 
 
 def get_record(engine, index) -> SavedRecord:
@@ -32,10 +27,10 @@ def get_record(engine, index) -> SavedRecord:
     with session.begin():
         results = session.execute(
             """
-            SELECT s3_bucket_id, name, metadata, data_source_type, data_source, data_type, genome_build,
+            SELECT s3_bucket_id, name, data_source_type, data_source, data_type, genome_build,
                 ancestry, data_submitter, data_submitter_email, institution, sex, global_sample_size, t1d_sample_size, 
-                bmi_adj_sample_size, status, additional_data, deleted_at_unix_time as deleted_at, id, created_at
-                FROM records r WHERE r.id = :id 
+                bmi_adj_sample_size, status, additional_data, deleted_at_unix_time as deleted_at, id, created_at, 
+                credible_set FROM records r WHERE r.id = :id 
             """, {'id': index}
         ).fetchall()
 
@@ -44,7 +39,7 @@ def get_record(engine, index) -> SavedRecord:
         elif len(results) > 1:
             raise ValueError(f"{len(results)} records for id {index}, should be unique")
         else:
-            return SavedRecord(**fix_json(dict(results[0])))
+            return SavedRecord(**dict(results[0]))
 
 
 def convert_name_to_s3_bucket_id(name):
@@ -57,13 +52,13 @@ def insert_record(engine, data: Record):
     session = Session(engine)
     with session.begin():
         sql_params = data.dict()
-        sql_params.update({'s3_bucket_id': s3_record_id, 'metadata': json.dumps(data.metadata)})
+        sql_params.update({'s3_bucket_id': s3_record_id})
         session.execute("""
-            INSERT INTO records (s3_bucket_id, name, metadata, data_source_type, data_source, data_type, genome_build,
+            INSERT INTO records (s3_bucket_id, name, data_source_type, data_source, data_type, genome_build,
             ancestry, data_submitter, data_submitter_email, institution, sex, global_sample_size, t1d_sample_size, 
-            bmi_adj_sample_size, status, additional_data) VALUES(:s3_bucket_id, :name, :metadata, :data_source_type, 
+            bmi_adj_sample_size, status, additional_data, credible_set) VALUES(:s3_bucket_id, :name, :data_source_type, 
             :data_source, :data_type, :genome_build, :ancestry, :data_submitter, :data_submitter_email, :institution, 
-            :sex, :global_sample_size, :t1d_sample_size, :bmi_adj_sample_size, :status, :additional_data)
+            :sex, :global_sample_size, :t1d_sample_size, :bmi_adj_sample_size, :status, :additional_data, :credible_set)
         """, sql_params)
         s3.create_record_directory(s3_record_id)
     return s3_record_id
