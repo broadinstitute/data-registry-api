@@ -1,47 +1,39 @@
 import datetime
-import json
 import re
 
 from sqlalchemy import text
-from sqlalchemy import text
 
 from dataregistry.api import s3
-from dataregistry.api.model import Record, SavedRecord
+from dataregistry.api.model import SavedRecord, Record
 
 
 def get_all_records(engine) -> list:
     with engine.connect() as conn:
-        results = conn.execute(text(
-            """
-            SELECT s3_bucket_id, name, metadata, data_source_type, data_source, data_type, genome_build,
+        results = conn.execute(text("""
+                SELECT s3_bucket_id, name, data_source_type, data_source, data_type, genome_build, credible_set,
                 ancestry, data_submitter, data_submitter_email, institution, sex, global_sample_size, t1d_sample_size, 
                 bmi_adj_sample_size, status, additional_data, deleted_at_unix_time as deleted_at, id, created_at 
                 FROM records WHERE deleted_at_unix_time = 0
             """)
         )
-    return [SavedRecord(**fix_json(row._asdict())) for row in results]
-
-
-def fix_json(r: dict) -> dict:
-    r.update({'metadata': json.loads(r['metadata'])})
-    return r
+    return [SavedRecord(**row._asdict()) for row in results]
 
 
 def get_record(engine, index) -> SavedRecord:
     with engine.connect() as conn:
         result = conn.execute(
             text("""
-            SELECT s3_bucket_id, name, metadata, data_source_type, data_source, data_type, genome_build,
-                ancestry, data_submitter, data_submitter_email, institution, sex, global_sample_size, t1d_sample_size, 
-                bmi_adj_sample_size, status, additional_data, deleted_at_unix_time as deleted_at, id, created_at
-                FROM records r WHERE r.id = :id and deleted_at_unix_time = 0
+            SELECT s3_bucket_id, name, data_source_type, data_source, data_type, genome_build, credible_set,
+            ancestry, data_submitter, data_submitter_email, institution, sex, global_sample_size, t1d_sample_size, 
+            bmi_adj_sample_size, status, additional_data, deleted_at_unix_time as deleted_at, id, created_at 
+            FROM records WHERE deleted_at_unix_time = 0 and id = :id
             """), {'id': index}
         ).first()
 
-        if result is None:
-            raise ValueError(f"No records for id {index}")
-        else:
-            return SavedRecord(**fix_json(result._asdict()))
+    if result is None:
+        raise ValueError(f"No records for id {index}")
+    else:
+        return SavedRecord(**result._asdict())
 
 
 def convert_name_to_s3_bucket_id(name):
@@ -53,13 +45,13 @@ def insert_record(engine, data: Record):
     s3_record_id = convert_name_to_s3_bucket_id(data.name)
     with engine.connect() as conn:
         sql_params = data.dict()
-        sql_params.update({'s3_bucket_id': s3_record_id, 'metadata': json.dumps(data.metadata)})
+        sql_params.update({'s3_bucket_id': s3_record_id})
         res = conn.execute(text("""
-            INSERT INTO records (s3_bucket_id, name, metadata, data_source_type, data_source, data_type, genome_build,
+            INSERT INTO records (s3_bucket_id, name, data_source_type, data_source, data_type, genome_build,
             ancestry, data_submitter, data_submitter_email, institution, sex, global_sample_size, t1d_sample_size, 
-            bmi_adj_sample_size, status, additional_data) VALUES(:s3_bucket_id, :name, :metadata, :data_source_type, 
+            bmi_adj_sample_size, status, additional_data, credible_set) VALUES(:s3_bucket_id, :name, :data_source_type, 
             :data_source, :data_type, :genome_build, :ancestry, :data_submitter, :data_submitter_email, :institution, 
-            :sex, :global_sample_size, :t1d_sample_size, :bmi_adj_sample_size, :status, :additional_data)
+            :sex, :global_sample_size, :t1d_sample_size, :bmi_adj_sample_size, :status, :additional_data, :credible_set)
         """), sql_params)
         conn.commit()
         s3.create_record_directory(s3_record_id)

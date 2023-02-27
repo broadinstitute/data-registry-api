@@ -30,7 +30,6 @@ example_json = {
     "bmi_adj_sample_size": 19,
     "status": "open",
     "additional_data": "Lorem ipsum..",
-    "metadata": {"foo": 11}
 }
 
 
@@ -98,7 +97,7 @@ def test_upload_file(api_client: TestClient):
                                           files={"file": f})
         assert upload_response.status_code == HTTP_200_OK
     s3_conn = boto3.resource("s3", region_name="us-east-1")
-    file_text = s3_conn.Object("dig-data-registry", f"GWAS/{record_name}/t1d/sample_upload.txt").get()["Body"].read()\
+    file_text = s3_conn.Object("dig-data-registry", f"GWAS/{record_name}/t1d/sample_upload.txt").get()["Body"].read() \
         .decode("utf-8")
     assert file_text == "The answer is 47!\n"
 
@@ -108,7 +107,7 @@ def test_upload_file(api_client: TestClient):
 def test_valid_data_formats_post(api_client: TestClient, df: DataFormat):
     set_up_moto_bucket()
     new_record = example_json.copy()
-    new_record['data_format'] = df
+    new_record['data_type'] = df
     response = api_client.post(api_path, headers={ACCESS_TOKEN: api_key}, json=new_record)
     assert response.status_code == HTTP_200_OK
 
@@ -118,3 +117,10 @@ def test_invalid_record_post(api_client: TestClient):
     new_record['ancestry'] = 'bad-ancestry'
     response = api_client.post(api_path, headers={ACCESS_TOKEN: api_key}, json=new_record)
     assert response.status_code == HTTP_422_UNPROCESSABLE_ENTITY
+
+
+def test_add_record_optional_credible_set(api_client: TestClient):
+    new_record = example_json.copy()
+    new_record['credible_set'] = 'foo-bar'
+    response = api_client.post(api_path, headers={ACCESS_TOKEN: api_key}, json=new_record)
+    assert response.status_code == HTTP_200_OK
