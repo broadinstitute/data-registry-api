@@ -7,7 +7,7 @@ Create Date: 2023-01-11 11:06:25.633652
 """
 from alembic import op
 import sqlalchemy as sa
-
+from sqlalchemy import text
 
 # revision identifiers, used by Alembic.
 revision = 'd21f6449aa7a'
@@ -29,7 +29,7 @@ def upgrade() -> None:
         CONSTRAINT name_deleted_unique UNIQUE (name, deleted_at_unix_time)
     );
     """
-    conn.execute(query)
+    conn.execute(text(query))
 
 
 def downgrade() -> None:
@@ -37,4 +37,4 @@ def downgrade() -> None:
     query = """
     DROP TABLE records;
     """
-    conn.execute(query)
+    conn.execute(text(query))

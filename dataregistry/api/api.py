@@ -34,7 +34,7 @@ async def api_records(index: int):
     except KeyError:
         raise fastapi.HTTPException(status_code=400, detail=f'Invalid index: {index}')
     except ValueError as e:
-        raise fastapi.HTTPException(status_code=400, detail=str(e))
+        raise fastapi.HTTPException(status_code=404, detail=str(e))
 
 
 @router.post("/uploadfile/{data_type}/{phenotype}/{record_name}/{record_id}")
@@ -71,11 +71,12 @@ async def api_record_post(req: Record):
     The body of the request contains the information to insert into the records db
     """
     try:
-        s3_record_id = query.insert_record(engine, req)
+        s3_record_id, record_id = query.insert_record(engine, req)
 
         return {
             'name': req.name,
-            's3_record_id': s3_record_id
+            's3_record_id': s3_record_id,
+            'record_id': record_id
         }
     except sqlalchemy.exc.IntegrityError as e:
         raise fastapi.HTTPException(status_code=400, detail=str(e))

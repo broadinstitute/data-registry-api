@@ -7,7 +7,7 @@ Create Date: 2023-01-11 15:59:16.963997
 """
 from alembic import op
 import sqlalchemy as sa
-
+from sqlalchemy import text
 
 # revision identifiers, used by Alembic.
 revision = '7843e8bdb14c'
@@ -32,7 +32,7 @@ def upgrade() -> None:
         FOREIGN KEY (record_id) REFERENCES records(id) ON DELETE CASCADE
     );
     """
-    conn.execute(query)
+    conn.execute(text(query))
 
 
 def downgrade() -> None:
@@ -40,4 +40,4 @@ def downgrade() -> None:
     query = """
     DROP TABLE datasets;
     """
-    conn.execute(query)
+    conn.execute(text(query))
