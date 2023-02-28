@@ -119,6 +119,7 @@ def test_invalid_record_post(api_client: TestClient):
     assert response.status_code == HTTP_422_UNPROCESSABLE_ENTITY
 
 
+@mock_s3
 def test_add_record_optional_credible_set(api_client: TestClient):
     new_record = example_json.copy()
     new_record['credible_set'] = 'foo-bar'
