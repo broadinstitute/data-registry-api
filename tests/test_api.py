@@ -121,6 +121,7 @@ def test_invalid_record_post(api_client: TestClient):
 
 @mock_s3
 def test_add_record_optional_credible_set(api_client: TestClient):
+    set_up_moto_bucket()
     new_record = example_json.copy()
     new_record['credible_set'] = 'foo-bar'
     response = api_client.post(api_path, headers={ACCESS_TOKEN: api_key}, json=new_record)
