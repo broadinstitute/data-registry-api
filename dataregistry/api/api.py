@@ -7,7 +7,7 @@ from fastapi import UploadFile
 
 from dataregistry.api import query, s3
 from dataregistry.api.db import DataRegistryReadWriteDB
-from dataregistry.api.model import Record
+from dataregistry.api.model import DataSet, Study
 
 router = fastapi.APIRouter()
 
@@ -37,11 +37,11 @@ async def api_records(index: int):
         raise fastapi.HTTPException(status_code=404, detail=str(e))
 
 
-@router.post("/uploadfile/{data_type}/{phenotype}/{record_name}/{record_id}")
-async def upload_file_for_record(data_type: str, phenotype: str, record_name: str, record_id: int, file: UploadFile,
-                                 response: fastapi.Response):
+@router.post("/uploadfile/{data_set_id}/{phenotype}/{dichotomous}")
+async def upload_file_for_phenotype(data_set_id: str, phenotype: str, dichotomous: bool, file: UploadFile,
+                                 response: fastapi.Response, cases: int = None, sample_size: int = None):
     try:
-        file_path = f"{data_type}/{record_name}/{phenotype}"
+        file_path = f"{data_set_id}/{phenotype}"
         upload = s3.initiate_multi_part(file_path, file.filename)
         part_number = 1
         parts = []
@@ -54,7 +54,8 @@ async def upload_file_for_record(data_type: str, phenotype: str, record_name: st
             })
             part_number = part_number + 1
         s3.finalize_upload(file_path, file.filename, parts, upload)
-        query.insert_data_set(engine, record_id, record_name, phenotype, data_type, file.filename)
+        query.insert_phenotype_data_set(engine, data_set_id, phenotype, f"s3://{s3.BASE_BUCKET}/{file_path}",
+                                        dichotomous, sample_size, cases)
     except Exception as e:
         logger.exception("There was a problem uploading file", e)
         response.status_code = 400
@@ -65,18 +66,31 @@ async def upload_file_for_record(data_type: str, phenotype: str, record_name: st
     return {"message": f"Successfully uploaded {file.filename}"}
 
 
-@router.post('/records', response_class=fastapi.responses.ORJSONResponse)
-async def api_record_post(req: Record):
+@router.post('/studies', response_class=fastapi.responses.ORJSONResponse)
+async def save_study(req: Study):
+    study_id = query.insert_study(engine, req)
+    return {
+        'name': req.name,
+        'study_id': study_id
+    }
+
+
+@router.get('/studies', response_class=fastapi.responses.ORJSONResponse)
+async def get_studies():
+    return query.get_studies(engine)
+
+
+@router.post('/datasets', response_class=fastapi.responses.ORJSONResponse)
+async def save_dataset(req: DataSet):
     """
     The body of the request contains the information to insert into the records db
     """
     try:
-        s3_record_id, record_id = query.insert_record(engine, req)
+        dataset_id = query.insert_dataset(engine, req)
 
         return {
             'name': req.name,
-            's3_record_id': s3_record_id,
-            'record_id': record_id
+            'dataset_id': dataset_id
         }
     except sqlalchemy.exc.IntegrityError as e:
         raise fastapi.HTTPException(status_code=400, detail=str(e))

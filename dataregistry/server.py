@@ -23,10 +23,15 @@ app = fastapi.FastAPI(title='DataRegistry', redoc_url=None, dependencies=[Depend
 # all the various routers for each api
 app.include_router(api.router, prefix='/api', tags=['api'])
 
+origins = [
+    "http://localhost:3000",
+    "http://localhost",
+    "http://data-registry-vue.s3-website-us-east-1.amazonaws.com"
+]
 # enable cross-origin resource sharing
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=['*'],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=['*'],
     allow_headers=['*'],
