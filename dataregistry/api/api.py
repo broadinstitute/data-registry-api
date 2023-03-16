@@ -37,9 +37,10 @@ async def api_records(index: int):
         raise fastapi.HTTPException(status_code=404, detail=str(e))
 
 
-@router.post("/uploadfile/{data_set_id}/{phenotype}/{dichotomous}")
+@router.post("/uploadfile/{data_set_id}/{phenotype}/{dichotomous}/{sample_size}")
 async def upload_file_for_phenotype(data_set_id: str, phenotype: str, dichotomous: bool, file: UploadFile,
-                                 response: fastapi.Response, cases: int = None, sample_size: int = None):
+                                    sample_size: int, response: fastapi.Response, cases: int = None,
+                                    controls: int = None):
     try:
         file_path = f"{data_set_id}/{phenotype}"
         upload = s3.initiate_multi_part(file_path, file.filename)
@@ -55,7 +56,7 @@ async def upload_file_for_phenotype(data_set_id: str, phenotype: str, dichotomou
             part_number = part_number + 1
         s3.finalize_upload(file_path, file.filename, parts, upload)
         query.insert_phenotype_data_set(engine, data_set_id, phenotype, f"s3://{s3.BASE_BUCKET}/{file_path}",
-                                        dichotomous, sample_size, cases)
+                                        dichotomous, sample_size, cases, controls)
     except Exception as e:
         logger.exception("There was a problem uploading file", e)
         response.status_code = 400

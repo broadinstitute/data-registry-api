@@ -82,17 +82,18 @@ def insert_dataset(engine, data: DataSet):
 
 
 def insert_phenotype_data_set(engine, dataset_id: str, phenotype: str, s3_path: str, dichotomous: bool,
-                              sample_size: int, cases: int):
+                              sample_size: int, cases: int, controls: int):
     with engine.connect() as conn:
         pd_id = str(uuid.uuid4()).replace('-', '')
         sql_params = {'id': pd_id, 'dataset_id': dataset_id, 's3_path': s3_path, 'phenotype': phenotype,
-                      'dichotomous': dichotomous, 'sample_size': sample_size, 'cases': cases, 'file_name': 'boo'
+                      'dichotomous': dichotomous, 'sample_size': sample_size, 'cases': cases, 'file_name': 'boo',
+                      'controls': controls
                       }
         conn.execute(text("""
             INSERT INTO dataset_phenotypes (id, dataset_id, phenotype, s3_path, dichotomous, sample_size, cases, 
-            created_at, file_name) 
-            VALUES(:id, :dataset_id, :phenotype, :s3_path, :dichotomous, :sample_size, :cases, NOW(), :file_name)
-        """), sql_params)
+            created_at, file_name, controls) 
+            VALUES(:id, :dataset_id, :phenotype, :s3_path, :dichotomous, :sample_size, :cases, NOW(), :file_name, 
+            :controls)"""), sql_params)
         conn.commit()
 
 
