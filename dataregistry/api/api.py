@@ -43,7 +43,8 @@ async def upload_file_for_phenotype(data_set_id: str, phenotype: str, dichotomou
                                     sample_size: int, response: fastapi.Response, cases: int = None,
                                     controls: int = None):
     try:
-        file_path = f"{data_set_id}/{phenotype}"
+        saved_dataset = query.get_dataset(engine, UUID(data_set_id))
+        file_path = f"{saved_dataset.name}/{phenotype}"
         upload = s3.initiate_multi_part(file_path, file.filename)
         part_number = 1
         parts = []
