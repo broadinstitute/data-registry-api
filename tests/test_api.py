@@ -95,7 +95,7 @@ def test_upload_file(api_client: TestClient):
                                           files={"file": f})
         assert upload_response.status_code == HTTP_200_OK
     s3_conn = boto3.resource("s3", region_name="us-east-1")
-    file_text = s3_conn.Object("dig-data-registry", f"{dataset_id}/t1d/sample_upload.txt").get()["Body"].read() \
+    file_text = s3_conn.Object("dig-data-registry", f"{new_record['name']}/t1d/sample_upload.txt").get()["Body"].read() \
         .decode("utf-8")
     assert file_text == "The answer is 47!\n"
 
