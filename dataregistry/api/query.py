@@ -7,7 +7,7 @@ from sqlalchemy import text
 from dataregistry.api.model import SavedDataset, DataSet, Study, SavedStudy
 
 
-def get_all_datasets(engine) -> list[SavedDataset]:
+def get_all_datasets(engine) -> list:
     with engine.connect() as conn:
         results = conn.execute(text("""select id, name, data_source_type, data_type, genome_build, ancestry, sex, 
         global_sample_size, status, data_submitter, data_submitter_email, data_contributor, data_contributor_email, 
