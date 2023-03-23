@@ -4,37 +4,29 @@ import uuid
 
 from sqlalchemy import text
 
-from dataregistry.api import s3
-from dataregistry.api.model import SavedRecord, DataSet, Study, SavedStudy
+from dataregistry.api.model import SavedDataset, DataSet, Study, SavedStudy
 
 
-def get_all_records(engine) -> list:
+def get_all_datasets(engine) -> list[SavedDataset]:
     with engine.connect() as conn:
-        results = conn.execute(text("""
-                SELECT s3_bucket_id, name, data_source_type, data_source, data_type, genome_build, credible_set,
-                ancestry, data_submitter, data_submitter_email, institution, sex, global_sample_size, t1d_sample_size, 
-                bmi_adj_sample_size, status, additional_data, deleted_at_unix_time as deleted_at, id, created_at 
-                FROM records WHERE deleted_at_unix_time = 0
-            """)
-                               )
-    return [SavedRecord(**row._asdict()) for row in results]
+        results = conn.execute(text("""select id, name, data_source_type, data_type, genome_build, ancestry, sex, 
+        global_sample_size, status, data_submitter, data_submitter_email, data_contributor, data_contributor_email, 
+        study_id, description, pmid, publication, created_at from datasets"""))
+    return [SavedDataset(**row._asdict()) for row in results]
 
 
-def get_record(engine, index) -> SavedRecord:
+def get_dataset(engine, index: uuid.UUID) -> SavedDataset:
     with engine.connect() as conn:
         result = conn.execute(
             text("""
-            SELECT s3_bucket_id, name, data_source_type, data_source, data_type, genome_build, credible_set,
-            ancestry, data_submitter, data_submitter_email, institution, sex, global_sample_size, t1d_sample_size, 
-            bmi_adj_sample_size, status, additional_data, deleted_at_unix_time as deleted_at, id, created_at 
-            FROM records WHERE deleted_at_unix_time = 0 and id = :id
-            """), {'id': index}
+            SELECT * FROM datasets WHERE id = :id
+            """), {'id': str(index).replace('-', '')}
         ).first()
 
     if result is None:
         raise ValueError(f"No records for id {index}")
     else:
-        return SavedRecord(**result._asdict())
+        return SavedDataset(**result._asdict())
 
 
 def convert_name_to_s3_bucket_id(name):
@@ -95,16 +87,3 @@ def insert_phenotype_data_set(engine, dataset_id: str, phenotype: str, s3_path: 
             VALUES(:id, :dataset_id, :phenotype, :s3_path, :dichotomous, :sample_size, :cases, NOW(), :file_name, 
             :controls)"""), sql_params)
         conn.commit()
-
-
-def delete_record(engine, index):
-    with engine.connect() as conn:
-        s3_record_id = get_record(engine, index).s3_bucket_id
-        conn.execute(
-            text("""
-            UPDATE records r SET r.deleted_at_unix_time = UNIX_TIMESTAMP() WHERE r.id = :id 
-            """), {'id': index}
-        )
-        conn.commit()
-        s3.delete_record_directory(s3_record_id)
-    return s3_record_id

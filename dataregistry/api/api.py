@@ -1,4 +1,5 @@
 import logging
+from uuid import UUID
 
 import fastapi
 import sqlalchemy
@@ -19,18 +20,18 @@ engine = DataRegistryReadWriteDB().get_engine()
 logger.info("Starting API")
 
 
-@router.get('/records', response_class=fastapi.responses.ORJSONResponse)
-async def api_records():
+@router.get('/datasets', response_class=fastapi.responses.ORJSONResponse)
+async def api_datasets():
     try:
-        return query.get_all_records(engine)
+        return query.get_all_datasets(engine)
     except ValueError as e:
         raise fastapi.HTTPException(status_code=400, detail=str(e))
 
 
-@router.get('/records/{index}', response_class=fastapi.responses.ORJSONResponse)
-async def api_records(index: int):
+@router.get('/datasets/{index}', response_class=fastapi.responses.ORJSONResponse)
+async def api_datasets(index: UUID):
     try:
-        return query.get_record(engine, index)
+        return query.get_dataset(engine, index)
     except KeyError:
         raise fastapi.HTTPException(status_code=400, detail=f'Invalid index: {index}')
     except ValueError as e:

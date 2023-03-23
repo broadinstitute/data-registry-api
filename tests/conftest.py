@@ -35,8 +35,9 @@ def before_each_test():
     """
     with db.get_engine().connect() as con:
         con.execute(text("SET FOREIGN_KEY_CHECKS = 0"))
+        con.execute(text("TRUNCATE TABLE studies"))
         con.execute(text("TRUNCATE TABLE datasets"))
-        con.execute(text("TRUNCATE TABLE records"))
+        con.execute(text("TRUNCATE TABLE dataset_phenotypes"))
         con.execute(text("SET FOREIGN_KEY_CHECKS = 1"))
 
 

@@ -86,6 +86,6 @@ class DataSet(BaseModel, extra=Extra.forbid):
     publication: Union[str, None]
 
 
-class SavedRecord(DataSet):
+class SavedDataset(DataSet):
     id: UUID
     created_at: datetime
