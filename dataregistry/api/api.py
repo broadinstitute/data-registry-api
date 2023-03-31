@@ -12,9 +12,6 @@ from fastapi import UploadFile
 from dataregistry.api import query, s3
 from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api.model import DataSet, Study
-from dataregistry.pub_ids import infer_id_type
-from xml.dom.minidom import parse
-import xml.etree.ElementTree as et
 
 router = fastapi.APIRouter()
 
