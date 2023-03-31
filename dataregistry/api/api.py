@@ -1,14 +1,20 @@
+import json
 import logging
 from uuid import UUID
 
 import fastapi
+import requests
 import sqlalchemy
+import xmltodict
 from botocore.exceptions import ClientError
 from fastapi import UploadFile
 
 from dataregistry.api import query, s3
 from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api.model import DataSet, Study
+from dataregistry.pub_ids import infer_id_type
+from xml.dom.minidom import parse
+import xml.etree.ElementTree as et
 
 router = fastapi.APIRouter()
 
@@ -18,6 +24,8 @@ logger = logging.getLogger(__name__)
 engine = DataRegistryReadWriteDB().get_engine()
 
 logger.info("Starting API")
+NIH_API_EMAIL = "dhite@broadinstitute.org"
+NIH_API_TOOL_NAME = "data-registry"
 
 
 @router.get('/datasets', response_class=fastapi.responses.ORJSONResponse)
@@ -36,6 +44,22 @@ async def api_datasets(index: UUID):
         raise fastapi.HTTPException(status_code=400, detail=f'Invalid index: {index}')
     except ValueError as e:
         raise fastapi.HTTPException(status_code=404, detail=str(e))
+
+
+@router.get('/publications', response_class=fastapi.responses.ORJSONResponse)
+async def api_publications(pub_id: str):
+    http_res = requests.get(f'https://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/?ids={pub_id}'
+                 f'&format=json&email={NIH_API_EMAIL}&tool={NIH_API_TOOL_NAME}')
+    if http_res.status_code != 200:
+        raise fastapi.HTTPException(status_code=404, detail=f'Invalid publication id: {pub_id}')
+    pmcid = json.loads(http_res.text)['records'][0]['pmcid']
+    http_res = requests.get(f'https://www.ncbi.nlm.nih.gov/pmc/oai/oai.cgi?verb=GetRecord'
+                            f'&identifier=oai:pubmedcentral.nih.gov:{pmcid.replace("PMC", "")}&metadataPrefix=pmc_fm')
+    if http_res.status_code != 200:
+        raise fastapi.HTTPException(status_code=404, detail=f'Could not locate title and abstract for: {pub_id}')
+    xml_doc = xmltodict.parse(http_res.text)
+    article_meta = xml_doc['OAI-PMH']['GetRecord']['record']['metadata']['article']['front']['article-meta']
+    return {"title": article_meta['title-group']['article-title'], "abstract": article_meta['abstract']['p']['#text']}
 
 
 @router.post("/uploadfile/{data_set_id}/{phenotype}/{dichotomous}/{sample_size}")
