@@ -12,6 +12,7 @@ from fastapi import UploadFile
 from dataregistry.api import query, s3
 from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api.model import DataSet, Study
+from dataregistry.pub_ids import PubIdType, infer_id_type
 
 router = fastapi.APIRouter()
 
@@ -45,18 +46,19 @@ async def api_datasets(index: UUID):
 
 @router.get('/publications', response_class=fastapi.responses.ORJSONResponse)
 async def api_publications(pub_id: str):
-    http_res = requests.get(f'https://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/?ids={pub_id}'
+    if infer_id_type(pub_id) != PubIdType.PMID:
+        http_res = requests.get(f'https://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/?ids={pub_id}'
                  f'&format=json&email={NIH_API_EMAIL}&tool={NIH_API_TOOL_NAME}')
-    if http_res.status_code != 200:
-        raise fastapi.HTTPException(status_code=404, detail=f'Invalid publication id: {pub_id}')
-    pmcid = json.loads(http_res.text)['records'][0]['pmcid']
-    http_res = requests.get(f'https://www.ncbi.nlm.nih.gov/pmc/oai/oai.cgi?verb=GetRecord'
-                            f'&identifier=oai:pubmedcentral.nih.gov:{pmcid.replace("PMC", "")}&metadataPrefix=pmc_fm')
+        if http_res.status_code != 200:
+            raise fastapi.HTTPException(status_code=404, detail=f'Invalid publication id: {pub_id}')
+        pub_id = json.loads(http_res.text)['records'][0]['pmid']
+
+    http_res = requests.get(f'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id={pub_id}')
     if http_res.status_code != 200:
         raise fastapi.HTTPException(status_code=404, detail=f'Could not locate title and abstract for: {pub_id}')
     xml_doc = xmltodict.parse(http_res.text)
-    article_meta = xml_doc['OAI-PMH']['GetRecord']['record']['metadata']['article']['front']['article-meta']
-    return {"title": article_meta['title-group']['article-title'], "abstract": article_meta['abstract']['p']['#text']}
+    article_meta = xml_doc['PubmedArticleSet']['PubmedArticle']['MedlineCitation']['Article']
+    return {"title": article_meta['ArticleTitle'], "abstract": article_meta['Abstract']['AbstractText']}
 
 
 @router.post("/uploadfile/{data_set_id}/{phenotype}/{dichotomous}/{sample_size}")
