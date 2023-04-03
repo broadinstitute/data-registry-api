@@ -58,7 +58,8 @@ async def api_publications(pub_id: str):
         raise fastapi.HTTPException(status_code=404, detail=f'Could not locate title and abstract for: {pub_id}')
     xml_doc = xmltodict.parse(http_res.text)
     article_meta = xml_doc['PubmedArticleSet']['PubmedArticle']['MedlineCitation']['Article']
-    return {"title": article_meta['ArticleTitle'], "abstract": article_meta['Abstract']['AbstractText']}
+    abstract = article_meta.get('Abstract')
+    return {"title": article_meta.get('ArticleTitle', ''), "abstract": abstract.get('AbstractText', '') if abstract else ''}
 
 
 @router.post("/uploadfile/{data_set_id}/{phenotype}/{dichotomous}/{sample_size}")
