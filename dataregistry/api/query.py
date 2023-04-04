@@ -11,7 +11,7 @@ def get_all_datasets(engine) -> list:
     with engine.connect() as conn:
         results = conn.execute(text("""select id, name, data_source_type, data_type, genome_build, ancestry, sex, 
         global_sample_size, status, data_submitter, data_submitter_email, data_contributor, data_contributor_email, 
-        study_id, description, pmid, publication, created_at from datasets"""))
+        study_id, description, pub_id, publication, created_at from datasets"""))
     return [SavedDataset(**row._asdict()) for row in results]
 
 
@@ -64,9 +64,9 @@ def insert_dataset(engine, data: DataSet):
         conn.execute(text("""
             INSERT INTO datasets (id, name, data_source_type, data_type, genome_build,
             ancestry, data_contributor, data_contributor_email, data_submitter, data_submitter_email,  
-            sex, global_sample_size, status, description, pmid, publication, study_id, created_at) VALUES(:id, :name, 
+            sex, global_sample_size, status, description, pub_id, publication, study_id, created_at) VALUES(:id, :name, 
             :data_source_type, :data_type, :genome_build, :ancestry, :data_contributor, :data_contributor_email, 
-            :data_submitter, :data_submitter_email, :sex, :global_sample_size, :status, :description, :pmid,
+            :data_submitter, :data_submitter_email, :sex, :global_sample_size, :status, :description, :pub_id,
             :publication, :study_id, NOW())
         """), sql_params)
         conn.commit()

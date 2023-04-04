@@ -82,7 +82,7 @@ class DataSet(BaseModel, extra=Extra.forbid):
     status: ResearchStatus = Field(title="Where the research is in the publication process")
     description: str = Field(example="More descriptive text...")
     study_id: str
-    pmid: Union[int, None]
+    pub_id: Union[str, None]
     publication: Union[str, None]
 
 
