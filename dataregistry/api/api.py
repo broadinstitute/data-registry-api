@@ -11,7 +11,7 @@ from fastapi import UploadFile
 
 from dataregistry.api import query, s3
 from dataregistry.api.db import DataRegistryReadWriteDB
-from dataregistry.api.model import DataSet, Study
+from dataregistry.api.model import DataSet, Study, SavedDatasetInfo
 from dataregistry.pub_ids import PubIdType, infer_id_type
 
 router = fastapi.APIRouter()
@@ -37,7 +37,10 @@ async def api_datasets():
 @router.get('/datasets/{index}', response_class=fastapi.responses.ORJSONResponse)
 async def api_datasets(index: UUID):
     try:
-        return query.get_dataset(engine, index)
+        ds = query.get_dataset(engine, index)
+        study = query.get_study_for_dataset(engine, ds.study_id)
+        phenotypes = query.get_phenotypes_for_dataset(engine, index)
+        return SavedDatasetInfo(**{'dataset': ds, 'study': study, 'phenotypes': phenotypes})
     except KeyError:
         raise fastapi.HTTPException(status_code=400, detail=f'Invalid index: {index}')
     except ValueError as e:
@@ -86,7 +89,7 @@ async def upload_file_for_phenotype(data_set_id: str, phenotype: str, dichotomou
     except Exception as e:
         logger.exception("There was a problem uploading file", e)
         response.status_code = 400
-        return {"message": "There was an error uploading the file"}
+        return {"message": f"There was an error uploading the file {file.filename}"}
     finally:
         await file.close()
 

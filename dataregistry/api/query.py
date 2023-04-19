@@ -4,7 +4,7 @@ import uuid
 
 from sqlalchemy import text
 
-from dataregistry.api.model import SavedDataset, DataSet, Study, SavedStudy
+from dataregistry.api.model import SavedDataset, DataSet, Study, SavedStudy, SavedPhenotypeDataSet
 
 
 def get_all_datasets(engine) -> list:
@@ -87,3 +87,26 @@ def insert_phenotype_data_set(engine, dataset_id: str, phenotype: str, s3_path: 
             VALUES(:id, :dataset_id, :phenotype, :s3_path, :dichotomous, :sample_size, :cases, NOW(), :file_name, 
             :controls)"""), sql_params)
         conn.commit()
+
+
+def get_study_for_dataset(engine, study_id: str) -> SavedStudy:
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+                SELECT id, name, institution, created_at 
+                FROM studies where id = :id
+            """), {'id': study_id}).first()
+        if result is None:
+            raise ValueError(f"No records for id {study_id}")
+        else:
+            return SavedStudy(**result._asdict())
+
+
+def get_phenotypes_for_dataset(engine, dataset_id: uuid.UUID) -> SavedPhenotypeDataSet:
+    with engine.connect() as conn:
+        results = conn.execute(text("""SELECT id, phenotype, dichotomous, sample_size, cases, controls, created_at 
+                FROM dataset_phenotypes where dataset_id = :id
+            """), {'id': str(dataset_id).replace('-', '')})
+        if results is None:
+            raise ValueError(f"No records for id {dataset_id}")
+        else:
+            return [SavedPhenotypeDataSet(**row._asdict()) for row in results]

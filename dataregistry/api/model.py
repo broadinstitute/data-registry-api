@@ -89,3 +89,19 @@ class DataSet(BaseModel, extra=Extra.forbid):
 class SavedDataset(DataSet):
     id: UUID
     created_at: datetime
+
+
+class SavedPhenotypeDataSet(BaseModel):
+    id: UUID
+    phenotype: str
+    dichotomous: bool
+    sample_size: int
+    cases: Union[int, None]
+    controls: Union[int, None]
+    created_at: datetime
+
+
+class SavedDatasetInfo(BaseModel):
+    dataset: SavedDataset
+    study: SavedStudy
+    phenotypes: list[SavedPhenotypeDataSet]
