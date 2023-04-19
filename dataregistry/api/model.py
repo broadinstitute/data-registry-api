@@ -104,4 +104,4 @@ class SavedPhenotypeDataSet(BaseModel):
 class SavedDatasetInfo(BaseModel):
     dataset: SavedDataset
     study: SavedStudy
-    phenotypes: list[SavedPhenotypeDataSet]
+    phenotypes: list
