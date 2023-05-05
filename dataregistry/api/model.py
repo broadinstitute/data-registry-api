@@ -88,7 +88,7 @@ class DataSet(BaseModel, extra=Extra.forbid):
 
 class SavedDataset(DataSet):
     id: UUID
-    created_at: datetime
+    created_at: Union[datetime, None]
 
 
 class SavedPhenotypeDataSet(BaseModel):

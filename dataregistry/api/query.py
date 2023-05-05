@@ -73,6 +73,21 @@ def insert_dataset(engine, data: DataSet):
     return dataset_id
 
 
+def update_dataset(engine, data: SavedDataset):
+    with engine.connect() as conn:
+        sql_params = data.dict()
+        sql_params.update({'id': str(data.id).replace('-', '')})
+        conn.execute(text("""
+            UPDATE datasets SET name = :name, data_source_type = :data_source_type, data_type = :data_type, 
+            genome_build = :genome_build, ancestry = :ancestry, data_contributor = :data_contributor,
+            data_contributor_email = :data_contributor_email, data_submitter = :data_submitter, 
+            data_submitter_email = :data_submitter_email, sex = :sex, global_sample_size = :global_sample_size, 
+            status = :status, description = :description, pub_id = :pub_id, publication = :publication, 
+            study_id = :study_id where id = :id
+        """), sql_params)
+        conn.commit()
+
+
 def insert_phenotype_data_set(engine, dataset_id: str, phenotype: str, s3_path: str, dichotomous: bool,
                               sample_size: int, cases: int, controls: int):
     with engine.connect() as conn:

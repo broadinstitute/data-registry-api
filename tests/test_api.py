@@ -52,6 +52,20 @@ def test_post_dataset(api_client: TestClient):
     assert response.status_code == HTTP_200_OK
 
 
+@mock_s3
+def test_update_dataset(api_client: TestClient):
+    set_up_moto_bucket()
+    study_id = save_study(api_client)
+    copy = example_dataset_json.copy()
+    copy.update({'study_id': study_id})
+    response = api_client.post(dataset_api_path,
+                               headers={ACCESS_TOKEN: api_key},
+                               json=copy)
+    assert response.status_code == HTTP_200_OK
+    copy.update({'id': response.json()['dataset_id']})
+    response = api_client.patch(dataset_api_path, headers={ACCESS_TOKEN: api_key}, json=copy)
+    assert response.status_code == HTTP_200_OK
+
 def save_study(api_client):
     response = api_client.post(study_api_path, headers={ACCESS_TOKEN: api_key}, json=example_study_json)
     assert response.status_code == HTTP_200_OK
