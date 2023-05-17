@@ -11,7 +11,7 @@ from fastapi import UploadFile
 
 from dataregistry.api import query, s3
 from dataregistry.api.db import DataRegistryReadWriteDB
-from dataregistry.api.model import DataSet, Study
+from dataregistry.api.model import DataSet, Study, SavedDatasetInfo, SavedDataset
 from dataregistry.pub_ids import PubIdType, infer_id_type
 
 router = fastapi.APIRouter()
@@ -37,7 +37,10 @@ async def api_datasets():
 @router.get('/datasets/{index}', response_class=fastapi.responses.ORJSONResponse)
 async def api_datasets(index: UUID):
     try:
-        return query.get_dataset(engine, index)
+        ds = query.get_dataset(engine, index)
+        study = query.get_study_for_dataset(engine, ds.study_id)
+        phenotypes = query.get_phenotypes_for_dataset(engine, index)
+        return SavedDatasetInfo(**{'dataset': ds, 'study': study, 'phenotypes': phenotypes})
     except KeyError:
         raise fastapi.HTTPException(status_code=400, detail=f'Invalid index: {index}')
     except ValueError as e:
@@ -48,7 +51,7 @@ async def api_datasets(index: UUID):
 async def api_publications(pub_id: str):
     if infer_id_type(pub_id) != PubIdType.PMID:
         http_res = requests.get(f'https://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/?ids={pub_id}'
-                 f'&format=json&email={NIH_API_EMAIL}&tool={NIH_API_TOOL_NAME}')
+                                f'&format=json&email={NIH_API_EMAIL}&tool={NIH_API_TOOL_NAME}')
         if http_res.status_code != 200:
             raise fastapi.HTTPException(status_code=404, detail=f'Invalid publication id: {pub_id}')
         pub_id = json.loads(http_res.text)['records'][0]['pmid']
@@ -59,7 +62,8 @@ async def api_publications(pub_id: str):
     xml_doc = xmltodict.parse(http_res.text)
     article_meta = xml_doc['PubmedArticleSet']['PubmedArticle']['MedlineCitation']['Article']
     abstract = article_meta.get('Abstract')
-    return {"title": article_meta.get('ArticleTitle', ''), "abstract": abstract.get('AbstractText', '') if abstract else ''}
+    return {"title": article_meta.get('ArticleTitle', ''),
+            "abstract": abstract.get('AbstractText', '') if abstract else ''}
 
 
 @router.post("/uploadfile/{data_set_id}/{phenotype}/{dichotomous}/{sample_size}")
@@ -86,7 +90,7 @@ async def upload_file_for_phenotype(data_set_id: str, phenotype: str, dichotomou
     except Exception as e:
         logger.exception("There was a problem uploading file", e)
         response.status_code = 400
-        return {"message": "There was an error uploading the file"}
+        return {"message": f"There was an error uploading the file {file.filename}"}
     finally:
         await file.close()
 
@@ -119,6 +123,21 @@ async def save_dataset(req: DataSet):
             'name': req.name,
             'dataset_id': dataset_id
         }
+    except sqlalchemy.exc.IntegrityError as e:
+        raise fastapi.HTTPException(status_code=400, detail=str(e))
+    except ClientError as e:
+        raise fastapi.HTTPException(status_code=400, detail=str(e))
+
+
+@router.patch('/datasets', response_class=fastapi.responses.ORJSONResponse)
+async def update_dataset(req: SavedDataset):
+    """
+    The body of the request contains the information to insert into the records db
+    """
+    try:
+        query.update_dataset(engine, req)
+
+        return fastapi.responses.Response(content=None, status_code=200)
     except sqlalchemy.exc.IntegrityError as e:
         raise fastapi.HTTPException(status_code=400, detail=str(e))
     except ClientError as e:
