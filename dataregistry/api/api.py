@@ -73,20 +73,27 @@ async def upload_file_for_phenotype(data_set_id: str, phenotype: str, dichotomou
     try:
         saved_dataset = query.get_dataset(engine, UUID(data_set_id))
         file_path = f"{saved_dataset.name}/{phenotype}"
-        upload = s3.initiate_multi_part(file_path, file.filename)
-        part_number = 1
-        parts = []
-        # read and put 50 mb at a time--is that too small?
-        while contents := await file.read(1024 * 1024 * 50):
-            upload_part_response = s3.put_bytes(file_path, file.filename, contents, upload, part_number)
-            parts.append({
-                'PartNumber': part_number,
-                'ETag': upload_part_response['ETag']
-            })
-            part_number = part_number + 1
-        s3.finalize_upload(file_path, file.filename, parts, upload)
-        query.insert_phenotype_data_set(engine, data_set_id, phenotype, f"s3://{s3.BASE_BUCKET}/{file_path}",
-                                        dichotomous, sample_size, cases, controls)
+        await multipart_upload_to_s3(file, file_path)
+        phenotype_data_set_id = query.insert_phenotype_data_set(engine, data_set_id, phenotype,
+                                                                f"s3://{s3.BASE_BUCKET}/{file_path}",
+                                                                dichotomous, sample_size, cases, controls)
+    except Exception as e:
+        logger.exception("There was a problem uploading file", e)
+        response.status_code = 400
+        return {"message": f"There was an error uploading the file {file.filename}"}
+    finally:
+        await file.close()
+
+    return {"message": f"Successfully uploaded {file.filename}", "phenotype_data_set_id": phenotype_data_set_id}
+
+
+@router.post("/crediblesetupload/{phenotype_data_set_id}/{credible_set_name}")
+async def upload_credible_set_for_phenotype(phenotype_data_set_id: str, credible_set_name: str,
+                                            file: UploadFile, response: fastapi.Response):
+    try:
+        file_path = f"credible_sets/{phenotype_data_set_id}"
+        await multipart_upload_to_s3(file, file_path)
+        query.insert_credible_set(engine, phenotype_data_set_id, file_path, credible_set_name)
     except Exception as e:
         logger.exception("There was a problem uploading file", e)
         response.status_code = 400
@@ -95,6 +102,21 @@ async def upload_file_for_phenotype(data_set_id: str, phenotype: str, dichotomou
         await file.close()
 
     return {"message": f"Successfully uploaded {file.filename}"}
+
+
+async def multipart_upload_to_s3(file, file_path):
+    upload = s3.initiate_multi_part(file_path, file.filename)
+    part_number = 1
+    parts = []
+    # read and put 50 mb at a time--is that too small?
+    while contents := await file.read(1024 * 1024 * 50):
+        upload_part_response = s3.put_bytes(file_path, file.filename, contents, upload, part_number)
+        parts.append({
+            'PartNumber': part_number,
+            'ETag': upload_part_response['ETag']
+        })
+        part_number = part_number + 1
+    s3.finalize_upload(file_path, file.filename, parts, upload)
 
 
 @router.post('/studies', response_class=fastapi.responses.ORJSONResponse)

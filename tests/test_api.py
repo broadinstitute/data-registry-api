@@ -35,6 +35,11 @@ example_dataset_json = {
 }
 
 
+@pytest.fixture(autouse=True)
+def check_that_api_key_is_set():
+    assert api_key is not None and api_key.strip(), "Please set the DATA_REGISTRY_API_KEY environment variable"
+
+
 def test_get_datasets(api_client: TestClient):
     response = api_client.get(dataset_api_path, headers={ACCESS_TOKEN: api_key})
     assert response.status_code == HTTP_200_OK
@@ -65,6 +70,7 @@ def test_update_dataset(api_client: TestClient):
     copy.update({'id': response.json()['dataset_id']})
     response = api_client.patch(dataset_api_path, headers={ACCESS_TOKEN: api_key}, json=copy)
     assert response.status_code == HTTP_200_OK
+
 
 def save_study(api_client):
     response = api_client.post(study_api_path, headers={ACCESS_TOKEN: api_key}, json=example_study_json)
@@ -114,6 +120,28 @@ def test_upload_file(api_client: TestClient):
     assert file_text == "The answer is 47!\n"
 
 
+@mock_s3
+def test_upload_credible_set(api_client: TestClient):
+    set_up_moto_bucket()
+    new_record = example_dataset_json.copy()
+    record_name = 'file_upload_test'
+    study_id = save_study(api_client)
+    new_record.update({'study_id': study_id, 'name': record_name})
+    create_record_res = api_client.post(dataset_api_path, headers={ACCESS_TOKEN: api_key}, json=new_record)
+    assert create_record_res.status_code == HTTP_200_OK
+    with open("tests/sample_upload.txt", "rb") as f:
+        dataset_id = create_record_res.json()['dataset_id']
+        upload_response = api_client.post(f"/api/uploadfile/{dataset_id}/t1d/true/10", headers={ACCESS_TOKEN: api_key},
+                                          files={"file": f})
+        assert upload_response.status_code == HTTP_200_OK
+    with open("tests/sample_upload.txt", "rb") as f:
+        credible_set_name = "credible_set"
+        upload_response = api_client.post(f"/api/crediblesetupload/{upload_response.json()['phenotype_data_set_id']}"
+                                          f"/{credible_set_name}", headers={ACCESS_TOKEN: api_key},
+                                          files={"file": f})
+        assert upload_response.status_code == HTTP_200_OK
+
+
 @pytest.mark.parametrize("df", DataFormat.__members__.values())
 @mock_s3
 def test_valid_data_formats_post(api_client: TestClient, df: DataFormat):
@@ -131,4 +159,3 @@ def test_invalid_record_post(api_client: TestClient):
     new_record['ancestry'] = 'bad-ancestry'
     response = api_client.post(dataset_api_path, headers={ACCESS_TOKEN: api_key}, json=new_record)
     assert response.status_code == HTTP_422_UNPROCESSABLE_ENTITY
-
