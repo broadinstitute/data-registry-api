@@ -70,7 +70,7 @@ def insert_dataset(engine, data: DataSet):
             :publication, :study_id, NOW())
         """), sql_params)
         conn.commit()
-    return dataset_id
+        return dataset_id
 
 
 def update_dataset(engine, data: SavedDataset):
@@ -102,6 +102,19 @@ def insert_phenotype_data_set(engine, dataset_id: str, phenotype: str, s3_path: 
             VALUES(:id, :dataset_id, :phenotype, :s3_path, :dichotomous, :sample_size, :cases, NOW(), :file_name, 
             :controls)"""), sql_params)
         conn.commit()
+        return pd_id
+
+
+def insert_credible_set(engine, phenotype_dataset_id: str, s3_path: str, name: str):
+    with engine.connect() as conn:
+        credible_set_id = str(uuid.uuid4()).replace('-', '')
+        sql_params = {'id': credible_set_id, 'phenotype_data_set_id': phenotype_dataset_id, 's3_path': s3_path,
+                      'name': name}
+        conn.execute(text("""
+            INSERT INTO credible_sets (id, phenotype_data_set_id, s3_path, name, created_at) 
+            VALUES(:id, :phenotype_data_set_id, :s3_path, :name, NOW())"""), sql_params)
+        conn.commit()
+        return credible_set_id
 
 
 def get_study_for_dataset(engine, study_id: str) -> SavedStudy:
