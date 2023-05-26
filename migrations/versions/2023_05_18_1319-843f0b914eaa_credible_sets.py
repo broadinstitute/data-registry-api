@@ -27,7 +27,7 @@ def upgrade() -> None:
     `created_at` datetime NOT NULL,
     PRIMARY KEY (`id`),
     KEY `phenotype_data_set_id_fk` (`phenotype_data_set_id`),
-    CONSTRAINT `phenotype_data_set_id_fk` FOREIGN KEY (`phenotype_data_set_id`) REFERENCES `dataset_phenotypes` (`id`)
+    CONSTRAINT `phenotype_data_set_id_fk` FOREIGN KEY (`phenotype_data_set_id`) REFERENCES `dataset_phenotypes` (`id`) on delete cascade
     )
     """
     conn.execute(text(query))

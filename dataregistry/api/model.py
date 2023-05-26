@@ -105,3 +105,12 @@ class SavedDatasetInfo(BaseModel):
     dataset: SavedDataset
     study: SavedStudy
     phenotypes: list
+    credible_sets: list
+
+
+class SavedCredibleSet(BaseModel):
+    id: UUID
+    phenotype_data_set_id: UUID
+    name: str
+    s3_path: str
+    created_at: datetime

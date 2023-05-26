@@ -4,7 +4,7 @@ import uuid
 
 from sqlalchemy import text
 
-from dataregistry.api.model import SavedDataset, DataSet, Study, SavedStudy, SavedPhenotypeDataSet
+from dataregistry.api.model import SavedDataset, DataSet, Study, SavedStudy, SavedPhenotypeDataSet, SavedCredibleSet
 
 
 def get_all_datasets(engine) -> list:
@@ -85,6 +85,7 @@ def update_dataset(engine, data: SavedDataset):
             status = :status, description = :description, pub_id = :pub_id, publication = :publication, 
             study_id = :study_id where id = :id
         """), sql_params)
+        conn.execute(text("""delete from dataset_phenotypes where dataset_id = :id"""), sql_params)
         conn.commit()
 
 
@@ -138,3 +139,33 @@ def get_phenotypes_for_dataset(engine, dataset_id: uuid.UUID) -> SavedPhenotypeD
             raise ValueError(f"No records for id {dataset_id}")
         else:
             return [SavedPhenotypeDataSet(**row._asdict()) for row in results]
+
+
+def delete_dataset(engine, data_set_id):
+    with engine.connect() as conn:
+        no_dash_id = str(data_set_id).replace('-', '')
+        conn.execute(text("""
+            DELETE FROM credible_sets where phenotype_data_set_id in 
+            ( select id from dataset_phenotypes where dataset_id = :id)
+        """), {'id': no_dash_id})
+        conn.execute(text("""
+            DELETE FROM dataset_phenotypes where dataset_id = :id
+        """), {'id': no_dash_id})
+        conn.execute(text("""
+            DELETE FROM datasets where id = :id
+        """), {'id': no_dash_id})
+        conn.commit()
+
+
+def get_credible_sets_for_dataset(engine, phenotype_ids: list) -> list:
+    if len(phenotype_ids) == 0:
+        return []
+    with engine.connect() as conn:
+        params = {'ids': tuple([str(p_id).replace('-', '') for p_id in phenotype_ids])}
+        results = conn.execute(text("""SELECT id, phenotype_data_set_id, name, s3_path, created_at 
+                FROM credible_sets where phenotype_data_set_id in :ids
+            """), params)
+        if results is None:
+            raise ValueError(f"No records for id {phenotype_ids}")
+        else:
+            return [SavedCredibleSet(**row._asdict()) for row in results]

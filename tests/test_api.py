@@ -140,6 +140,9 @@ def test_upload_credible_set(api_client: TestClient):
                                           f"/{credible_set_name}", headers={ACCESS_TOKEN: api_key},
                                           files={"file": f})
         assert upload_response.status_code == HTTP_200_OK
+    saved_dataset = api_client.get(f"{dataset_api_path}/{dataset_id}", headers={ACCESS_TOKEN: api_key})
+    json = saved_dataset.json()
+    assert len(json['credible_sets']) == 1
 
 
 @pytest.mark.parametrize("df", DataFormat.__members__.values())

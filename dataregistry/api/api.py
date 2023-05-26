@@ -40,7 +40,9 @@ async def api_datasets(index: UUID):
         ds = query.get_dataset(engine, index)
         study = query.get_study_for_dataset(engine, ds.study_id)
         phenotypes = query.get_phenotypes_for_dataset(engine, index)
-        return SavedDatasetInfo(**{'dataset': ds, 'study': study, 'phenotypes': phenotypes})
+        credible_sets = query.get_credible_sets_for_dataset(engine, [phenotype.id for phenotype in phenotypes])
+        return SavedDatasetInfo(
+            **{'dataset': ds, 'study': study, 'phenotypes': phenotypes, 'credible_sets': credible_sets})
     except KeyError:
         raise fastapi.HTTPException(status_code=400, detail=f'Invalid index: {index}')
     except ValueError as e:
@@ -102,6 +104,18 @@ async def upload_credible_set_for_phenotype(phenotype_data_set_id: str, credible
         await file.close()
 
     return {"message": f"Successfully uploaded {file.filename}"}
+
+
+@router.delete("/datasets/{data_set_id}")
+async def delete_dataset(data_set_id: str, response: fastapi.Response):
+    try:
+        query.delete_dataset(engine, data_set_id)
+    except Exception as e:
+        logger.exception("There was a problem deleting dataset", e)
+        response.status_code = 400
+        return {"message": f"There was an error deleting the dataset {data_set_id}"}
+
+    return {"message": f"Successfully deleted dataset {data_set_id}"}
 
 
 async def multipart_upload_to_s3(file, file_path):

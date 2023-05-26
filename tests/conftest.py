@@ -38,6 +38,7 @@ def before_each_test():
         con.execute(text("TRUNCATE TABLE studies"))
         con.execute(text("TRUNCATE TABLE datasets"))
         con.execute(text("TRUNCATE TABLE dataset_phenotypes"))
+        con.execute(text("TRUNCATE TABLE credible_sets"))
         con.execute(text("SET FOREIGN_KEY_CHECKS = 1"))
 
 
