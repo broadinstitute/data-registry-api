@@ -95,6 +95,7 @@ class SavedPhenotypeDataSet(BaseModel):
     id: UUID
     phenotype: str
     dichotomous: bool
+    file_name: str
     sample_size: int
     cases: Union[int, None]
     controls: Union[int, None]
@@ -112,5 +113,6 @@ class SavedCredibleSet(BaseModel):
     id: UUID
     phenotype_data_set_id: UUID
     name: str
+    file_name: str
     s3_path: str
     created_at: datetime

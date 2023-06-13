@@ -72,21 +72,21 @@ async def api_publications(pub_id: str):
 async def upload_file_for_phenotype(data_set_id: str, phenotype: str, dichotomous: bool, file: UploadFile,
                                     sample_size: int, response: fastapi.Response, cases: int = None,
                                     controls: int = None):
+    filename = file.filename
     try:
         saved_dataset = query.get_dataset(engine, UUID(data_set_id))
         file_path = f"{saved_dataset.name}/{phenotype}"
         await multipart_upload_to_s3(file, file_path)
-        phenotype_data_set_id = query.insert_phenotype_data_set(engine, data_set_id, phenotype,
-                                                                f"s3://{s3.BASE_BUCKET}/{file_path}",
-                                                                dichotomous, sample_size, cases, controls)
+        pd_id = query.insert_phenotype_data_set(engine, data_set_id, phenotype,
+                                                f"s3://{s3.BASE_BUCKET}/{file_path}/{filename}", dichotomous,
+                                                sample_size, cases, controls, filename)
+        return {"message": f"Successfully uploaded {filename}", "phenotype_data_set_id": pd_id}
     except Exception as e:
         logger.exception("There was a problem uploading file", e)
         response.status_code = 400
-        return {"message": f"There was an error uploading the file {file.filename}"}
+        return {"message": f"There was an error uploading the file {filename}"}
     finally:
         await file.close()
-
-    return {"message": f"Successfully uploaded {file.filename}", "phenotype_data_set_id": phenotype_data_set_id}
 
 
 @router.post("/crediblesetupload/{phenotype_data_set_id}/{credible_set_name}")
@@ -95,7 +95,7 @@ async def upload_credible_set_for_phenotype(phenotype_data_set_id: str, credible
     try:
         file_path = f"credible_sets/{phenotype_data_set_id}"
         await multipart_upload_to_s3(file, file_path)
-        query.insert_credible_set(engine, phenotype_data_set_id, file_path, credible_set_name)
+        query.insert_credible_set(engine, phenotype_data_set_id, file_path, credible_set_name, file.filename)
     except Exception as e:
         logger.exception("There was a problem uploading file", e)
         response.status_code = 400
@@ -116,6 +116,18 @@ async def delete_dataset(data_set_id: str, response: fastapi.Response):
         return {"message": f"There was an error deleting the dataset {data_set_id}"}
 
     return {"message": f"Successfully deleted dataset {data_set_id}"}
+
+
+@router.delete("/phenotypes/{phenotype_data_set_id}")
+async def delete_phenotype(phenotype_data_set_id: str, response: fastapi.Response):
+    try:
+        query.delete_phenotype(engine, phenotype_data_set_id)
+    except Exception as e:
+        logger.exception("There was a problem deleting phenotype", e)
+        response.status_code = 400
+        return {"message": f"There was an error deleting the phenotype {phenotype_data_set_id}"}
+
+    return {"message": f"Successfully deleted phenotype {phenotype_data_set_id}"}
 
 
 async def multipart_upload_to_s3(file, file_path):

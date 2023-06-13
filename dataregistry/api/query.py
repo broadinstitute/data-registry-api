@@ -85,16 +85,15 @@ def update_dataset(engine, data: SavedDataset):
             status = :status, description = :description, pub_id = :pub_id, publication = :publication, 
             study_id = :study_id where id = :id
         """), sql_params)
-        conn.execute(text("""delete from dataset_phenotypes where dataset_id = :id"""), sql_params)
         conn.commit()
 
 
 def insert_phenotype_data_set(engine, dataset_id: str, phenotype: str, s3_path: str, dichotomous: bool,
-                              sample_size: int, cases: int, controls: int):
+                              sample_size: int, cases: int, controls: int, file_name: str):
     with engine.connect() as conn:
         pd_id = str(uuid.uuid4()).replace('-', '')
         sql_params = {'id': pd_id, 'dataset_id': dataset_id, 's3_path': s3_path, 'phenotype': phenotype,
-                      'dichotomous': dichotomous, 'sample_size': sample_size, 'cases': cases, 'file_name': 'boo',
+                      'dichotomous': dichotomous, 'sample_size': sample_size, 'cases': cases, 'file_name': file_name,
                       'controls': controls
                       }
         conn.execute(text("""
@@ -106,14 +105,14 @@ def insert_phenotype_data_set(engine, dataset_id: str, phenotype: str, s3_path: 
         return pd_id
 
 
-def insert_credible_set(engine, phenotype_dataset_id: str, s3_path: str, name: str):
+def insert_credible_set(engine, phenotype_dataset_id: str, s3_path: str, name: str, file_name: str):
     with engine.connect() as conn:
         credible_set_id = str(uuid.uuid4()).replace('-', '')
         sql_params = {'id': credible_set_id, 'phenotype_data_set_id': phenotype_dataset_id, 's3_path': s3_path,
-                      'name': name}
+                      'name': name, 'file_name': file_name}
         conn.execute(text("""
-            INSERT INTO credible_sets (id, phenotype_data_set_id, s3_path, name, created_at) 
-            VALUES(:id, :phenotype_data_set_id, :s3_path, :name, NOW())"""), sql_params)
+            INSERT INTO credible_sets (id, phenotype_data_set_id, s3_path, name, file_name, created_at) 
+            VALUES(:id, :phenotype_data_set_id, :s3_path, :name, :file_name, NOW())"""), sql_params)
         conn.commit()
         return credible_set_id
 
@@ -132,7 +131,7 @@ def get_study_for_dataset(engine, study_id: str) -> SavedStudy:
 
 def get_phenotypes_for_dataset(engine, dataset_id: uuid.UUID) -> SavedPhenotypeDataSet:
     with engine.connect() as conn:
-        results = conn.execute(text("""SELECT id, phenotype, dichotomous, sample_size, cases, controls, created_at 
+        results = conn.execute(text("""SELECT id, phenotype, dichotomous, sample_size, cases, controls, created_at, file_name 
                 FROM dataset_phenotypes where dataset_id = :id
             """), {'id': str(dataset_id).replace('-', '')})
         if results is None:
@@ -157,12 +156,24 @@ def delete_dataset(engine, data_set_id):
         conn.commit()
 
 
+def delete_phenotype(engine, phenotype_id):
+    with engine.connect() as conn:
+        no_dash_id = str(phenotype_id).replace('-', '')
+        conn.execute(text("""
+            DELETE FROM credible_sets where phenotype_data_set_id = :id
+        """), {'id': no_dash_id})
+        conn.execute(text("""
+            DELETE FROM dataset_phenotypes where id = :id
+        """), {'id': no_dash_id})
+        conn.commit()
+
+
 def get_credible_sets_for_dataset(engine, phenotype_ids: list) -> list:
     if len(phenotype_ids) == 0:
         return []
     with engine.connect() as conn:
         params = {'ids': tuple([str(p_id).replace('-', '') for p_id in phenotype_ids])}
-        results = conn.execute(text("""SELECT id, phenotype_data_set_id, name, s3_path, created_at 
+        results = conn.execute(text("""SELECT id, phenotype_data_set_id, name, s3_path, file_name, created_at 
                 FROM credible_sets where phenotype_data_set_id in :ids
             """), params)
         if results is None:
