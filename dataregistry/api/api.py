@@ -95,7 +95,7 @@ async def upload_credible_set_for_phenotype(phenotype_data_set_id: str, credible
     try:
         file_path = f"credible_sets/{phenotype_data_set_id}"
         await multipart_upload_to_s3(file, file_path)
-        query.insert_credible_set(engine, phenotype_data_set_id, file_path, credible_set_name, file.filename)
+        cs_id = query.insert_credible_set(engine, phenotype_data_set_id, file_path, credible_set_name, file.filename)
     except Exception as e:
         logger.exception("There was a problem uploading file", e)
         response.status_code = 400
@@ -103,7 +103,7 @@ async def upload_credible_set_for_phenotype(phenotype_data_set_id: str, credible
     finally:
         await file.close()
 
-    return {"message": f"Successfully uploaded {file.filename}"}
+    return {"message": f"Successfully uploaded {file.filename}", "credible_set_id": cs_id}
 
 
 @router.delete("/datasets/{data_set_id}")
