@@ -1,3 +1,4 @@
+import io
 import json
 import logging
 from uuid import UUID
@@ -8,6 +9,7 @@ import sqlalchemy
 import xmltodict
 from botocore.exceptions import ClientError
 from fastapi import UploadFile
+from starlette.responses import StreamingResponse
 
 from dataregistry.api import query, s3
 from dataregistry.api.db import DataRegistryReadWriteDB
@@ -87,6 +89,40 @@ async def upload_file_for_phenotype(data_set_id: str, phenotype: str, dichotomou
         return {"message": f"There was an error uploading the file {filename}"}
     finally:
         await file.close()
+
+
+@router.get("/files/{data_set_id}")
+async def stream_file(data_set_id: str, filename: str):
+    try:
+        ds_uuid = UUID(data_set_id)
+        ds = query.get_dataset(engine, ds_uuid)
+        if not ds.publicly_available:
+            raise fastapi.HTTPException(status_code=403, detail=f'{data_set_id} is not publicly available')
+    except ValueError:
+        raise fastapi.HTTPException(status_code=404, detail=f'Invalid index: {data_set_id}')
+    available_files = await get_possible_files(ds, ds_uuid)
+    if filename not in available_files:
+        raise fastapi.HTTPException(status_code=404, detail=f'File {filename} not found')
+
+    obj = s3.get_file_obj(filename)
+
+    def generator():
+        for chunk in iter(lambda: obj['Body'].read(4096), b''):
+            yield chunk
+
+    return StreamingResponse(generator(), media_type='application/octet-stream')
+
+
+async def get_possible_files(ds, ds_uuid):
+    available_files = []
+    phenos = query.get_phenotypes_for_dataset(engine, ds_uuid)
+    for pheno in phenos:
+        available_files.append(f"{ds.name}/{pheno.phenotype}/{pheno.file_name}")
+    if phenos:
+        credible_sets = query.get_credible_sets_for_dataset(engine, [pheno.id for pheno in phenos])
+        for cs in credible_sets:
+            available_files.append(f"credible_sets/{cs.phenotype_data_set_id}/{cs.file_name}")
+    return available_files
 
 
 @router.post("/crediblesetupload/{phenotype_data_set_id}/{credible_set_name}")

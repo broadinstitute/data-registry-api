@@ -11,7 +11,7 @@ def get_all_datasets(engine) -> list:
     with engine.connect() as conn:
         results = conn.execute(text("""select id, name, data_source_type, data_type, genome_build, ancestry, sex, 
         global_sample_size, status, data_submitter, data_submitter_email, data_contributor, data_contributor_email, 
-        study_id, description, pub_id, publication, created_at from datasets"""))
+        study_id, description, pub_id, publication, created_at, publicly_available from datasets"""))
     return [SavedDataset(**row._asdict()) for row in results]
 
 
@@ -64,10 +64,10 @@ def insert_dataset(engine, data: DataSet):
         conn.execute(text("""
             INSERT INTO datasets (id, name, data_source_type, data_type, genome_build,
             ancestry, data_contributor, data_contributor_email, data_submitter, data_submitter_email,  
-            sex, global_sample_size, status, description, pub_id, publication, study_id, created_at) VALUES(:id, :name, 
-            :data_source_type, :data_type, :genome_build, :ancestry, :data_contributor, :data_contributor_email, 
-            :data_submitter, :data_submitter_email, :sex, :global_sample_size, :status, :description, :pub_id,
-            :publication, :study_id, NOW())
+            sex, global_sample_size, status, description, pub_id, publication, study_id, created_at, publicly_available) 
+            VALUES(:id, :name, :data_source_type, :data_type, :genome_build, :ancestry, :data_contributor, 
+            :data_contributor_email, :data_submitter, :data_submitter_email, :sex, :global_sample_size, :status, 
+            :description, :pub_id, :publication, :study_id, NOW(), :publicly_available)
         """), sql_params)
         conn.commit()
         return dataset_id
@@ -129,7 +129,7 @@ def get_study_for_dataset(engine, study_id: str) -> SavedStudy:
             return SavedStudy(**result._asdict())
 
 
-def get_phenotypes_for_dataset(engine, dataset_id: uuid.UUID) -> SavedPhenotypeDataSet:
+def get_phenotypes_for_dataset(engine, dataset_id: uuid.UUID) -> list:
     with engine.connect() as conn:
         results = conn.execute(text("""SELECT id, phenotype, dichotomous, sample_size, cases, controls, created_at, file_name 
                 FROM dataset_phenotypes where dataset_id = :id

@@ -84,6 +84,7 @@ class DataSet(BaseModel, extra=Extra.forbid):
     study_id: str
     pub_id: Union[str, None]
     publication: Union[str, None]
+    publicly_available: Union[bool, None] = Field(title="Whether the data is publicly available")
 
 
 class SavedDataset(DataSet):
