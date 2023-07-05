@@ -83,7 +83,7 @@ def update_dataset(engine, data: SavedDataset):
             data_contributor_email = :data_contributor_email, data_submitter = :data_submitter, 
             data_submitter_email = :data_submitter_email, sex = :sex, global_sample_size = :global_sample_size, 
             status = :status, description = :description, pub_id = :pub_id, publication = :publication, 
-            study_id = :study_id where id = :id
+            study_id = :study_id, publicly_available = :publicly_available where id = :id
         """), sql_params)
         conn.commit()
 
