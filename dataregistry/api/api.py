@@ -91,8 +91,8 @@ async def upload_file_for_phenotype(data_set_id: str, phenotype: str, dichotomou
         await file.close()
 
 
-@router.get("/files/{data_set_id}")
-async def stream_file(data_set_id: str, filename: str):
+@router.get("/filelist/{data_set_id}")
+async def get_file_list(data_set_id: str):
     try:
         ds_uuid = UUID(data_set_id)
         ds = query.get_dataset(engine, ds_uuid)
@@ -100,11 +100,24 @@ async def stream_file(data_set_id: str, filename: str):
             raise fastapi.HTTPException(status_code=403, detail=f'{data_set_id} is not publicly available')
     except ValueError:
         raise fastapi.HTTPException(status_code=404, detail=f'Invalid index: {data_set_id}')
-    available_files = await get_possible_files(ds, ds_uuid)
-    if filename not in available_files:
-        raise fastapi.HTTPException(status_code=404, detail=f'File {filename} not found')
+    files = get_possible_files(ds, ds_uuid)
+    return [{'path': f, 'name': f.split('/')[-1]} for f in files]
 
-    obj = s3.get_file_obj(filename)
+
+@router.get("/files/{data_set_id}/{filename}", name="stream_file")
+async def stream_file(data_set_id: str, filename: str, filepath: str):
+    try:
+        ds_uuid = UUID(data_set_id)
+        ds = query.get_dataset(engine, ds_uuid)
+        if not ds.publicly_available:
+            raise fastapi.HTTPException(status_code=403, detail=f'{data_set_id} is not publicly available')
+    except ValueError:
+        raise fastapi.HTTPException(status_code=404, detail=f'Invalid index: {data_set_id}')
+    available_files = get_possible_files(ds, ds_uuid)
+    if filepath not in available_files:
+        raise fastapi.HTTPException(status_code=404, detail=f'File {filepath} not found')
+
+    obj = s3.get_file_obj(filepath)
 
     def generator():
         for chunk in iter(lambda: obj['Body'].read(4096), b''):
@@ -113,7 +126,7 @@ async def stream_file(data_set_id: str, filename: str):
     return StreamingResponse(generator(), media_type='application/octet-stream')
 
 
-async def get_possible_files(ds, ds_uuid):
+def get_possible_files(ds, ds_uuid):
     available_files = []
     phenos = query.get_phenotypes_for_dataset(engine, ds_uuid)
     for pheno in phenos:
