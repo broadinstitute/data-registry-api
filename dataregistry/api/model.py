@@ -113,6 +113,7 @@ class SavedDatasetInfo(BaseModel):
 class SavedCredibleSet(BaseModel):
     id: UUID
     phenotype_data_set_id: UUID
+    phenotype: str
     name: str
     file_name: str
     s3_path: str

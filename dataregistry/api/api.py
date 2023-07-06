@@ -100,8 +100,7 @@ async def get_file_list(data_set_id: str):
             raise fastapi.HTTPException(status_code=403, detail=f'{data_set_id} is not publicly available')
     except ValueError:
         raise fastapi.HTTPException(status_code=404, detail=f'Invalid index: {data_set_id}')
-    files = get_possible_files(ds, ds_uuid)
-    return [{'path': f, 'name': f.split('/')[-1]} for f in files]
+    return get_possible_files(ds, ds_uuid)
 
 
 @router.get("/files/{data_set_id}/{filename}", name="stream_file")
@@ -113,7 +112,7 @@ async def stream_file(data_set_id: str, filename: str, filepath: str):
             raise fastapi.HTTPException(status_code=403, detail=f'{data_set_id} is not publicly available')
     except ValueError:
         raise fastapi.HTTPException(status_code=404, detail=f'Invalid index: {data_set_id}')
-    available_files = get_possible_files(ds, ds_uuid)
+    available_files = [file['path'] for file in get_possible_files(ds, ds_uuid)]
     if filepath not in available_files:
         raise fastapi.HTTPException(status_code=404, detail=f'File {filepath} not found')
 
@@ -130,11 +129,14 @@ def get_possible_files(ds, ds_uuid):
     available_files = []
     phenos = query.get_phenotypes_for_dataset(engine, ds_uuid)
     for pheno in phenos:
-        available_files.append(f"{ds.name}/{pheno.phenotype}/{pheno.file_name}")
+        available_files.append({'path': f"{ds.name}/{pheno.phenotype}/{pheno.file_name}", 'name': pheno.file_name,
+                                'phenotype': pheno.phenotype, 'created_at': pheno.created_at, 'type': 'data set'})
     if phenos:
         credible_sets = query.get_credible_sets_for_dataset(engine, [pheno.id for pheno in phenos])
         for cs in credible_sets:
-            available_files.append(f"credible_sets/{cs.phenotype_data_set_id}/{cs.file_name}")
+            available_files.append({'path': f"credible_sets/{cs.phenotype_data_set_id}/{cs.file_name}",
+                                    'name': cs.file_name, 'phenotype': cs.phenotype, 'type': 'credible set',
+                                    'created_at': cs.created_at})
     return available_files
 
 

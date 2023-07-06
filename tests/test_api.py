@@ -126,6 +126,16 @@ def test_uploaded_file_is_public(api_client: TestClient):
         headers={ACCESS_TOKEN: api_key})
     assert response.status_code == HTTP_200_OK
 
+@mock_s3
+def test_list_files(api_client: TestClient):
+    new_record = add_ds_with_file(api_client, public=True)
+    response = api_client.get(f"/api/filelist/{new_record['id']}", headers={ACCESS_TOKEN: api_key})
+    assert response.status_code == HTTP_200_OK
+    result = response.json()[0]
+    assert result['name'] == 'sample_upload.txt'
+    assert result['phenotype'] == 't1d'
+    assert result['type'] == 'data set'
+
 
 def add_ds_with_file(api_client, public=False):
     set_up_moto_bucket()
