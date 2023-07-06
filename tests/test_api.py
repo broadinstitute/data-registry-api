@@ -113,7 +113,7 @@ def test_upload_file(api_client: TestClient):
 @mock_s3
 def test_uploaded_file_is_not_public(api_client: TestClient):
     new_record = add_ds_with_file(api_client)
-    response = api_client.get(f"/api/files/{new_record['id']}?filename={new_record['name']}/t1d/sample_upload.txt",
+    response = api_client.get(f"/api/files/{new_record['id']}/sample_upload.txt?filepath={new_record['name']}/t1d/sample_upload.txt",
                               headers={ACCESS_TOKEN: api_key})
     assert response.status_code == HTTP_403_FORBIDDEN
 
@@ -122,7 +122,7 @@ def test_uploaded_file_is_not_public(api_client: TestClient):
 def test_uploaded_file_is_public(api_client: TestClient):
     new_record = add_ds_with_file(api_client, public=True)
     response = api_client.get(
-        f"/api/files/{new_record['id']}?filename={new_record['name']}/t1d/sample_upload.txt",
+        f"/api/files/{new_record['id']}/sample_upload.txt?filepath={new_record['name']}/t1d/sample_upload.txt",
         headers={ACCESS_TOKEN: api_key})
     assert response.status_code == HTTP_200_OK
 
