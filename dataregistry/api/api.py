@@ -134,7 +134,7 @@ def get_possible_files(ds, ds_uuid):
     if phenos:
         credible_sets = query.get_credible_sets_for_dataset(engine, [pheno.id for pheno in phenos])
         for cs in credible_sets:
-            available_files.append({'path': f"credible_sets/{cs.phenotype_data_set_id}/{cs.file_name}",
+            available_files.append({'path': f"credible_sets/{cs.phenotype_data_set_id.replace('-', '')}/{cs.file_name}",
                                     'name': cs.file_name, 'phenotype': cs.phenotype, 'type': 'credible set',
                                     'created_at': cs.created_at})
     return available_files
