@@ -108,15 +108,15 @@ async def stream_file(phenotype: str, file_id: str, file_type: str, file_name: s
     no_dash_id = file_id.replace('-', '')
     try:
         if file_type == "credible-set":
-            file = query.get_credible_set_file(engine, no_dash_id)
+            s3_path = query.get_credible_set_file(engine, no_dash_id)
         elif file_type == "data":
-            file = query.get_phenotype_file(engine, no_dash_id)
+            s3_path = query.get_phenotype_file(engine, no_dash_id)
         else:
             raise fastapi.HTTPException(status_code=404, detail=f'Invalid file type: {file_type}')
     except ValueError:
         raise fastapi.HTTPException(status_code=404, detail=f'Invalid file: {file_id}')
 
-    obj = s3.get_file_obj(file.s3_path.replace(f's3://{s3.BASE_BUCKET}/', ''))
+    obj = s3.get_file_obj(s3_path.replace(f's3://{s3.BASE_BUCKET}/', ''))
 
     def generator():
         for chunk in iter(lambda: obj['Body'].read(4096), b''):

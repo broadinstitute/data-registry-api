@@ -168,10 +168,9 @@ def delete_phenotype(engine, phenotype_id):
         conn.commit()
 
 
-def get_credible_set_file(engine, credible_set_id: str) -> SavedCredibleSet:
+def get_credible_set_file(engine, credible_set_id: str) -> str:
     with engine.connect() as conn:
-        result = conn.execute(text("""SELECT cs.id, cs.phenotype_data_set_id, cs.name, cs.s3_path, cs.file_name, 
-        cs.created_at, cs.file_size, p.phenotype FROM credible_sets cs 
+        result = conn.execute(text("""SELECT cs.s3_path FROM credible_sets cs 
         join dataset_phenotypes p on cs.phenotype_data_set_id = p.id 
         join datasets d on p.dataset_id = d.id
         where cs.id = :id and d.publicly_available = true
@@ -179,20 +178,18 @@ def get_credible_set_file(engine, credible_set_id: str) -> SavedCredibleSet:
         if result is None:
             raise ValueError(f"No records for id {credible_set_id}")
         else:
-            return SavedCredibleSet(**result._asdict())
+            return result.s3_path
 
 
-def get_phenotype_file(engine, phenotype_id: str) -> SavedPhenotypeDataSet:
+def get_phenotype_file(engine, phenotype_id: str) -> str:
     with engine.connect() as conn:
-        result = conn.execute(text("""SELECT p.id, p.sample_size, p.dichotomous, p.dataset_id, p.phenotype, p.s3_path, 
-        p.file_name, p.created_at, 
-        p.file_size FROM dataset_phenotypes p join datasets d on p.dataset_id = d.id 
-                where p.id = :id and d.publicly_available = true
+        result = conn.execute(text("""SELECT p.s3_path FROM dataset_phenotypes p 
+        join datasets d on p.dataset_id = d.id where p.id = :id and d.publicly_available = true
             """), {'id': phenotype_id}).first()
         if result is None:
             raise ValueError(f"No records for id {phenotype_id}")
         else:
-            return SavedPhenotypeDataSet(**result._asdict())
+            return result.s3_path
 
 
 def get_credible_sets_for_dataset(engine, phenotype_ids: list) -> list:
