@@ -4,7 +4,7 @@ import boto3
 import pytest
 from fastapi.testclient import TestClient
 from moto import mock_s3
-from starlette.status import HTTP_422_UNPROCESSABLE_ENTITY, HTTP_200_OK, HTTP_403_FORBIDDEN
+from starlette.status import HTTP_422_UNPROCESSABLE_ENTITY, HTTP_200_OK, HTTP_404_NOT_FOUND
 
 from dataregistry.api.model import DataFormat
 
@@ -113,16 +113,16 @@ def test_upload_file(api_client: TestClient):
 @mock_s3
 def test_uploaded_file_is_not_public(api_client: TestClient):
     new_record = add_ds_with_file(api_client)
-    response = api_client.get(f"/api/files/{new_record['id']}/sample_upload.txt?filepath={new_record['name']}/t1d/sample_upload.txt",
+    response = api_client.get(f"/api/files/{new_record['phenotype_data_set_id']}/t1d/data/sample_upload.txt?filepath={new_record['name']}/t1d/sample_upload.txt",
                               headers={ACCESS_TOKEN: api_key})
-    assert response.status_code == HTTP_403_FORBIDDEN
+    assert response.status_code == HTTP_404_NOT_FOUND
 
 
 @mock_s3
 def test_uploaded_file_is_public(api_client: TestClient):
     new_record = add_ds_with_file(api_client, public=True)
     response = api_client.get(
-        f"/api/files/{new_record['id']}/sample_upload.txt?filepath={new_record['name']}/t1d/sample_upload.txt",
+        f"/api/files/{new_record['phenotype_data_set_id']}/t1d/data/sample_upload.txt",
         headers={ACCESS_TOKEN: api_key})
     assert response.status_code == HTTP_200_OK
 
@@ -132,9 +132,7 @@ def test_list_files(api_client: TestClient):
     response = api_client.get(f"/api/filelist/{new_record['id']}", headers={ACCESS_TOKEN: api_key})
     assert response.status_code == HTTP_200_OK
     result = response.json()[0]
-    assert result['name'] == 'sample_upload.txt'
-    assert result['phenotype'] == 't1d'
-    assert result['type'] == 'data set'
+    assert result == f"files/{new_record['phenotype_data_set_id']}/t1d/data/sample_upload.txt"
 
 
 def add_ds_with_file(api_client, public=False):

@@ -101,6 +101,8 @@ class SavedPhenotypeDataSet(BaseModel):
     cases: Union[int, None]
     controls: Union[int, None]
     created_at: datetime
+    s3_path: str
+    file_size: int
 
 
 class SavedDatasetInfo(BaseModel):
@@ -118,3 +120,4 @@ class SavedCredibleSet(BaseModel):
     file_name: str
     s3_path: str
     created_at: datetime
+    file_size: int

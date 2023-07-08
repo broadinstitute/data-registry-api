@@ -78,10 +78,10 @@ async def upload_file_for_phenotype(data_set_id: str, phenotype: str, dichotomou
     try:
         saved_dataset = query.get_dataset(engine, UUID(data_set_id))
         file_path = f"{saved_dataset.name}/{phenotype}"
-        await multipart_upload_to_s3(file, file_path)
+        file_size = await multipart_upload_to_s3(file, file_path)
         pd_id = query.insert_phenotype_data_set(engine, data_set_id, phenotype,
                                                 f"s3://{s3.BASE_BUCKET}/{file_path}/{filename}", dichotomous,
-                                                sample_size, cases, controls, filename)
+                                                sample_size, cases, controls, filename, file_size)
         return {"message": f"Successfully uploaded {filename}", "phenotype_data_set_id": pd_id}
     except Exception as e:
         logger.exception("There was a problem uploading file", e)
@@ -100,23 +100,23 @@ async def get_file_list(data_set_id: str):
             raise fastapi.HTTPException(status_code=403, detail=f'{data_set_id} is not publicly available')
     except ValueError:
         raise fastapi.HTTPException(status_code=404, detail=f'Invalid index: {data_set_id}')
-    return get_possible_files(ds, ds_uuid)
+    return get_possible_files(ds_uuid)
 
 
-@router.get("/files/{data_set_id}/{filename}", name="stream_file")
-async def stream_file(data_set_id: str, filename: str, filepath: str):
+@router.get("/files/{file_id}/{phenotype}/{file_type}/{file_name}", name="stream_file")
+async def stream_file(phenotype: str, file_id: str, file_type: str, file_name: str):
+    no_dash_id = file_id.replace('-', '')
     try:
-        ds_uuid = UUID(data_set_id)
-        ds = query.get_dataset(engine, ds_uuid)
-        if not ds.publicly_available:
-            raise fastapi.HTTPException(status_code=403, detail=f'{data_set_id} is not publicly available')
+        if file_type == "credible-set":
+            file = query.get_credible_set_file(engine, no_dash_id)
+        elif file_type == "data":
+            file = query.get_phenotype_file(engine, no_dash_id)
+        else:
+            raise fastapi.HTTPException(status_code=404, detail=f'Invalid file type: {file_type}')
     except ValueError:
-        raise fastapi.HTTPException(status_code=404, detail=f'Invalid index: {data_set_id}')
-    available_files = [file['path'] for file in get_possible_files(ds, ds_uuid)]
-    if filepath not in available_files:
-        raise fastapi.HTTPException(status_code=404, detail=f'File {filepath} not found')
+        raise fastapi.HTTPException(status_code=404, detail=f'Invalid file: {file_id}')
 
-    obj = s3.get_file_obj(filepath)
+    obj = s3.get_file_obj(file.s3_path.replace(f's3://{s3.BASE_BUCKET}/', ''))
 
     def generator():
         for chunk in iter(lambda: obj['Body'].read(4096), b''):
@@ -125,18 +125,15 @@ async def stream_file(data_set_id: str, filename: str, filepath: str):
     return StreamingResponse(generator(), media_type='application/octet-stream')
 
 
-def get_possible_files(ds, ds_uuid):
+def get_possible_files(ds_uuid):
     available_files = []
     phenos = query.get_phenotypes_for_dataset(engine, ds_uuid)
-    for pheno in phenos:
-        available_files.append({'path': f"{ds.name}/{pheno.phenotype}/{pheno.file_name}", 'name': pheno.file_name,
-                                'phenotype': pheno.phenotype, 'created_at': pheno.created_at, 'type': 'data set'})
+    available_files.extend([f"files/{str(pheno.id).replace('-', '')}/{pheno.phenotype}/data/{pheno.file_name}" for pheno in phenos])
+
     if phenos:
         credible_sets = query.get_credible_sets_for_dataset(engine, [pheno.id for pheno in phenos])
-        for cs in credible_sets:
-            available_files.append({'path': f"credible_sets/{str(cs.phenotype_data_set_id).replace('-', '')}/{cs.file_name}",
-                                    'name': cs.file_name, 'phenotype': cs.phenotype, 'type': 'credible set',
-                                    'created_at': cs.created_at})
+        available_files.extend([f"files/{str(cs.id).replace('-', '')}/{cs.phenotype}/credible-set/{cs.file_name}" for cs in credible_sets])
+
     return available_files
 
 
@@ -145,8 +142,10 @@ async def upload_credible_set_for_phenotype(phenotype_data_set_id: str, credible
                                             file: UploadFile, response: fastapi.Response):
     try:
         file_path = f"credible_sets/{phenotype_data_set_id}"
-        await multipart_upload_to_s3(file, file_path)
-        cs_id = query.insert_credible_set(engine, phenotype_data_set_id, file_path, credible_set_name, file.filename)
+        file_size = await multipart_upload_to_s3(file, file_path)
+        cs_id = query.insert_credible_set(engine, phenotype_data_set_id,
+                                          f"s3://{s3.BASE_BUCKET}/{file_path}/{file.filename}", credible_set_name,
+                                          file.filename,file_size)
     except Exception as e:
         logger.exception("There was a problem uploading file", e)
         response.status_code = 400
@@ -185,8 +184,10 @@ async def multipart_upload_to_s3(file, file_path):
     upload = s3.initiate_multi_part(file_path, file.filename)
     part_number = 1
     parts = []
+    size = 0
     # read and put 50 mb at a time--is that too small?
     while contents := await file.read(1024 * 1024 * 50):
+        size += len(contents)
         upload_part_response = s3.put_bytes(file_path, file.filename, contents, upload, part_number)
         parts.append({
             'PartNumber': part_number,
@@ -194,6 +195,7 @@ async def multipart_upload_to_s3(file, file_path):
         })
         part_number = part_number + 1
     s3.finalize_upload(file_path, file.filename, parts, upload)
+    return size
 
 
 @router.post('/studies', response_class=fastapi.responses.ORJSONResponse)
