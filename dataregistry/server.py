@@ -31,7 +31,8 @@ origins = [
     "http://localhost:3000",
     "http://localhost",
     "http://data-registry-vue.s3-website-us-east-1.amazonaws.com",
-    "https://dcicue2yl1fq.cloudfront.net"
+    "https://dcicue2yl1fq.cloudfront.net",
+    "https://d68r3fsifmwz.cloudfront.net"
 ]
 # enable cross-origin resource sharing
 app.add_middleware(
