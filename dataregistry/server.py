@@ -30,7 +30,8 @@ app.include_router(api.router, prefix='/api', tags=['api'])
 origins = [
     "http://localhost:3000",
     "http://localhost",
-    "http://data-registry-vue.s3-website-us-east-1.amazonaws.com"
+    "http://data-registry-vue.s3-website-us-east-1.amazonaws.com",
+    "https://d68r3fsifmwz.cloudfront.net"
 ]
 # enable cross-origin resource sharing
 app.add_middleware(
