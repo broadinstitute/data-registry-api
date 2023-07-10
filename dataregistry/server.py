@@ -18,7 +18,11 @@ async def verify_token(access_token: str = Header()):
 
 
 # create web server
-app = fastapi.FastAPI(title='DataRegistry', redoc_url=None, dependencies=[Depends(verify_token)])
+app = fastapi.FastAPI(title='DataRegistry', redoc_url=None)
+
+for route in api.router.routes:
+    if route.name != 'stream_file':
+        route.dependencies.append(Depends(verify_token))
 
 # all the various routers for each api
 app.include_router(api.router, prefix='/api', tags=['api'])
@@ -26,7 +30,9 @@ app.include_router(api.router, prefix='/api', tags=['api'])
 origins = [
     "http://localhost:3000",
     "http://localhost",
-    "http://data-registry-vue.s3-website-us-east-1.amazonaws.com"
+    "http://data-registry-vue.s3-website-us-east-1.amazonaws.com",
+    "https://dcicue2yl1fq.cloudfront.net",
+    "https://d68r3fsifmwz.cloudfront.net"
 ]
 # enable cross-origin resource sharing
 app.add_middleware(

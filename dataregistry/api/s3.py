@@ -33,6 +33,11 @@ def put_bytes(directory, file_name, contents, upload, part_number):
     return upload_part_response
 
 
+def get_file_obj(path: str):
+    s3_client = boto3.client('s3', region_name=S3_REGION)
+    return s3_client.get_object(Bucket=BASE_BUCKET, Key=path)
+
+
 def delete_record_directory(record_name):
     _delete_directory(record_name)
 

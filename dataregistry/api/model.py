@@ -84,6 +84,7 @@ class DataSet(BaseModel, extra=Extra.forbid):
     study_id: str
     pub_id: Union[str, None]
     publication: Union[str, None]
+    publicly_available: Union[bool, None] = Field(title="Whether the data is publicly available")
 
 
 class SavedDataset(DataSet):
@@ -100,6 +101,8 @@ class SavedPhenotypeDataSet(BaseModel):
     cases: Union[int, None]
     controls: Union[int, None]
     created_at: datetime
+    s3_path: str
+    file_size: int
 
 
 class SavedDatasetInfo(BaseModel):
@@ -112,7 +115,9 @@ class SavedDatasetInfo(BaseModel):
 class SavedCredibleSet(BaseModel):
     id: UUID
     phenotype_data_set_id: UUID
+    phenotype: str
     name: str
     file_name: str
     s3_path: str
     created_at: datetime
+    file_size: int
