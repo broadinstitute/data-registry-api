@@ -132,7 +132,7 @@ def get_possible_files(ds_uuid):
         [{"path": f"files/{str(pheno.id).replace('-', '')}/{pheno.phenotype}/data/{pheno.file_name}",
           "phenotype": pheno.phenotype, "name": pheno.file_name,
           "size": f"{round(pheno.file_size / (1024 * 1024), 2)} mb",
-          "type": "data"}
+          "type": "data", "createdAt": pheno.created_at.strftime("%Y-%m-%d")}
          for pheno in phenos])
 
     if phenos:
@@ -140,7 +140,8 @@ def get_possible_files(ds_uuid):
         available_files.extend(
             [{"path": f"files/{str(cs.id).replace('-', '')}/{cs.phenotype}/credible-set/{cs.file_name}",
               "phenotype": cs.phenotype, "name": cs.file_name,
-              "size": f"{round(cs.file_size / (1024 * 1024), 2)} mb", "type": "credible set"}
+              "size": f"{round(cs.file_size / (1024 * 1024), 2)} mb", "type": "credible set",
+              "createdAt": cs.created_at.strftime("%Y-%m-%d")}
              for cs in credible_sets])
 
     return available_files
