@@ -128,11 +128,20 @@ async def stream_file(phenotype: str, file_id: str, file_type: str, file_name: s
 def get_possible_files(ds_uuid):
     available_files = []
     phenos = query.get_phenotypes_for_dataset(engine, ds_uuid)
-    available_files.extend([f"files/{str(pheno.id).replace('-', '')}/{pheno.phenotype}/data/{pheno.file_name}" for pheno in phenos])
+    available_files.extend(
+        [{"path": f"files/{str(pheno.id).replace('-', '')}/{pheno.phenotype}/data/{pheno.file_name}",
+          "phenotype": pheno.phenotype, "name": pheno.file_name,
+          "size": f"{round(pheno.file_size / (1024 * 1024), 2)} mb",
+          "type": "data"}
+         for pheno in phenos])
 
     if phenos:
         credible_sets = query.get_credible_sets_for_dataset(engine, [pheno.id for pheno in phenos])
-        available_files.extend([f"files/{str(cs.id).replace('-', '')}/{cs.phenotype}/credible-set/{cs.file_name}" for cs in credible_sets])
+        available_files.extend(
+            [{"path": f"files/{str(cs.id).replace('-', '')}/{cs.phenotype}/credible-set/{cs.file_name}",
+              "phenotype": cs.phenotype, "name": cs.file_name,
+              "size": f"{round(cs.file_size / (1024 * 1024), 2)} mb", "type": "credible set"}
+             for cs in credible_sets])
 
     return available_files
 
@@ -145,7 +154,7 @@ async def upload_credible_set_for_phenotype(phenotype_data_set_id: str, credible
         file_size = await multipart_upload_to_s3(file, file_path)
         cs_id = query.insert_credible_set(engine, phenotype_data_set_id,
                                           f"s3://{s3.BASE_BUCKET}/{file_path}/{file.filename}", credible_set_name,
-                                          file.filename,file_size)
+                                          file.filename, file_size)
     except Exception as e:
         logger.exception("There was a problem uploading file", e)
         response.status_code = 400
