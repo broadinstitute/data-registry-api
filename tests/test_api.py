@@ -132,7 +132,7 @@ def test_list_files(api_client: TestClient):
     response = api_client.get(f"/api/filelist/{new_record['id']}", headers={ACCESS_TOKEN: api_key})
     assert response.status_code == HTTP_200_OK
     result = response.json()[0]
-    assert result == f"files/{new_record['phenotype_data_set_id']}/t1d/data/sample_upload.txt"
+    assert result['path'] == f"files/{new_record['phenotype_data_set_id']}/t1d/data/sample_upload.txt"
 
 
 def add_ds_with_file(api_client, public=False):
