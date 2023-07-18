@@ -66,8 +66,13 @@ async def api_publications(pub_id: str):
     xml_doc = xmltodict.parse(http_res.text)
     article_meta = xml_doc['PubmedArticleSet']['PubmedArticle']['MedlineCitation']['Article']
     abstract = article_meta.get('Abstract')
+    if abstract and isinstance(abstract['AbstractText'], list):
+        abstract_text = '\n'.join([f"{a['@Label']}: {a['#text']}" for a in abstract['AbstractText']])
+    else:
+        abstract_text = abstract.get('AbstractText', '')
+
     return {"title": article_meta.get('ArticleTitle', ''),
-            "abstract": abstract.get('AbstractText', '') if abstract else ''}
+            "abstract": abstract_text if abstract else ''}
 
 
 @router.post("/uploadfile/{data_set_id}/{phenotype}/{dichotomous}/{sample_size}")
@@ -133,7 +138,7 @@ def get_possible_files(ds_uuid):
           "phenotype": pheno.phenotype, "name": pheno.file_name,
           "size": f"{round(pheno.file_size / (1024 * 1024), 2)} mb",
           "type": "data", "createdAt": pheno.created_at.strftime("%Y-%m-%d")}
-         for pheno in phenos])
+         for pheno in phenos])  
 
     if phenos:
         credible_sets = query.get_credible_sets_for_dataset(engine, [pheno.id for pheno in phenos])
