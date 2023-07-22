@@ -33,7 +33,8 @@ origins = [
     "http://data-registry-vue.s3-website-us-east-1.amazonaws.com",
     "https://dcicue2yl1fq.cloudfront.net",
     "https://d68r3fsifmwz.cloudfront.net",
-    "https://kpndataregistry.org"
+    "https://kpndataregistry.org",
+    "https://kpndataregistry.org:8000",
 ]
 # enable cross-origin resource sharing
 app.add_middleware(
