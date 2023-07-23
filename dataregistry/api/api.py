@@ -51,6 +51,19 @@ async def api_datasets(index: UUID):
         raise fastapi.HTTPException(status_code=404, detail=str(e))
 
 
+def format_authors(author_list):
+    if len(author_list) < 2:
+        return f"{author_list[0].get('LastName', '')} {author_list[0].get('Initials', '')}"
+    else:
+        result = ''
+        for author in author_list[0:2]:
+            result += f"{author.get('LastName', '')} {author.get('Initials', '')}, "
+        if len(author_list) > 2:
+            return result + 'et al.'
+        else:
+            return result[:-2]
+
+
 @router.get('/publications', response_class=fastapi.responses.ORJSONResponse)
 async def api_publications(pub_id: str):
     if infer_id_type(pub_id) != PubIdType.PMID:
@@ -65,14 +78,16 @@ async def api_publications(pub_id: str):
         raise fastapi.HTTPException(status_code=404, detail=f'Could not locate title and abstract for: {pub_id}')
     xml_doc = xmltodict.parse(http_res.text)
     article_meta = xml_doc['PubmedArticleSet']['PubmedArticle']['MedlineCitation']['Article']
-    abstract = article_meta.get('Abstract')
-    if abstract and isinstance(abstract['AbstractText'], list):
-        abstract_text = '\n'.join([f"{a['@Label']}: {a['#text']}" for a in abstract['AbstractText']])
-    else:
-        abstract_text = abstract.get('AbstractText', '')
+    publication = article_meta.get('Journal').get('Title')
+    authors = format_authors(article_meta.get('AuthorList').get('Author'))
+    volume_issue = f"{article_meta.get('Journal').get('JournalIssue').get('Volume')}({article_meta.get('Journal').get('JournalIssue').get('Issue')})"
+    pages = article_meta.get('Pagination').get('MedlinePgn')
+    elocation_id = f"{article_meta.get('ELocationID').get('@EIdType')}: {article_meta.get('ELocationID').get('#text')}"
+    month_year_published = f"{article_meta.get('Journal').get('JournalIssue').get('PubDate').get('Year')} {article_meta.get('Journal').get('JournalIssue').get('PubDate').get('Month')}"
 
-    return {"title": article_meta.get('ArticleTitle', ''),
-            "abstract": abstract_text if abstract else ''}
+    return {"title": article_meta.get('ArticleTitle', ''), "publication": publication,
+            'month_year_published': month_year_published, 'authors': authors, 'volume_issue': volume_issue,
+            'pages': pages, 'elocation_id': elocation_id}
 
 
 @router.post("/uploadfile/{data_set_id}/{phenotype}/{dichotomous}/{sample_size}")
@@ -138,7 +153,7 @@ def get_possible_files(ds_uuid):
           "phenotype": pheno.phenotype, "name": pheno.file_name,
           "size": f"{round(pheno.file_size / (1024 * 1024), 2)} mb",
           "type": "data", "createdAt": pheno.created_at.strftime("%Y-%m-%d")}
-         for pheno in phenos])  
+         for pheno in phenos])
 
     if phenos:
         credible_sets = query.get_credible_sets_for_dataset(engine, [pheno.id for pheno in phenos])

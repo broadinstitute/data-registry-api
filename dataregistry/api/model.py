@@ -23,17 +23,20 @@ class DataFormat(str, Enum):
     exomseq = "exomseq"
     ichip = "ichip"
     wgs = "wgs"
+    other = "other"
 
 
 class Sex(str, Enum):
     mixed = "mixed"
     male = "male"
     female = "female"
+    na = "n/a"
 
 
 class GenomeBuild(str, Enum):
     grch38 = "grch38"
     hg19 = "hg19"
+    na = "n/a"
 
 
 class Ancestry(str, Enum):
@@ -55,6 +58,7 @@ class Ancestry(str, Enum):
     OTH = "OTH"
     OAD = "OAD"
     Mixed = "Mixed"
+    na = "n/a"
 
 
 class Study(BaseModel, extra=Extra.forbid):

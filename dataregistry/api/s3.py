@@ -1,7 +1,8 @@
 import boto3
+import os
 
 S3_REGION = 'us-east-1'
-BASE_BUCKET = 'dig-data-registry'
+BASE_BUCKET = os.environ.get('DATA_REGISTRY_BUCKET', 'dig-data-registry')
 
 
 def create_record_directory(record_name):
