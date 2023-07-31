@@ -1,4 +1,3 @@
-import io
 import json
 import logging
 from uuid import UUID
@@ -8,13 +7,17 @@ import requests
 import sqlalchemy
 import xmltodict
 from botocore.exceptions import ClientError
-from fastapi import UploadFile
-from starlette.responses import StreamingResponse
+from fastapi import UploadFile, Depends
+from fastapi.encoders import jsonable_encoder
+from starlette.requests import Request
+from starlette.responses import StreamingResponse, Response
 
 from dataregistry.api import query, s3
 from dataregistry.api.db import DataRegistryReadWriteDB
-from dataregistry.api.model import DataSet, Study, SavedDatasetInfo, SavedDataset
+from dataregistry.api.model import DataSet, Study, SavedDatasetInfo, SavedDataset, UserCredentials, User
 from dataregistry.pub_ids import PubIdType, infer_id_type
+
+AUTH_TOKEN_NAME = 'dr_auth_token'
 
 router = fastapi.APIRouter()
 
@@ -291,3 +294,43 @@ async def api_record_delete(index: int):
         raise fastapi.HTTPException(status_code=400, detail=str(e))
     except ClientError as e:
         raise fastapi.HTTPException(status_code=400, detail=str(e))
+
+
+async def get_current_user(request: Request):
+    token = request.cookies.get(AUTH_TOKEN_NAME)
+    if not token:
+        raise fastapi.HTTPException(status_code=401, detail='Not logged in')
+    try:
+        user = User(**json.loads(token))
+    except json.JSONDecodeError:
+        raise fastapi.HTTPException(status_code=401, detail='Not logged in')
+    return user
+
+
+@router.get('/is-logged-in')
+def is_logged_in(request: Request, user: User = Depends(get_current_user)):
+    if request.cookies.get(AUTH_TOKEN_NAME):
+        return user
+    else:
+        raise fastapi.HTTPException(status_code=401, detail='Not logged in')
+
+
+@router.post('/login')
+def login(response: Response, creds: UserCredentials):
+    if creds.password != 'password' or creds.email not in ['dhite@broadinstitute.org', 'biz@drewhite.org']:
+        raise fastapi.HTTPException(status_code=401, detail='Invalid password')
+    if creds.email == 'dhite@broadinstitute.org':
+        response.set_cookie(key=AUTH_TOKEN_NAME,
+                            value=json.dumps(jsonable_encoder(User(name='Drew', email='dhite@broad.institute.org',
+                                                                   access_level='Admin'))))
+    else:
+        response.set_cookie(key=AUTH_TOKEN_NAME,
+                            value=json.dumps(jsonable_encoder(User(name='Biz', email='biz@drewhite.org',
+                                                                   access_level='User'))))
+    return {'status': 'success'}
+
+
+@router.post('/logout')
+def logout(response: Response):
+    response.delete_cookie(key=AUTH_TOKEN_NAME)
+    return {'status': 'success'}
