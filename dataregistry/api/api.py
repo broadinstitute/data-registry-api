@@ -324,7 +324,7 @@ def login(response: Response, creds: UserCredentials):
     user_config = next((user for user in config["users"] if user["email"] == creds.email), None)
     if user_config is None or user_config["password"] != creds.password:
         raise fastapi.HTTPException(status_code=401, detail='Invalid username or password')
-    response.set_cookie(key=AUTH_TOKEN_NAME, value=json.dumps(jsonable_encoder(User(**user_config))))
+    response.set_cookie(key=AUTH_TOKEN_NAME, value=json.dumps(jsonable_encoder(User(**user_config))), httponly=True)
     return {'status': 'success'}
 
 
