@@ -1,0 +1,10 @@
+{
+  "users": [
+    {
+      "email": "test@kpnteam.org",
+      "name": "user",
+      "password": "password",
+      "role": "user"
+    }
+  ]
+}
