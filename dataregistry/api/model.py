@@ -135,4 +135,4 @@ class UserCredentials(BaseModel):
 class User(BaseModel):
     name: str
     email: EmailStr
-    access_level: str
+    role: str

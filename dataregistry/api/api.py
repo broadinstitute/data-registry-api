@@ -1,5 +1,6 @@
 import json
 import logging
+from typing import Optional
 from uuid import UUID
 
 import fastapi
@@ -20,6 +21,9 @@ from dataregistry.pub_ids import PubIdType, infer_id_type
 AUTH_TOKEN_NAME = 'dr_auth_token'
 
 router = fastapi.APIRouter()
+
+with open('config.json') as config_file:
+    config = json.load(config_file)
 
 # get root logger
 logger = logging.getLogger(__name__)
@@ -317,16 +321,10 @@ def is_logged_in(request: Request, user: User = Depends(get_current_user)):
 
 @router.post('/login')
 def login(response: Response, creds: UserCredentials):
-    if creds.password != 'password' or creds.email not in ['dhite@broadinstitute.org', 'biz@drewhite.org']:
-        raise fastapi.HTTPException(status_code=401, detail='Invalid password')
-    if creds.email == 'dhite@broadinstitute.org':
-        response.set_cookie(key=AUTH_TOKEN_NAME,
-                            value=json.dumps(jsonable_encoder(User(name='Drew', email='dhite@broad.institute.org',
-                                                                   access_level='Admin'))))
-    else:
-        response.set_cookie(key=AUTH_TOKEN_NAME,
-                            value=json.dumps(jsonable_encoder(User(name='Biz', email='biz@drewhite.org',
-                                                                   access_level='User'))))
+    user_config = next((user for user in config["users"] if user["email"] == creds.email), None)
+    if user_config is None or user_config["password"] != creds.password:
+        raise fastapi.HTTPException(status_code=401, detail='Invalid username or password')
+    response.set_cookie(key=AUTH_TOKEN_NAME, value=json.dumps(jsonable_encoder(User(**user_config))))
     return {'status': 'success'}
 
 
