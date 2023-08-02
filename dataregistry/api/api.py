@@ -1,6 +1,5 @@
 import json
 import logging
-from typing import Optional
 from uuid import UUID
 
 import fastapi
@@ -22,8 +21,6 @@ AUTH_TOKEN_NAME = 'dr_auth_token'
 
 router = fastapi.APIRouter()
 
-with open('config.json') as config_file:
-    config = json.load(config_file)
 
 # get root logger
 logger = logging.getLogger(__name__)
