@@ -318,11 +318,17 @@ def is_logged_in(request: Request, user: User = Depends(get_current_user)):
 
 @router.post('/login')
 def login(response: Response, creds: UserCredentials):
-    user_config = next((user for user in config["users"] if user["email"] == creds.email), None)
-    if user_config is None or user_config["password"] != creds.password:
+    user = next((user for user in get_users() if user.email == creds.email), None)
+    if user is None or 'password' != creds.password:
         raise fastapi.HTTPException(status_code=401, detail='Invalid username or password')
-    response.set_cookie(key=AUTH_TOKEN_NAME, value=json.dumps(jsonable_encoder(User(**user_config))), httponly=True)
+    response.set_cookie(key=AUTH_TOKEN_NAME, value=json.dumps(jsonable_encoder(user)), httponly=True,
+                        secure=True, samesite='strict')
     return {'status': 'success'}
+
+
+def get_users() -> list:
+    return [User(name='admin', email='admin@kpnteam.org', role='admin'),
+            User(name='user', email='user@kpnteam.org', role='user')]
 
 
 @router.post('/logout')
