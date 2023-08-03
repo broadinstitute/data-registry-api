@@ -128,11 +128,11 @@ class SavedCredibleSet(BaseModel):
 
 
 class UserCredentials(BaseModel):
-    email: EmailStr
+    email: str
     password: str
 
 
 class User(BaseModel):
     name: str
-    email: EmailStr
+    email: str
     role: str

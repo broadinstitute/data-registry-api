@@ -1,5 +1,6 @@
 import click
 import uvicorn
+from dotenv import load_dotenv
 
 
 @click.group()
@@ -7,7 +8,7 @@ import uvicorn
 @click.pass_context
 def cli(ctx, env_file):
     if env_file:
-        print("env files not yet supported")
+        load_dotenv(env_file)
 
 
 @click.command(name='serve')

@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 from uuid import UUID
 
 import fastapi
@@ -14,13 +15,13 @@ from starlette.responses import StreamingResponse, Response
 
 from dataregistry.api import query, s3
 from dataregistry.api.db import DataRegistryReadWriteDB
+from dataregistry.api.jwt import get_encoded_cookie_data, get_decoded_cookie_data
 from dataregistry.api.model import DataSet, Study, SavedDatasetInfo, SavedDataset, UserCredentials, User
 from dataregistry.pub_ids import PubIdType, infer_id_type
 
 AUTH_TOKEN_NAME = 'dr_auth_token'
 
 router = fastapi.APIRouter()
-
 
 # get root logger
 logger = logging.getLogger(__name__)
@@ -301,29 +302,44 @@ async def get_current_user(request: Request):
     token = request.cookies.get(AUTH_TOKEN_NAME)
     if not token:
         raise fastapi.HTTPException(status_code=401, detail='Not logged in')
-    try:
-        user = User(**json.loads(token))
-    except json.JSONDecodeError:
+    data = get_decoded_cookie_data(token)
+    if not data:
         raise fastapi.HTTPException(status_code=401, detail='Not logged in')
+    user = User(**data)
     return user
 
 
 @router.get('/is-logged-in')
-def is_logged_in(request: Request, user: User = Depends(get_current_user)):
-    if request.cookies.get(AUTH_TOKEN_NAME):
+def is_logged_in(user: User = Depends(get_current_user)):
+    if user:
         return user
     else:
         raise fastapi.HTTPException(status_code=401, detail='Not logged in')
 
 
+def is_drupal_user(creds):
+    response = requests.post(f"{os.getenv('DRUPAL_HOST')}/user/login?_format=json", data=json.dumps({
+        'name': creds.email,
+        'pass': creds.password
+    }), headers={'Content-Type': 'application/json'})
+    return response.status_code == 200
+
+
 @router.post('/login')
 def login(response: Response, creds: UserCredentials):
-    user = next((user for user in get_users() if user.email == creds.email), None)
-    if user is None or 'password' != creds.password:
+    in_list, user = is_user_in_list(creds)
+    if not in_list and not is_drupal_user(creds):
         raise fastapi.HTTPException(status_code=401, detail='Invalid username or password')
-    response.set_cookie(key=AUTH_TOKEN_NAME, value=json.dumps(jsonable_encoder(user)), httponly=True,
+    response.set_cookie(key=AUTH_TOKEN_NAME, value=get_encoded_cookie_data(user if user else
+                                                                           User(name=creds.email, email=creds.email,
+                                                                                role='user')), httponly=True,
                         secure=True, samesite='strict')
     return {'status': 'success'}
+
+
+def is_user_in_list(creds: UserCredentials):
+    user = next((user for user in get_users() if user.email == creds.email), None)
+    return user is not None and 'password' == creds.password, user
 
 
 def get_users() -> list:
