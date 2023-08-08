@@ -125,3 +125,14 @@ class SavedCredibleSet(BaseModel):
     s3_path: str
     created_at: datetime
     file_size: int
+
+
+class UserCredentials(BaseModel):
+    email: str
+    password: str
+
+
+class User(BaseModel):
+    name: str
+    email: str
+    role: str

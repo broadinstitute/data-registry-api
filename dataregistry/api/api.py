@@ -1,6 +1,6 @@
-import io
 import json
 import logging
+import os
 from uuid import UUID
 
 import fastapi
@@ -8,13 +8,18 @@ import requests
 import sqlalchemy
 import xmltodict
 from botocore.exceptions import ClientError
-from fastapi import UploadFile
-from starlette.responses import StreamingResponse
+from fastapi import UploadFile, Depends
+from fastapi.encoders import jsonable_encoder
+from starlette.requests import Request
+from starlette.responses import StreamingResponse, Response
 
 from dataregistry.api import query, s3
 from dataregistry.api.db import DataRegistryReadWriteDB
-from dataregistry.api.model import DataSet, Study, SavedDatasetInfo, SavedDataset
+from dataregistry.api.jwt import get_encoded_cookie_data, get_decoded_cookie_data
+from dataregistry.api.model import DataSet, Study, SavedDatasetInfo, SavedDataset, UserCredentials, User
 from dataregistry.pub_ids import PubIdType, infer_id_type
+
+AUTH_TOKEN_NAME = 'dr_auth_token'
 
 router = fastapi.APIRouter()
 
@@ -291,3 +296,58 @@ async def api_record_delete(index: int):
         raise fastapi.HTTPException(status_code=400, detail=str(e))
     except ClientError as e:
         raise fastapi.HTTPException(status_code=400, detail=str(e))
+
+
+async def get_current_user(request: Request):
+    token = request.cookies.get(AUTH_TOKEN_NAME)
+    if not token:
+        raise fastapi.HTTPException(status_code=401, detail='Not logged in')
+    data = get_decoded_cookie_data(token)
+    if not data:
+        raise fastapi.HTTPException(status_code=401, detail='Not logged in')
+    user = User(**data)
+    return user
+
+
+@router.get('/is-logged-in')
+def is_logged_in(user: User = Depends(get_current_user)):
+    if user:
+        return user
+    else:
+        raise fastapi.HTTPException(status_code=401, detail='Not logged in')
+
+
+def is_drupal_user(creds):
+    response = requests.post(f"{os.getenv('DRUPAL_HOST')}/user/login?_format=json", data=json.dumps({
+        'name': creds.email,
+        'pass': creds.password
+    }), headers={'Content-Type': 'application/json'})
+    return response.status_code == 200
+
+
+@router.post('/login')
+def login(response: Response, creds: UserCredentials):
+    in_list, user = is_user_in_list(creds)
+    if not in_list and not is_drupal_user(creds):
+        raise fastapi.HTTPException(status_code=401, detail='Invalid username or password')
+    response.set_cookie(key=AUTH_TOKEN_NAME, value=get_encoded_cookie_data(user if user else
+                                                                           User(name=creds.email, email=creds.email,
+                                                                                role='user')), httponly=True,
+                        secure=True, samesite='strict')
+    return {'status': 'success'}
+
+
+def is_user_in_list(creds: UserCredentials):
+    user = next((user for user in get_users() if user.email == creds.email), None)
+    return user is not None and 'password' == creds.password, user
+
+
+def get_users() -> list:
+    return [User(name='admin', email='admin@kpnteam.org', role='admin'),
+            User(name='user', email='user@kpnteam.org', role='user')]
+
+
+@router.post('/logout')
+def logout(response: Response):
+    response.delete_cookie(key=AUTH_TOKEN_NAME)
+    return {'status': 'success'}
