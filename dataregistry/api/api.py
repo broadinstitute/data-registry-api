@@ -69,6 +69,15 @@ def format_authors(author_list):
             return result[:-2]
 
 
+def get_elocation_id(article_meta):
+    eloc_dict_list = article_meta.get('ELocationID')
+    if not eloc_dict_list:
+        return None
+    if isinstance(eloc_dict_list, list):
+        eloc_dict_list = eloc_dict_list[0]
+    return f"{eloc_dict_list.get('@EIdType')}: {eloc_dict_list.get('#text')}"
+
+
 @router.get('/publications', response_class=fastapi.responses.ORJSONResponse)
 async def api_publications(pub_id: str):
     if infer_id_type(pub_id) != PubIdType.PMID:
@@ -87,12 +96,12 @@ async def api_publications(pub_id: str):
     authors = format_authors(article_meta.get('AuthorList').get('Author'))
     volume_issue = f"{article_meta.get('Journal').get('JournalIssue').get('Volume')}({article_meta.get('Journal').get('JournalIssue').get('Issue')})"
     pages = article_meta.get('Pagination').get('MedlinePgn')
-    elocation_id = f"{article_meta.get('ELocationID').get('@EIdType')}: {article_meta.get('ELocationID').get('#text')}"
+
     month_year_published = f"{article_meta.get('Journal').get('JournalIssue').get('PubDate').get('Year')} {article_meta.get('Journal').get('JournalIssue').get('PubDate').get('Month')}"
 
     return {"title": article_meta.get('ArticleTitle', ''), "publication": publication,
             'month_year_published': month_year_published, 'authors': authors, 'volume_issue': volume_issue,
-            'pages': pages, 'elocation_id': elocation_id}
+            'pages': pages, 'elocation_id': get_elocation_id(article_meta)}
 
 
 @router.post("/uploadfile/{data_set_id}/{phenotype}/{dichotomous}/{sample_size}")
