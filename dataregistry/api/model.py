@@ -20,7 +20,7 @@ class ResearchStatus(str, Enum):
 class DataFormat(str, Enum):
     gwas = "gwas"
     exomchip = "exomchip"
-    exomseq = "exomseq"
+    exseq = "exseq"
     ichip = "ichip"
     wgs = "wgs"
     other = "other"
