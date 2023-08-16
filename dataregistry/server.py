@@ -32,7 +32,7 @@ origins = [
     "http://localhost",
     "http://data-registry-vue.s3-website-us-east-1.amazonaws.com",
     "https://dcicue2yl1fq.cloudfront.net",
-    "https://local.cloudfront.net:3000",
+    "http://local.cloudfront.net:3000",
     "https://d68r3fsifmwz.cloudfront.net",
     "https://kpndataregistry.org",
     "https://kpndataregistry.org:8000",
