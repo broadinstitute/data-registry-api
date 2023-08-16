@@ -27,7 +27,6 @@ logger = logging.getLogger(__name__)
 # connect to database
 engine = DataRegistryReadWriteDB().get_engine()
 
-logger.warning("Starting API")
 NIH_API_EMAIL = "dhite@broadinstitute.org"
 NIH_API_TOOL_NAME = "data-registry"
 
@@ -308,7 +307,6 @@ async def api_record_delete(index: int):
 
 async def get_current_user(request: Request):
     auth = request.cookies.get(AUTH_COOKIE_NAME)
-    logger.warning(f"Auth cookie: {auth}")
     if not auth:
         raise fastapi.HTTPException(status_code=401, detail='Not logged in')
     data = get_decoded_cookie_data(auth)
