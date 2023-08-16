@@ -342,8 +342,8 @@ def login(response: Response, creds: UserCredentials):
         raise fastapi.HTTPException(status_code=401, detail='Invalid username or password')
     response.set_cookie(key=AUTH_COOKIE_NAME, value=get_encoded_cookie_data(user if user else
                                                                            User(name=creds.email, email=creds.email,
-                                                                                role='user')), httponly=True,
-                        domain='.cloudfront.net')
+                                                                                role='user')),
+                        domain='.cloudfront.net', samesite='lax')
     return {'status': 'success'}
 
 
