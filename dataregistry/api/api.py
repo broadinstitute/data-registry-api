@@ -343,7 +343,7 @@ def login(response: Response, creds: UserCredentials):
     response.set_cookie(key=AUTH_COOKIE_NAME, value=get_encoded_cookie_data(user if user else
                                                                            User(name=creds.email, email=creds.email,
                                                                                 role='user')),
-                        domain='.cloudfront.net', samesite='lax', secure=True)
+                        domain='.cloudfront.net', samesite='lax')
     return {'status': 'success'}
 
 
