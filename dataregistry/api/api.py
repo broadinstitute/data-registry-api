@@ -19,7 +19,7 @@ from dataregistry.api.jwt import get_encoded_cookie_data, get_decoded_cookie_dat
 from dataregistry.api.model import DataSet, Study, SavedDatasetInfo, SavedDataset, UserCredentials, User
 from dataregistry.pub_ids import PubIdType, infer_id_type
 
-AUTH_TOKEN_NAME = 'dr_auth_token'
+AUTH_COOKIE_NAME = 'dr_auth_token'
 
 router = fastapi.APIRouter()
 
@@ -308,10 +308,11 @@ async def api_record_delete(index: int):
 
 
 async def get_current_user(request: Request):
-    token = request.cookies.get(AUTH_TOKEN_NAME)
-    if not token:
+    auth = request.cookies.get(AUTH_COOKIE_NAME)
+    logger.info(f"Auth cookie: {auth}")
+    if not auth:
         raise fastapi.HTTPException(status_code=401, detail='Not logged in')
-    data = get_decoded_cookie_data(token)
+    data = get_decoded_cookie_data(auth)
     if not data:
         raise fastapi.HTTPException(status_code=401, detail='Not logged in')
     user = User(**data)
@@ -339,7 +340,7 @@ def login(response: Response, creds: UserCredentials):
     in_list, user = is_user_in_list(creds)
     if not in_list and not is_drupal_user(creds):
         raise fastapi.HTTPException(status_code=401, detail='Invalid username or password')
-    response.set_cookie(key=AUTH_TOKEN_NAME, value=get_encoded_cookie_data(user if user else
+    response.set_cookie(key=AUTH_COOKIE_NAME, value=get_encoded_cookie_data(user if user else
                                                                            User(name=creds.email, email=creds.email,
                                                                                 role='user')), httponly=True)
     return {'status': 'success'}
@@ -357,5 +358,5 @@ def get_users() -> list:
 
 @router.post('/logout')
 def logout(response: Response):
-    response.delete_cookie(key=AUTH_TOKEN_NAME)
+    response.delete_cookie(key=AUTH_COOKIE_NAME)
     return {'status': 'success'}
