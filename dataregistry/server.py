@@ -29,11 +29,7 @@ app.include_router(api.router, prefix='/api', tags=['api'])
 
 origins = [
     "http://localhost:3000",
-    "http://localhost",
-    "http://data-registry-vue.s3-website-us-east-1.amazonaws.com",
-    "https://dcicue2yl1fq.cloudfront.net",
-    "http://local.cloudfront.net:3000",
-    "https://d68r3fsifmwz.cloudfront.net",
+    "http://local.kpndataregistry.org:3000",
     "https://kpndataregistry.org",
     "https://kpndataregistry.org:8000",
 ]

@@ -336,13 +336,16 @@ def is_drupal_user(creds):
 
 
 @router.post('/login')
-def login(response: Response, creds: UserCredentials):
+def login(request: Request, response: Response, creds: UserCredentials):
     in_list, user = is_user_in_list(creds)
     if not in_list and not is_drupal_user(creds):
         raise fastapi.HTTPException(status_code=401, detail='Invalid username or password')
+    domain_from_request = request.headers.get("host", "").split(":")[0]
     response.set_cookie(key=AUTH_COOKIE_NAME, value=get_encoded_cookie_data(user if user else
                                                                            User(name=creds.email, email=creds.email,
-                                                                                role='user')))
+                                                                                role='user')),
+                        domain='.kpndataregistry.org' if 'kpndataregistry' in domain_from_request else '',
+                        samesite='lax')
     return {'status': 'success'}
 
 
