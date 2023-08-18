@@ -341,7 +341,7 @@ def login(request: Request, response: Response, creds: UserCredentials):
     if not in_list and not is_drupal_user(creds):
         raise fastapi.HTTPException(status_code=401, detail='Invalid username or password')
     domain_from_request = request.headers.get("host", "").split(":")[0]
-    print(domain_from_request)
+    print(request.headers.get("host", ""))
     response.set_cookie(key=AUTH_COOKIE_NAME, value=get_encoded_cookie_data(user if user else
                                                                            User(name=creds.email, email=creds.email,
                                                                                 role='user')),
