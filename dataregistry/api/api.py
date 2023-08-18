@@ -345,7 +345,7 @@ def login(request: Request, response: Response, creds: UserCredentials):
                                                                            User(name=creds.email, email=creds.email,
                                                                                 role='user')),
                         domain='.kpndataregistry.org' if 'kpndataregistry' in domain_from_request else '',
-                        samesite='lax')
+                        samesite='lax', secure=False if 'local' in domain_from_request else True)
     return {'status': 'success'}
 
 
