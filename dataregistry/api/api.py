@@ -8,8 +8,7 @@ import requests
 import sqlalchemy
 import xmltodict
 from botocore.exceptions import ClientError
-from fastapi import UploadFile, Depends
-from fastapi.encoders import jsonable_encoder
+from fastapi import UploadFile, Depends, Header
 from starlette.requests import Request
 from starlette.responses import StreamingResponse, Response
 
@@ -336,17 +335,15 @@ def is_drupal_user(creds):
 
 
 @router.post('/login')
-def login(request: Request, response: Response, creds: UserCredentials):
+def login(response: Response, creds: UserCredentials, origin: str = Header()):
     in_list, user = is_user_in_list(creds)
     if not in_list and not is_drupal_user(creds):
         raise fastapi.HTTPException(status_code=401, detail='Invalid username or password')
-    domain_from_request = request.headers.get("host", "").split(":")[0]
-    print(request.headers.get("host", ""))
     response.set_cookie(key=AUTH_COOKIE_NAME, value=get_encoded_cookie_data(user if user else
                                                                            User(name=creds.email, email=creds.email,
                                                                                 role='user')),
-                        domain='.kpndataregistry.org' if 'kpndataregistry' in domain_from_request else '',
-                        samesite='lax', secure=False)
+                        domain='.kpndataregistry.org' if 'kpndataregistry' in origin else '',
+                        samesite='lax', secure=True if 'kpndataregistry' in origin else False)
     return {'status': 'success'}
 
 
