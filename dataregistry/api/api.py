@@ -358,6 +358,7 @@ def get_users() -> list:
 
 
 @router.post('/logout')
-def logout(response: Response):
-    response.delete_cookie(key=AUTH_COOKIE_NAME)
+def logout(response: Response, origin: str = Header()):
+    response.delete_cookie(key=AUTH_COOKIE_NAME, domain='.kpndataregistry.org' if 'kpndataregistry' in origin else '',
+                           samesite='lax', secure=True if 'kpndataregistry' in origin else False)
     return {'status': 'success'}
