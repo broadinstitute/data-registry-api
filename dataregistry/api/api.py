@@ -334,15 +334,15 @@ def is_drupal_user(creds):
 
 
 @router.post('/login')
-def login(response: Response, creds: UserCredentials, origin: str = Header()):
+def login(response: Response, creds: UserCredentials):
     in_list, user = is_user_in_list(creds)
     if not in_list and not is_drupal_user(creds):
         raise fastapi.HTTPException(status_code=401, detail='Invalid username or password')
     response.set_cookie(key=AUTH_COOKIE_NAME, value=get_encoded_cookie_data(user if user else
                                                                            User(name=creds.email, email=creds.email,
                                                                                 role='user')),
-                        domain='.kpndataregistry.org' if 'kpndataregistry' in origin else '',
-                        samesite='lax', secure=True if origin.startswith('https') else False)
+                        domain='.kpndataregistry.org', samesite='strict',
+                        secure=os.getenv('COOKIE_SECURE') == 'true')
     return {'status': 'success'}
 
 
@@ -357,7 +357,7 @@ def get_users() -> list:
 
 
 @router.post('/logout')
-def logout(response: Response, origin: str = Header()):
-    response.delete_cookie(key=AUTH_COOKIE_NAME, domain='.kpndataregistry.org' if 'kpndataregistry' in origin else '',
-                           samesite='lax', secure=True if origin.startswith('https') else False)
+def logout(response: Response):
+    response.delete_cookie(key=AUTH_COOKIE_NAME,  domain='.kpndataregistry.org',
+                           samesite='strict', secure=os.getenv('COOKIE_SECURE') == 'true')
     return {'status': 'success'}
