@@ -26,7 +26,7 @@ class DataRegistryDB:
                     password=self.config[self.password_field],
                     host=self.config['host'],
                     port=self.config['port'],
-                    db=os.getenv('DATA_REGISTRY_DB_NAME')
+                    db=os.getenv('DATA_REGISTRY_DB_NAME', 'dataregistry_qa')
                 )
         return self.url
 
