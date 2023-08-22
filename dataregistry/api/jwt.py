@@ -1,9 +1,11 @@
+import os
+
 from jose import jwt, JWTError
 
 from dataregistry.api.config import get_sensitive_config
 from dataregistry.api.model import User
 
-SECRET_KEY = get_sensitive_config()['jwtSecret'] if get_sensitive_config() else 'test_secret'
+SECRET_KEY = os.getenv('JWT_SECRET', get_sensitive_config()['jwtSecret'] if get_sensitive_config() else 'test_secret')
 ALGORITHM = "HS256"
 
 

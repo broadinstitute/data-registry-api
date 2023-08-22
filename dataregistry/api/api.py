@@ -306,9 +306,8 @@ async def api_record_delete(index: int):
         raise fastapi.HTTPException(status_code=400, detail=str(e))
 
 
-async def get_current_user(request: Request):
+async def get_current_user(request: Request, origin: str = Header()):
     auth = request.cookies.get(AUTH_COOKIE_NAME)
-    logger.info(f"Auth cookie: {auth}")
     if not auth:
         raise fastapi.HTTPException(status_code=401, detail='Not logged in')
     data = get_decoded_cookie_data(auth)
@@ -360,5 +359,5 @@ def get_users() -> list:
 @router.post('/logout')
 def logout(response: Response, origin: str = Header()):
     response.delete_cookie(key=AUTH_COOKIE_NAME, domain='.kpndataregistry.org' if 'kpndataregistry' in origin else '',
-                           samesite='lax', secure=True if 'kpndataregistry' in origin else False)
+                           samesite='lax', secure=True if origin.startswith('https') else False)
     return {'status': 'success'}
