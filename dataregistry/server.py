@@ -29,7 +29,8 @@ app.include_router(api.router, prefix='/api', tags=['api'])
 
 origins = [
     "http://localhost:3000",
-    "https://local.kpndataregistry.org:3000",
+    "http://local.kpndataregistry.org:3000",
+    "http://dev.kpndataregistry.org",
     "https://kpndataregistry.org",
     "https://kpndataregistry.org:8000",
 ]

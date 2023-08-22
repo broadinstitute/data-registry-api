@@ -343,7 +343,7 @@ def login(response: Response, creds: UserCredentials, origin: str = Header()):
                                                                            User(name=creds.email, email=creds.email,
                                                                                 role='user')),
                         domain='.kpndataregistry.org' if 'kpndataregistry' in origin else '',
-                        samesite='lax', secure=True if 'kpndataregistry' in origin else False)
+                        samesite='lax', secure=True if origin.startswith('https') else False)
     return {'status': 'success'}
 
 
