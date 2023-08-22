@@ -306,7 +306,7 @@ async def api_record_delete(index: int):
         raise fastapi.HTTPException(status_code=400, detail=str(e))
 
 
-async def get_current_user(request: Request, origin: str = Header()):
+async def get_current_user(request: Request):
     auth = request.cookies.get(AUTH_COOKIE_NAME)
     if not auth:
         raise fastapi.HTTPException(status_code=401, detail='Not logged in')
