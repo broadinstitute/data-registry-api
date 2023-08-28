@@ -114,6 +114,7 @@ async def api_publications(pub_id: str):
 async def upload_file_for_phenotype(data_set_id: str, phenotype: str, dichotomous: bool, file: UploadFile,
                                     sample_size: int, response: fastapi.Response, cases: int = None,
                                     controls: int = None):
+    logger.info(f"Uploading file {file.filename} for phenotype {phenotype} in dataset {data_set_id}")
     filename = file.filename
     try:
         saved_dataset = query.get_dataset(engine, UUID(data_set_id))
