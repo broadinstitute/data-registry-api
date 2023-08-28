@@ -24,6 +24,13 @@ router = fastapi.APIRouter()
 
 # get root logger
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+
+ch = logging.StreamHandler()
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+ch.setFormatter(formatter)
+
+logger.addHandler(ch)
 # connect to database
 engine = DataRegistryReadWriteDB().get_engine()
 
@@ -230,6 +237,7 @@ async def multipart_upload_to_s3(file, file_path):
     size = 0
     # read and put 50 mb at a time--is that too small?
     while contents := await file.read(1024 * 1024 * 50):
+        logger.info(f"Uploading part {part_number} of {file.filename}")
         size += len(contents)
         upload_part_response = s3.put_bytes(file_path, file.filename, contents, upload, part_number)
         parts.append({
