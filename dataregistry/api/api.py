@@ -351,7 +351,7 @@ def login(response: Response, creds: UserCredentials):
                                                                            User(name=creds.email, email=creds.email,
                                                                                 role='user')),
                         domain='.kpndataregistry.org', samesite='strict',
-                        secure=os.getenv('COOKIE_SECURE') == 'true')
+                        secure=os.getenv('USE_HTTPS') == 'true')
     return {'status': 'success'}
 
 
@@ -368,5 +368,5 @@ def get_users() -> list:
 @router.post('/logout')
 def logout(response: Response):
     response.delete_cookie(key=AUTH_COOKIE_NAME,  domain='.kpndataregistry.org',
-                           samesite='strict', secure=os.getenv('COOKIE_SECURE') == 'true')
+                           samesite='strict', secure=os.getenv('USE_HTTPS') == 'true')
     return {'status': 'success'}
