@@ -147,7 +147,8 @@ def add_ds_with_file(api_client, public=False):
     assert create_record_res.status_code == HTTP_200_OK
     with open("tests/sample_upload.txt", "rb") as f:
         dataset_id = create_record_res.json()['dataset_id']
-        upload_response = api_client.post(f"/api/uploadfile/{dataset_id}/t1d/true/10", headers={ACCESS_TOKEN: api_key},
+        upload_response = api_client.post(f"/api/uploadfile/{dataset_id}/t1d/true/10",
+                                          headers={ACCESS_TOKEN: api_key, "Filename": "sample_upload.txt"},
                                           files={"file": f})
         assert upload_response.status_code == HTTP_200_OK
     new_record.update({'id': dataset_id, 'phenotype_data_set_id': upload_response.json()['phenotype_data_set_id']})
@@ -160,7 +161,8 @@ def test_upload_credible_set(api_client: TestClient):
     with open("tests/sample_upload.txt", "rb") as f:
         credible_set_name = "credible_set"
         upload_response = api_client.post(f"/api/crediblesetupload/{ds['phenotype_data_set_id']}"
-                                          f"/{credible_set_name}", headers={ACCESS_TOKEN: api_key},
+                                          f"/{credible_set_name}",
+                                          headers={ACCESS_TOKEN: api_key, "Filename": "sample_upload.txt"},
                                           files={"file": f})
         assert upload_response.status_code == HTTP_200_OK
     saved_dataset = api_client.get(f"{dataset_api_path}/{ds['id']}", headers={ACCESS_TOKEN: api_key})
