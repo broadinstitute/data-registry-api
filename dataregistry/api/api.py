@@ -11,6 +11,8 @@ from botocore.exceptions import ClientError
 from fastapi import UploadFile, Depends, Header
 from starlette.requests import Request
 from starlette.responses import StreamingResponse, Response
+from streaming_form_data import StreamingFormDataParser
+from streaming_form_data.targets import S3Target
 
 from dataregistry.api import query, s3
 from dataregistry.api.db import DataRegistryReadWriteDB
@@ -111,15 +113,20 @@ async def api_publications(pub_id: str):
 
 
 @router.post("/uploadfile/{data_set_id}/{phenotype}/{dichotomous}/{sample_size}")
-async def upload_file_for_phenotype(data_set_id: str, phenotype: str, dichotomous: bool, file: UploadFile,
+async def upload_file_for_phenotype(data_set_id: str, phenotype: str, dichotomous: bool, request: Request,
                                     sample_size: int, response: fastapi.Response, cases: int = None,
                                     controls: int = None):
-    logger.info(f"Uploading file {file.filename} for phenotype {phenotype} in dataset {data_set_id}")
-    filename = file.filename
+    filename = request.headers.get('Filename')
+    logger.info(f"Uploading file {filename} for phenotype {phenotype} in dataset {data_set_id}")
     try:
         saved_dataset = query.get_dataset(engine, UUID(data_set_id))
         file_path = f"{saved_dataset.name}/{phenotype}"
-        file_size = await multipart_upload_to_s3(file, file_path)
+        parser = StreamingFormDataParser(request.headers)
+        parser.register("file", S3Target(s3.get_file_path(file_path, filename), mode='wb'))
+        file_size = 0
+        async for chunk in request.stream():
+            file_size += len(chunk)
+            parser.data_received(chunk)
         pd_id = query.insert_phenotype_data_set(engine, data_set_id, phenotype,
                                                 f"s3://{s3.BASE_BUCKET}/{file_path}/{filename}", dichotomous,
                                                 sample_size, cases, controls, filename, file_size)
@@ -128,8 +135,6 @@ async def upload_file_for_phenotype(data_set_id: str, phenotype: str, dichotomou
         logger.exception("There was a problem uploading file", e)
         response.status_code = 400
         return {"message": f"There was an error uploading the file {filename}"}
-    finally:
-        await file.close()
 
 
 @router.get("/filelist/{data_set_id}")
@@ -190,21 +195,25 @@ def get_possible_files(ds_uuid):
 
 @router.post("/crediblesetupload/{phenotype_data_set_id}/{credible_set_name}")
 async def upload_credible_set_for_phenotype(phenotype_data_set_id: str, credible_set_name: str,
-                                            file: UploadFile, response: fastapi.Response):
+                                            request: Request, response: fastapi.Response):
+    filename = request.headers.get('Filename')
     try:
         file_path = f"credible_sets/{phenotype_data_set_id}"
-        file_size = await multipart_upload_to_s3(file, file_path)
+        parser = StreamingFormDataParser(request.headers)
+        parser.register("file", S3Target(s3.get_file_path(file_path, filename), mode='wb'))
+        file_size = 0
+        async for chunk in request.stream():
+            file_size += len(chunk)
+            parser.data_received(chunk)
         cs_id = query.insert_credible_set(engine, phenotype_data_set_id,
-                                          f"s3://{s3.BASE_BUCKET}/{file_path}/{file.filename}", credible_set_name,
-                                          file.filename, file_size)
+                                          f"s3://{s3.BASE_BUCKET}/{file_path}/{filename}", credible_set_name,
+                                          filename, file_size)
     except Exception as e:
         logger.exception("There was a problem uploading file", e)
         response.status_code = 400
-        return {"message": f"There was an error uploading the file {file.filename}"}
-    finally:
-        await file.close()
+        return {"message": f"There was an error uploading the file {filename}"}
 
-    return {"message": f"Successfully uploaded {file.filename}", "credible_set_id": cs_id}
+    return {"message": f"Successfully uploaded {filename}", "credible_set_id": cs_id}
 
 
 @router.delete("/datasets/{data_set_id}")
@@ -348,8 +357,8 @@ def login(response: Response, creds: UserCredentials):
     if not in_list and not is_drupal_user(creds):
         raise fastapi.HTTPException(status_code=401, detail='Invalid username or password')
     response.set_cookie(key=AUTH_COOKIE_NAME, value=get_encoded_cookie_data(user if user else
-                                                                           User(name=creds.email, email=creds.email,
-                                                                                role='user')),
+                                                                            User(name=creds.email, email=creds.email,
+                                                                                 role='user')),
                         domain='.kpndataregistry.org', samesite='strict',
                         secure=os.getenv('USE_HTTPS') == 'true')
     return {'status': 'success'}
@@ -367,6 +376,6 @@ def get_users() -> list:
 
 @router.post('/logout')
 def logout(response: Response):
-    response.delete_cookie(key=AUTH_COOKIE_NAME,  domain='.kpndataregistry.org',
+    response.delete_cookie(key=AUTH_COOKIE_NAME, domain='.kpndataregistry.org',
                            samesite='strict', secure=os.getenv('USE_HTTPS') == 'true')
     return {'status': 'success'}
