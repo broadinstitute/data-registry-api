@@ -11,6 +11,8 @@ from botocore.exceptions import ClientError
 from fastapi import UploadFile, Depends, Header
 from starlette.requests import Request
 from starlette.responses import StreamingResponse, Response
+from streaming_form_data import StreamingFormDataParser
+from streaming_form_data.targets import S3Target
 
 from dataregistry.api import query, s3
 from dataregistry.api.db import DataRegistryReadWriteDB
@@ -111,15 +113,20 @@ async def api_publications(pub_id: str):
 
 
 @router.post("/uploadfile/{data_set_id}/{phenotype}/{dichotomous}/{sample_size}")
-async def upload_file_for_phenotype(data_set_id: str, phenotype: str, dichotomous: bool, file: UploadFile,
+async def upload_file_for_phenotype(data_set_id: str, phenotype: str, dichotomous: bool, request: Request,
                                     sample_size: int, response: fastapi.Response, cases: int = None,
                                     controls: int = None):
-    logger.info(f"Uploading file {file.filename} for phenotype {phenotype} in dataset {data_set_id}")
-    filename = file.filename
+    filename = request.headers.get('Filename')
+    logger.info(f"Uploading file {filename} for phenotype {phenotype} in dataset {data_set_id}")
     try:
         saved_dataset = query.get_dataset(engine, UUID(data_set_id))
         file_path = f"{saved_dataset.name}/{phenotype}"
-        file_size = await multipart_upload_to_s3(file, file_path)
+        parser = StreamingFormDataParser(request.headers)
+        parser.register("file", S3Target(s3.get_file_path(file_path, filename), mode='wb'))
+        file_size = 0
+        async for chunk in request.stream():
+            file_size += len(chunk)
+            parser.data_received(chunk)
         pd_id = query.insert_phenotype_data_set(engine, data_set_id, phenotype,
                                                 f"s3://{s3.BASE_BUCKET}/{file_path}/{filename}", dichotomous,
                                                 sample_size, cases, controls, filename, file_size)
@@ -128,8 +135,7 @@ async def upload_file_for_phenotype(data_set_id: str, phenotype: str, dichotomou
         logger.exception("There was a problem uploading file", e)
         response.status_code = 400
         return {"message": f"There was an error uploading the file {filename}"}
-    finally:
-        await file.close()
+
 
 
 @router.get("/filelist/{data_set_id}")
