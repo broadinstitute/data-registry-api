@@ -34,6 +34,10 @@ def put_bytes(directory, file_name, contents, upload, part_number):
     return upload_part_response
 
 
+def get_file_path(directory, file_name):
+    return f"s3://{BASE_BUCKET}/{directory}/{file_name}"
+
+
 def get_file_obj(path: str):
     s3_client = boto3.client('s3', region_name=S3_REGION)
     return s3_client.get_object(Bucket=BASE_BUCKET, Key=path)

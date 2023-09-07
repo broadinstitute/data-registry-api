@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import subprocess
 from uuid import UUID
 
 import fastapi
@@ -8,10 +9,11 @@ import requests
 import sqlalchemy
 import xmltodict
 from botocore.exceptions import ClientError
-from fastapi import UploadFile, Depends
-from fastapi.encoders import jsonable_encoder
+from fastapi import UploadFile, Depends, Header
 from starlette.requests import Request
 from starlette.responses import StreamingResponse, Response
+from streaming_form_data import StreamingFormDataParser
+from streaming_form_data.targets import S3Target
 
 from dataregistry.api import query, s3
 from dataregistry.api.db import DataRegistryReadWriteDB
@@ -19,12 +21,19 @@ from dataregistry.api.jwt import get_encoded_cookie_data, get_decoded_cookie_dat
 from dataregistry.api.model import DataSet, Study, SavedDatasetInfo, SavedDataset, UserCredentials, User
 from dataregistry.pub_ids import PubIdType, infer_id_type
 
-AUTH_TOKEN_NAME = 'dr_auth_token'
+AUTH_COOKIE_NAME = 'dr_auth_token'
 
 router = fastapi.APIRouter()
 
 # get root logger
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+
+ch = logging.StreamHandler()
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+ch.setFormatter(formatter)
+
+logger.addHandler(ch)
 # connect to database
 engine = DataRegistryReadWriteDB().get_engine()
 
@@ -69,6 +78,15 @@ def format_authors(author_list):
             return result[:-2]
 
 
+def get_elocation_id(article_meta):
+    eloc_dict_list = article_meta.get('ELocationID')
+    if not eloc_dict_list:
+        return None
+    if isinstance(eloc_dict_list, list):
+        eloc_dict_list = eloc_dict_list[0]
+    return f"{eloc_dict_list.get('@EIdType')}: {eloc_dict_list.get('#text')}"
+
+
 @router.get('/publications', response_class=fastapi.responses.ORJSONResponse)
 async def api_publications(pub_id: str):
     if infer_id_type(pub_id) != PubIdType.PMID:
@@ -87,23 +105,29 @@ async def api_publications(pub_id: str):
     authors = format_authors(article_meta.get('AuthorList').get('Author'))
     volume_issue = f"{article_meta.get('Journal').get('JournalIssue').get('Volume')}({article_meta.get('Journal').get('JournalIssue').get('Issue')})"
     pages = article_meta.get('Pagination').get('MedlinePgn')
-    elocation_id = f"{article_meta.get('ELocationID').get('@EIdType')}: {article_meta.get('ELocationID').get('#text')}"
+
     month_year_published = f"{article_meta.get('Journal').get('JournalIssue').get('PubDate').get('Year')} {article_meta.get('Journal').get('JournalIssue').get('PubDate').get('Month')}"
 
     return {"title": article_meta.get('ArticleTitle', ''), "publication": publication,
             'month_year_published': month_year_published, 'authors': authors, 'volume_issue': volume_issue,
-            'pages': pages, 'elocation_id': elocation_id}
+            'pages': pages, 'elocation_id': get_elocation_id(article_meta)}
 
 
 @router.post("/uploadfile/{data_set_id}/{phenotype}/{dichotomous}/{sample_size}")
-async def upload_file_for_phenotype(data_set_id: str, phenotype: str, dichotomous: bool, file: UploadFile,
+async def upload_file_for_phenotype(data_set_id: str, phenotype: str, dichotomous: bool, request: Request,
                                     sample_size: int, response: fastapi.Response, cases: int = None,
                                     controls: int = None):
-    filename = file.filename
+    filename = request.headers.get('Filename')
+    logger.info(f"Uploading file {filename} for phenotype {phenotype} in dataset {data_set_id}")
     try:
         saved_dataset = query.get_dataset(engine, UUID(data_set_id))
         file_path = f"{saved_dataset.name}/{phenotype}"
-        file_size = await multipart_upload_to_s3(file, file_path)
+        parser = StreamingFormDataParser(request.headers)
+        parser.register("file", S3Target(s3.get_file_path(file_path, filename), mode='wb'))
+        file_size = 0
+        async for chunk in request.stream():
+            file_size += len(chunk)
+            parser.data_received(chunk)
         pd_id = query.insert_phenotype_data_set(engine, data_set_id, phenotype,
                                                 f"s3://{s3.BASE_BUCKET}/{file_path}/{filename}", dichotomous,
                                                 sample_size, cases, controls, filename, file_size)
@@ -112,8 +136,6 @@ async def upload_file_for_phenotype(data_set_id: str, phenotype: str, dichotomou
         logger.exception("There was a problem uploading file", e)
         response.status_code = 400
         return {"message": f"There was an error uploading the file {filename}"}
-    finally:
-        await file.close()
 
 
 @router.get("/filelist/{data_set_id}")
@@ -174,21 +196,34 @@ def get_possible_files(ds_uuid):
 
 @router.post("/crediblesetupload/{phenotype_data_set_id}/{credible_set_name}")
 async def upload_credible_set_for_phenotype(phenotype_data_set_id: str, credible_set_name: str,
-                                            file: UploadFile, response: fastapi.Response):
+                                            request: Request, response: fastapi.Response):
+    filename = request.headers.get('Filename')
     try:
         file_path = f"credible_sets/{phenotype_data_set_id}"
-        file_size = await multipart_upload_to_s3(file, file_path)
+        parser = StreamingFormDataParser(request.headers)
+        parser.register("file", S3Target(s3.get_file_path(file_path, filename), mode='wb'))
+        file_size = 0
+        async for chunk in request.stream():
+            file_size += len(chunk)
+            parser.data_received(chunk)
         cs_id = query.insert_credible_set(engine, phenotype_data_set_id,
-                                          f"s3://{s3.BASE_BUCKET}/{file_path}/{file.filename}", credible_set_name,
-                                          file.filename, file_size)
+                                          f"s3://{s3.BASE_BUCKET}/{file_path}/{filename}", credible_set_name,
+                                          filename, file_size)
     except Exception as e:
         logger.exception("There was a problem uploading file", e)
         response.status_code = 400
-        return {"message": f"There was an error uploading the file {file.filename}"}
-    finally:
-        await file.close()
+        return {"message": f"There was an error uploading the file {filename}"}
 
-    return {"message": f"Successfully uploaded {file.filename}", "credible_set_id": cs_id}
+    return {"message": f"Successfully uploaded {filename}", "credible_set_id": cs_id}
+
+
+def get_latest_git_hash():
+    return subprocess.getoutput("git rev-parse HEAD")
+
+
+@router.get("/version")
+async def version():
+    return {"git_hash": get_latest_git_hash()}
 
 
 @router.delete("/datasets/{data_set_id}")
@@ -222,6 +257,7 @@ async def multipart_upload_to_s3(file, file_path):
     size = 0
     # read and put 50 mb at a time--is that too small?
     while contents := await file.read(1024 * 1024 * 50):
+        logger.info(f"Uploading part {part_number} of {file.filename}")
         size += len(contents)
         upload_part_response = s3.put_bytes(file_path, file.filename, contents, upload, part_number)
         parts.append({
@@ -299,10 +335,10 @@ async def api_record_delete(index: int):
 
 
 async def get_current_user(request: Request):
-    token = request.cookies.get(AUTH_TOKEN_NAME)
-    if not token:
+    auth = request.cookies.get(AUTH_COOKIE_NAME)
+    if not auth:
         raise fastapi.HTTPException(status_code=401, detail='Not logged in')
-    data = get_decoded_cookie_data(token)
+    data = get_decoded_cookie_data(auth)
     if not data:
         raise fastapi.HTTPException(status_code=401, detail='Not logged in')
     user = User(**data)
@@ -330,10 +366,11 @@ def login(response: Response, creds: UserCredentials):
     in_list, user = is_user_in_list(creds)
     if not in_list and not is_drupal_user(creds):
         raise fastapi.HTTPException(status_code=401, detail='Invalid username or password')
-    response.set_cookie(key=AUTH_TOKEN_NAME, value=get_encoded_cookie_data(user if user else
-                                                                           User(name=creds.email, email=creds.email,
-                                                                                role='user')), httponly=True,
-                        secure=True, samesite='strict')
+    response.set_cookie(key=AUTH_COOKIE_NAME, value=get_encoded_cookie_data(user if user else
+                                                                            User(name=creds.email, email=creds.email,
+                                                                                 role='user')),
+                        domain='.kpndataregistry.org', samesite='strict',
+                        secure=os.getenv('USE_HTTPS') == 'true')
     return {'status': 'success'}
 
 
@@ -349,5 +386,6 @@ def get_users() -> list:
 
 @router.post('/logout')
 def logout(response: Response):
-    response.delete_cookie(key=AUTH_TOKEN_NAME)
+    response.delete_cookie(key=AUTH_COOKIE_NAME, domain='.kpndataregistry.org',
+                           samesite='strict', secure=os.getenv('USE_HTTPS') == 'true')
     return {'status': 'success'}
