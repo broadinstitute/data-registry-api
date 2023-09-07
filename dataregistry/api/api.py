@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import subprocess
 from uuid import UUID
 
 import fastapi
@@ -214,6 +215,15 @@ async def upload_credible_set_for_phenotype(phenotype_data_set_id: str, credible
         return {"message": f"There was an error uploading the file {filename}"}
 
     return {"message": f"Successfully uploaded {filename}", "credible_set_id": cs_id}
+
+
+def get_latest_git_hash():
+    return subprocess.getoutput("git rev-parse HEAD")
+
+
+@router.get("/version")
+async def version():
+    return {"git_hash": get_latest_git_hash()}
 
 
 @router.delete("/datasets/{data_set_id}")

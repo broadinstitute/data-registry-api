@@ -8,6 +8,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from dataregistry.api.config import get_sensitive_config
 
+ROUTES_WITHOUT_AUTH = {'stream_file', 'version'}
+
 valid_api_key = os.getenv('DATA_REGISTRY_API_KEY') if os.getenv('DATA_REGISTRY_API_KEY') \
     else get_sensitive_config()['apiKey']
 
@@ -21,7 +23,7 @@ async def verify_token(access_token: str = Header()):
 app = fastapi.FastAPI(title='DataRegistry', redoc_url=None)
 
 for route in api.router.routes:
-    if route.name != 'stream_file':
+    if route.name not in ROUTES_WITHOUT_AUTH:
         route.dependencies.append(Depends(verify_token))
 
 # all the various routers for each api
