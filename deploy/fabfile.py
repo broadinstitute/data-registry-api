@@ -17,7 +17,10 @@ def deploy(c, env, commit=None):
 
 
 @task
-def update_source(c, env, commit):
+def update_source(c, env, commit=None):
+    """
+    Update the environment's source code to either the latest in main or a specified commit.
+    """
     directory = get_checkout_directory(env)
     with c.cd(directory):
         if commit:
