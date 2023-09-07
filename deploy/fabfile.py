@@ -23,7 +23,7 @@ def update_source(c, env, commit):
         if commit:
             c.run(f"git checkout {commit}")
         else:
-            c.run("git checkout main; git pull")
+            c.run("git checkout main && git pull")
 
 
 @task
