@@ -90,6 +90,12 @@ class DataSet(BaseModel, extra=Extra.forbid):
     publication: Union[str, None]
     publicly_available: Union[bool, None] = Field(title="Whether the data is publicly available")
 
+    def __hash__(self) -> int:
+        return hash(self.name)
+
+    def __eq__(self, o: object) -> bool:
+        return isinstance(o, DataSet) and self.name == o.name
+
 
 class SavedDataset(DataSet):
     id: UUID
