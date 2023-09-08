@@ -68,7 +68,7 @@ def test_update_dataset(api_client: TestClient):
                                headers={ACCESS_TOKEN: api_key},
                                json=copy)
     assert response.status_code == HTTP_200_OK
-    copy.update({'id': response.json()['dataset_id']})
+    copy.update({'id': response.json()['id']})
     response = api_client.patch(dataset_api_path, headers={ACCESS_TOKEN: api_key}, json=copy)
     assert response.status_code == HTTP_200_OK
 
@@ -76,7 +76,7 @@ def test_update_dataset(api_client: TestClient):
 def save_study(api_client):
     response = api_client.post(study_api_path, headers={ACCESS_TOKEN: api_key}, json=example_study_json)
     assert response.status_code == HTTP_200_OK
-    study_id = response.json()['study_id']
+    study_id = response.json()['id'].replace('-', '')
     return study_id
 
 
@@ -96,7 +96,7 @@ def test_post_then_retrieve_by_id(api_client: TestClient):
                                headers={ACCESS_TOKEN: api_key},
                                json=new_dataset)
     assert response.status_code == HTTP_200_OK
-    new_ds_id = response.json()['dataset_id']
+    new_ds_id = response.json()['id']
     response = api_client.get(f"{dataset_api_path}/{new_ds_id}", headers={ACCESS_TOKEN: api_key})
     assert response.status_code == HTTP_200_OK
 
@@ -146,7 +146,7 @@ def add_ds_with_file(api_client, public=False):
     create_record_res = api_client.post(dataset_api_path, headers={ACCESS_TOKEN: api_key}, json=new_record)
     assert create_record_res.status_code == HTTP_200_OK
     with open("tests/sample_upload.txt", "rb") as f:
-        dataset_id = create_record_res.json()['dataset_id']
+        dataset_id = create_record_res.json()['id'].replace('-', '')
         upload_response = api_client.post(f"/api/uploadfile/{dataset_id}/t1d/true/10",
                                           headers={ACCESS_TOKEN: api_key, "Filename": "sample_upload.txt"},
                                           files={"file": f})

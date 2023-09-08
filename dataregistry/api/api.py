@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import subprocess
+from datetime import datetime
 from uuid import UUID
 
 import fastapi
@@ -18,7 +19,7 @@ from streaming_form_data.targets import S3Target
 from dataregistry.api import query, s3
 from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api.jwt import get_encoded_cookie_data, get_decoded_cookie_data
-from dataregistry.api.model import DataSet, Study, SavedDatasetInfo, SavedDataset, UserCredentials, User
+from dataregistry.api.model import DataSet, Study, SavedDatasetInfo, SavedDataset, UserCredentials, User, SavedStudy
 from dataregistry.pub_ids import PubIdType, infer_id_type
 
 AUTH_COOKIE_NAME = 'dr_auth_token'
@@ -272,10 +273,7 @@ async def multipart_upload_to_s3(file, file_path):
 @router.post('/studies', response_class=fastapi.responses.ORJSONResponse)
 async def save_study(req: Study):
     study_id = query.insert_study(engine, req)
-    return {
-        'name': req.name,
-        'study_id': study_id
-    }
+    return SavedStudy(id=study_id, name=req.name, institution=req.institution, created_at=datetime.now())
 
 
 @router.get('/studies', response_class=fastapi.responses.ORJSONResponse)
@@ -290,11 +288,7 @@ async def save_dataset(req: DataSet):
     """
     try:
         dataset_id = query.insert_dataset(engine, req)
-
-        return {
-            'name': req.name,
-            'dataset_id': dataset_id
-        }
+        return SavedDataset(id=dataset_id, created_at=datetime.now(), **req.dict())
     except sqlalchemy.exc.IntegrityError as e:
         raise fastapi.HTTPException(status_code=400, detail=str(e))
     except ClientError as e:
