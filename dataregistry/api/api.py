@@ -151,16 +151,17 @@ async def get_file_list(data_set_id: str):
     return get_possible_files(ds_uuid)
 
 
-@router.get("/files/{file_id}/{phenotype}/{file_type}/{file_name}", name="stream_file")
-async def stream_file(phenotype: str, file_id: str, file_type: str, file_name: str):
-    no_dash_id = file_id.replace('-', '')
+@router.get("/f/{file_id}", name="stream_file")
+async def stream_file(file_id: str, ft: str):
+    long_id = query.shortened_file_id_lookup(file_id, ft, engine)
+    no_dash_id = long_id.replace('-', '')
     try:
-        if file_type == "credible-set":
+        if ft == "cs":
             s3_path = query.get_credible_set_file(engine, no_dash_id)
-        elif file_type == "data":
+        elif ft == "d":
             s3_path = query.get_phenotype_file(engine, no_dash_id)
         else:
-            raise fastapi.HTTPException(status_code=404, detail=f'Invalid file type: {file_type}')
+            raise fastapi.HTTPException(status_code=404, detail=f'Invalid file type: {ft}')
     except ValueError:
         raise fastapi.HTTPException(status_code=404, detail=f'Invalid file: {file_id}')
 
