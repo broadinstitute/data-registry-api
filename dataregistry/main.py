@@ -22,7 +22,8 @@ def cli_serve(port):
         port=port,
         log_level='info',
         ssl_certfile='/home/ec2-user/ssl/fullchain.pem' if os.getenv('USE_HTTPS') == 'true' else None,
-        ssl_keyfile='/home/ec2-user/ssl/key.pem' if os.getenv('USE_HTTPS') == 'true' else None
+        ssl_keyfile='/home/ec2-user/ssl/key.pem' if os.getenv('USE_HTTPS') == 'true' else None,
+        ssl_ciphers='TLSv1.3'
     )
 
 
