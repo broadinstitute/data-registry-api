@@ -40,7 +40,7 @@ def restart(c, env):
     """
     directory = get_checkout_directory(env)
     screen_session = "dr-api-dev" if env == 'dev' else "dr-api-prd"
-    port = 80 if env == 'dev' else 443
+    port = 8000 if env == 'dev' else 443
 
     with c.cd(directory):
         # terminate running screen sessions
