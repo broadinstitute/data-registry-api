@@ -16,6 +16,7 @@ def cli(ctx, env_file):
 @click.command(name='serve')
 @click.option('--port', '-p', type=int, default=5000)
 def cli_serve(port):
+    defaultpy37 = "DEFAULT:!aNULL:!eNULL:!MD5:!3DES:!DES:!RC4:!IDEA:!SEED:!aDSS:!SRP:!PSK"
     uvicorn.run(
         'dataregistry.server:app',
         host='0.0.0.0',
@@ -23,7 +24,7 @@ def cli_serve(port):
         log_level='info',
         ssl_certfile='/home/ec2-user/ssl/fullchain.pem' if os.getenv('USE_HTTPS') == 'true' else None,
         ssl_keyfile='/home/ec2-user/ssl/key.pem' if os.getenv('USE_HTTPS') == 'true' else None,
-        ssl_ciphers='TLSv1.3'
+        ssl_ciphers=defaultpy37 if os.getenv('USE_HTTPS') == 'true' else None
     )
 
 
