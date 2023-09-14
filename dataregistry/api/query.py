@@ -205,3 +205,17 @@ def get_credible_sets_for_dataset(engine, phenotype_ids: list) -> list:
             raise ValueError(f"No records for id {phenotype_ids}")
         else:
             return [SavedCredibleSet(**row._asdict()) for row in results]
+
+
+def shortened_file_id_lookup(short_file_id: str, file_type: str, engine):
+    with engine.connect() as conn:
+        if file_type == 'd':
+            result = conn.execute(text("""SELECT full_id  FROM data_file_ids where short_id = :id
+            """), {'id': short_file_id}).first()
+        elif file_type == 'cs':
+            result = conn.execute(text("""SELECT full_id  FROM cs_file_ids where short_id = :id
+            """), {'id': short_file_id}).first()
+        if result is None:
+            raise ValueError(f"No records for id {short_file_id}")
+        else:
+            return result.full_id
