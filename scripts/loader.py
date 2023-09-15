@@ -75,8 +75,8 @@ def load_file(submitter_name, submitter_email, csv_file):
                                             file_size=100))
     for ds in data_sets_to_files:
         for pd in data_sets_to_files[ds]:
-            path = f"variants_raw/{get_tech_str(ds.data_type)}/{ds.name}/{pd.phenotype}/"
-            files = s3.list_files_in_bioindex_path(path)
+            path = f"variants_raw/{get_tech_str(ds.data_type)}/{ds.name}/{pd.phenotype}"
+            files = s3.list_files_in_bioindex_path(f"{path}/")
             if len(files) == 0:
                 print(f"Could not files for {path}")
                 continue
