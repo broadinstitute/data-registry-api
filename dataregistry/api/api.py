@@ -145,7 +145,7 @@ async def save_file_for_phenotype(data_set_id: str, phenotype: str, dichotomous:
                                     cases: int = None, controls: int = None):
     try:
         pd_id = query.insert_phenotype_data_set(engine, data_set_id, phenotype,
-                                                f"s3://dig-analysis-data/{file_path}", dichotomous,
+                                                f"s3://dig-analysis-data/{file_path}/{filename}", dichotomous,
                                                 sample_size, cases, controls, filename, file_size)
         return {"message": f"Successfully saved {filename}", "phenotype_data_set_id": pd_id}
     except Exception as e:
@@ -181,7 +181,7 @@ async def stream_file(phenotype: str, file_id: str, file_type: str, file_name: s
 
     split = s3_path[5:].split('/')
     # get path and bucket name from s3 uri
-    obj = s3.get_file_obj(f"{'/'.join(split[1:])}/{file_name}", split[0])
+    obj = s3.get_file_obj('/'.join(split[1:]), split[0])
 
     def generator():
         for chunk in iter(lambda: obj['Body'].read(4096), b''):

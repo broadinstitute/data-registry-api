@@ -66,7 +66,7 @@ def load_file(submitter_name, submitter_email, csv_file):
             data_sets_to_files[ds].append(
                 model.SavedPhenotypeDataSet(id=uuid.uuid4(), created_at=datetime.datetime.now(),
                                             phenotype=row['portal_pheno'],
-                                            dichotomous=True,
+                                            dichotomous=True if row['cases'] != '0' else False,
                                             sample_size=row['subjects'],
                                             cases=row['cases'],
                                             controls=row['controls'],
@@ -75,7 +75,7 @@ def load_file(submitter_name, submitter_email, csv_file):
                                             file_size=100))
     for ds in data_sets_to_files:
         for pd in data_sets_to_files[ds]:
-            path = f"variants_raw/{get_tech_str(ds.data_type)}/{ds.name}/{pd.phenotype}"
+            path = f"variants_raw/{get_tech_str(ds.data_type)}/{ds.name}/{pd.phenotype}/"
             files = s3.list_files_in_bioindex_path(path)
             if len(files) == 0:
                 print(f"Could not files for {path}")
