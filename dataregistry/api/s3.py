@@ -64,9 +64,9 @@ def list_files_in_bioindex_path(prefix):
     return results
 
 
-def get_file_obj(path: str):
+def get_file_obj(path: str, bucket: str):
     s3_client = boto3.client('s3', region_name=S3_REGION)
-    return s3_client.get_object(Bucket=BASE_BUCKET, Key=path)
+    return s3_client.get_object(Bucket=bucket, Key=path)
 
 
 def delete_record_directory(record_name):

@@ -179,7 +179,9 @@ async def stream_file(phenotype: str, file_id: str, file_type: str, file_name: s
     except ValueError:
         raise fastapi.HTTPException(status_code=404, detail=f'Invalid file: {file_id}')
 
-    obj = s3.get_file_obj(s3_path.replace(f's3://{s3.BASE_BUCKET}/', ''))
+    split = s3_path[5:].split('/')
+    # get path and bucket name from s3 uri
+    obj = s3.get_file_obj('/'.join(split[1:]), split[0])
 
     def generator():
         for chunk in iter(lambda: obj['Body'].read(4096), b''):

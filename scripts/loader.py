@@ -35,7 +35,7 @@ def get_tech_str(data_type: DataFormat):
 @click.command()
 @click.option('--submitter-name', '-n', type=str, default="Trang Nguyen")
 @click.option('--submitter-email', '-e', type=str, default="trang@broadinstitute.org")
-@click.option('--csv-file', '-f', type=str, default="/home/dhite/bulk_load/non_EBI.csv")
+@click.option('--csv-file', '-f', type=str, default="/home/dhite/bulk_load/non_EBI_v2.csv")
 def load_file(submitter_name, submitter_email, csv_file):
     with open(csv_file, 'r') as csvfile:
         reader = csv.DictReader(csvfile)
