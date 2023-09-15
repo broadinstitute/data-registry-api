@@ -38,6 +38,32 @@ def get_file_path(directory, file_name):
     return f"s3://{BASE_BUCKET}/{directory}/{file_name}"
 
 
+def list_files_in_bioindex_path(prefix):
+    """
+    List files and their sizes in a specific path in an S3 bucket.
+
+    Parameters:
+    - bucket_name (str): Name of the S3 bucket.
+    - prefix (str): The path (or prefix) in the S3 bucket to list files from.
+
+    Returns:
+    - List of tuples containing filenames and their sizes.
+    """
+    s3 = boto3.client('s3')
+
+    results = []
+    paginator = s3.get_paginator('list_objects_v2')
+
+    # Using a paginator to handle the case where there are more than 1000 files in the path
+    for page in paginator.paginate(Bucket="dig-analysis-data", Prefix=prefix):
+        for obj in page.get('Contents', []):
+            filename = obj['Key']
+            size = obj['Size']  # Size is in bytes
+            results.append((filename.split('/')[-1], size))
+
+    return results
+
+
 def get_file_obj(path: str):
     s3_client = boto3.client('s3', region_name=S3_REGION)
     return s3_client.get_object(Bucket=BASE_BUCKET, Key=path)
