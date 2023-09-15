@@ -181,7 +181,7 @@ async def stream_file(phenotype: str, file_id: str, file_type: str, file_name: s
 
     split = s3_path[5:].split('/')
     # get path and bucket name from s3 uri
-    obj = s3.get_file_obj('/'.join(split[1:]), split[0])
+    obj = s3.get_file_obj(f"{'/'.join(split[1:])}/{file_name}", split[0])
 
     def generator():
         for chunk in iter(lambda: obj['Body'].read(4096), b''):
