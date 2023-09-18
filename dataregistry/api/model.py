@@ -113,6 +113,7 @@ class SavedPhenotypeDataSet(BaseModel):
     created_at: datetime
     s3_path: str
     file_size: int
+    short_id: Union[str, None]
 
 
 class SavedDatasetInfo(BaseModel):
@@ -131,6 +132,7 @@ class SavedCredibleSet(BaseModel):
     s3_path: str
     created_at: datetime
     file_size: int
+    short_id: Union[str, None]
 
 
 class UserCredentials(BaseModel):

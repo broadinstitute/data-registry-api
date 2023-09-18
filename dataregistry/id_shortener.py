@@ -1,4 +1,5 @@
 import hashlib
+from uuid import UUID
 
 ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
 BASE58 = {char: index for index, char in enumerate(ALPHABET)}
@@ -15,8 +16,9 @@ def base58_encode(num):
     return encoding
 
 
-def shorten_uuid(u):
+def shorten_uuid(u_hex):
     """Convert UUID to shortened version."""
+    u = UUID(u_hex)
     sha256 = hashlib.sha256()
     sha256.update(u.bytes)
     hashed = sha256.digest()
