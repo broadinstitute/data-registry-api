@@ -166,7 +166,7 @@ async def get_file_list(data_set_id: str):
     return get_possible_files(ds_uuid)
 
 
-@router.get("/f/{file_id}", name="stream_file")
+@router.get("/{ft}/{file_id}", name="stream_file")
 async def stream_file(file_id: str, ft: str):
     no_dash_id = query.shortened_file_id_lookup(file_id, ft, engine)
     try:
@@ -181,13 +181,16 @@ async def stream_file(file_id: str, ft: str):
 
     split = s3_path[5:].split('/')
     # get path and bucket name from s3 uri
-    obj = s3.get_file_obj('/'.join(split[1:]), split[0])
+    bucket = split[0]
+    file = split[-1]
+    obj = s3.get_file_obj('/'.join(split[1:]), bucket)
 
     def generator():
         for chunk in iter(lambda: obj['Body'].read(4096), b''):
             yield chunk
 
-    return StreamingResponse(generator(), media_type='application/octet-stream')
+    return StreamingResponse(generator(), media_type='application/octet-stream',
+                             headers={"Content-Disposition": f"attachment; filename={file}"})
 
 
 def get_possible_files(ds_uuid):
