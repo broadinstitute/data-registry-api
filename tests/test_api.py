@@ -1,4 +1,5 @@
 import os
+import re
 
 import boto3
 import pytest
@@ -105,7 +106,7 @@ def test_post_then_retrieve_by_id(api_client: TestClient):
 def test_upload_file(api_client: TestClient):
     new_record = add_ds_with_file(api_client)
     s3_conn = boto3.resource("s3", region_name="us-east-1")
-    file_text = s3_conn.Object("dig-data-registry", f"{new_record['name']}/t1d/sample_upload.txt").get()["Body"].read() \
+    file_text = s3_conn.Object("dig-data-registry", f"{new_record['dataset']['name']}/t1d/sample_upload.txt").get()["Body"].read() \
         .decode("utf-8")
     assert file_text == "The answer is 47!\n"
 
@@ -113,7 +114,7 @@ def test_upload_file(api_client: TestClient):
 @mock_s3
 def test_uploaded_file_is_not_public(api_client: TestClient):
     new_record = add_ds_with_file(api_client)
-    response = api_client.get(f"/api/files/{new_record['phenotype_data_set_id']}/t1d/data/sample_upload.txt?filepath={new_record['name']}/t1d/sample_upload.txt",
+    response = api_client.get(f"/api/d/{new_record['phenotypes'][0]['short_id']}",
                               headers={ACCESS_TOKEN: api_key})
     assert response.status_code == HTTP_404_NOT_FOUND
 
@@ -122,17 +123,17 @@ def test_uploaded_file_is_not_public(api_client: TestClient):
 def test_uploaded_file_is_public(api_client: TestClient):
     new_record = add_ds_with_file(api_client, public=True)
     response = api_client.get(
-        f"/api/files/{new_record['phenotype_data_set_id']}/t1d/data/sample_upload.txt",
+        f"/api/d/{new_record['phenotypes'][0]['short_id']}",
         headers={ACCESS_TOKEN: api_key})
     assert response.status_code == HTTP_200_OK
 
 @mock_s3
 def test_list_files(api_client: TestClient):
     new_record = add_ds_with_file(api_client, public=True)
-    response = api_client.get(f"/api/filelist/{new_record['id']}", headers={ACCESS_TOKEN: api_key})
+    response = api_client.get(f"/api/filelist/{new_record['dataset']['id']}", headers={ACCESS_TOKEN: api_key})
     assert response.status_code == HTTP_200_OK
     result = response.json()[0]
-    assert result['path'] == f"files/{new_record['phenotype_data_set_id']}/t1d/data/sample_upload.txt"
+    assert re.match(r'd/[a-zA-Z0-9]{6}', result['path']) is not None
 
 
 def add_ds_with_file(api_client, public=False):
@@ -151,7 +152,7 @@ def add_ds_with_file(api_client, public=False):
                                           headers={ACCESS_TOKEN: api_key, "Filename": "sample_upload.txt"},
                                           files={"file": f})
         assert upload_response.status_code == HTTP_200_OK
-    new_record.update({'id': dataset_id, 'phenotype_data_set_id': upload_response.json()['phenotype_data_set_id']})
+    new_record = api_client.get(f"/api/datasets/{dataset_id}", headers={ACCESS_TOKEN: api_key}).json()
     return new_record
 
 
@@ -160,12 +161,11 @@ def test_upload_credible_set(api_client: TestClient):
     ds = add_ds_with_file(api_client)
     with open("tests/sample_upload.txt", "rb") as f:
         credible_set_name = "credible_set"
-        upload_response = api_client.post(f"/api/crediblesetupload/{ds['phenotype_data_set_id']}"
-                                          f"/{credible_set_name}",
+        upload_response = api_client.post(f"/api/crediblesetupload/{str(ds['phenotypes'][0]['id']).replace('-', '')}/{credible_set_name}",
                                           headers={ACCESS_TOKEN: api_key, "Filename": "sample_upload.txt"},
                                           files={"file": f})
         assert upload_response.status_code == HTTP_200_OK
-    saved_dataset = api_client.get(f"{dataset_api_path}/{ds['id']}", headers={ACCESS_TOKEN: api_key})
+    saved_dataset = api_client.get(f"{dataset_api_path}/{ds['dataset']['id']}", headers={ACCESS_TOKEN: api_key})
     json = saved_dataset.json()
     assert len(json['credible_sets']) == 1
 

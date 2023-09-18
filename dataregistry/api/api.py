@@ -197,7 +197,7 @@ def get_possible_files(ds_uuid):
     available_files = []
     phenos = query.get_phenotypes_for_dataset(engine, ds_uuid)
     available_files.extend(
-        [{"path": f"f/{pheno.short_id}?ft=d",
+        [{"path": f"d/{pheno.short_id}",
           "phenotype": pheno.phenotype, "name": pheno.file_name,
           "size": f"{round(pheno.file_size / (1024 * 1024), 2)} mb",
           "type": "data", "createdAt": pheno.created_at.strftime("%Y-%m-%d")}
@@ -206,7 +206,7 @@ def get_possible_files(ds_uuid):
     if phenos:
         credible_sets = query.get_credible_sets_for_dataset(engine, [pheno.id for pheno in phenos])
         available_files.extend(
-            [{"path": f"f/{cs.short_id}?ft=cs",
+            [{"path": f"cs/{cs.short_id}",
               "phenotype": cs.phenotype, "name": cs.file_name,
               "size": f"{round(cs.file_size / (1024 * 1024), 2)} mb", "type": "credible set",
               "createdAt": cs.created_at.strftime("%Y-%m-%d")}

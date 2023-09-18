@@ -203,7 +203,7 @@ def get_credible_sets_for_dataset(engine, phenotype_ids: list) -> list:
         params = {'ids': tuple([str(p_id).replace('-', '') for p_id in phenotype_ids])}
         results = conn.execute(text("""SELECT cs.id, cs.phenotype_data_set_id, cs.name, cs.s3_path, cs.file_name, 
         cs.created_at, cs.file_size, p.phenotype, cfi.short_id FROM credible_sets cs join dataset_phenotypes p 
-        on cs.phenotype_data_set_id = p.id join cs_file_ids cfi on cfi.id = p.id where phenotype_data_set_id in :ids
+        on cs.phenotype_data_set_id = p.id join cs_file_ids cfi on cfi.id = cs.id where phenotype_data_set_id in :ids
             """), params)
         if results is None:
             raise ValueError(f"No records for id {phenotype_ids}")
