@@ -33,18 +33,12 @@ def get_studies() -> list:
     return parse_obj_as(List[SavedStudy], response.json())
 
 
-def upload_phenotype(data_set_id, phenotype, dichotomous, sample_size, filename, filepath,
-                     url=f"{SERVER_URL}/api/uploadfile", cases=None, controls=None):
-    full_url = f"{url}/{data_set_id}/{phenotype}/{dichotomous}/{sample_size}"
+def save_data_file(data_set_id, phenotype, dichotomous, sample_size, filename, filepath, file_size,
+                   url=f"{SERVER_URL}/api/savebioindexfile", cases=None, controls=None):
+    full_url = f"{url}/{data_set_id}/{phenotype}/{dichotomous}/{sample_size}?filename={filename}&file_path={filepath}&file_size={file_size}"
     if cases and controls:
-        full_url += f"?cases={cases}&controls={controls}"
+        full_url += f"&cases={cases}&controls={controls}"
 
-    file_name_header = {
-        'Filename': filename,
-    }
-
-    with open(filepath, 'rb') as f:
-        files = {'file': f}
-        response = requests.post(full_url, headers={**file_name_header, **ACCESS_HEADER}, files=files)
+    response = requests.post(full_url, headers=ACCESS_HEADER)
 
     return response.json()
