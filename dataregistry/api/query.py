@@ -5,6 +5,7 @@ import uuid
 from sqlalchemy import text
 
 from dataregistry.api.model import SavedDataset, DataSet, Study, SavedStudy, SavedPhenotypeDataSet, SavedCredibleSet
+from dataregistry.id_shortener import shorten_uuid
 
 
 def get_all_datasets(engine) -> list:
@@ -101,6 +102,7 @@ def insert_phenotype_data_set(engine, dataset_id: str, phenotype: str, s3_path: 
             created_at, file_name, controls, file_size) 
             VALUES(:id, :dataset_id, :phenotype, :s3_path, :dichotomous, :sample_size, :cases, NOW(), :file_name, 
             :controls, :file_size)"""), sql_params)
+        save_shortened_file_id(conn, pd_id, 'd')
         conn.commit()
         return pd_id
 
@@ -113,6 +115,7 @@ def insert_credible_set(engine, phenotype_dataset_id: str, s3_path: str, name: s
         conn.execute(text("""
             INSERT INTO credible_sets (id, phenotype_data_set_id, s3_path, name, file_name, file_size, created_at) 
             VALUES(:id, :phenotype_data_set_id, :s3_path, :name, :file_name, :file_size, NOW())"""), sql_params)
+        save_shortened_file_id(conn, credible_set_id, 'cs')
         conn.commit()
         return credible_set_id
 
@@ -131,8 +134,9 @@ def get_study_for_dataset(engine, study_id: str) -> SavedStudy:
 
 def get_phenotypes_for_dataset(engine, dataset_id: uuid.UUID) -> list:
     with engine.connect() as conn:
-        results = conn.execute(text("""SELECT id, phenotype, dichotomous, sample_size, cases, controls, created_at, 
-        file_name, s3_path, file_size FROM dataset_phenotypes where dataset_id = :id
+        results = conn.execute(text("""SELECT ds.id, ds.phenotype, ds.dichotomous, ds.sample_size, ds.cases, 
+        ds.controls, ds.created_at, ds.file_name, ds.s3_path, ds.file_size, df.short_id  
+        FROM dataset_phenotypes ds join data_file_ids df on df.id = ds.id where dataset_id = :id
             """), {'id': str(dataset_id).replace('-', '')})
         if results is None:
             raise ValueError(f"No records for id {dataset_id}")
@@ -198,10 +202,39 @@ def get_credible_sets_for_dataset(engine, phenotype_ids: list) -> list:
     with engine.connect() as conn:
         params = {'ids': tuple([str(p_id).replace('-', '') for p_id in phenotype_ids])}
         results = conn.execute(text("""SELECT cs.id, cs.phenotype_data_set_id, cs.name, cs.s3_path, cs.file_name, 
-        cs.created_at, cs.file_size, p.phenotype FROM credible_sets cs join dataset_phenotypes p 
-        on cs.phenotype_data_set_id = p.id  where phenotype_data_set_id in :ids
+        cs.created_at, cs.file_size, p.phenotype, cfi.short_id FROM credible_sets cs join dataset_phenotypes p 
+        on cs.phenotype_data_set_id = p.id join cs_file_ids cfi on cfi.id = cs.id where phenotype_data_set_id in :ids
             """), params)
         if results is None:
             raise ValueError(f"No records for id {phenotype_ids}")
         else:
             return [SavedCredibleSet(**row._asdict()) for row in results]
+
+
+def save_shortened_file_id(conn, file_id: str, file_type: str):
+    short_id = shorten_uuid(file_id)
+    if file_type == 'd':
+        conn.execute(text("""
+            INSERT INTO data_file_ids (id, short_id) 
+            VALUES (:full, :short)
+        """), {'full': file_id, 'short': short_id})
+    elif file_type == 'cs':
+        conn.execute(text("""
+            INSERT INTO cs_file_ids (id, short_id) 
+            VALUES (:full, :short)
+        """), {'full': file_id, 'short': short_id})
+    return short_id
+
+
+def shortened_file_id_lookup(short_file_id: str, file_type: str, engine) -> str:
+    with engine.connect() as conn:
+        if file_type == 'd':
+            result = conn.execute(text("""SELECT id  FROM data_file_ids where short_id = :id
+            """), {'id': short_file_id}).first()
+        elif file_type == 'cs':
+            result = conn.execute(text("""SELECT id  FROM cs_file_ids where short_id = :id
+            """), {'id': short_file_id}).first()
+        if result is None:
+            raise ValueError(f"No records for id {short_file_id}")
+        else:
+            return result.id

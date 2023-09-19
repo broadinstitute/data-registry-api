@@ -51,17 +51,17 @@ async def api_datasets():
         raise fastapi.HTTPException(status_code=400, detail=str(e))
 
 
-@router.get('/datasets/{index}', response_class=fastapi.responses.ORJSONResponse)
-async def api_datasets(index: UUID):
+@router.get('/datasets/{dataset_id}', response_class=fastapi.responses.ORJSONResponse)
+async def api_datasets(dataset_id: UUID):
     try:
-        ds = query.get_dataset(engine, index)
+        ds = query.get_dataset(engine, dataset_id)
         study = query.get_study_for_dataset(engine, ds.study_id)
-        phenotypes = query.get_phenotypes_for_dataset(engine, index)
+        phenotypes = query.get_phenotypes_for_dataset(engine, dataset_id)
         credible_sets = query.get_credible_sets_for_dataset(engine, [phenotype.id for phenotype in phenotypes])
         return SavedDatasetInfo(
             **{'dataset': ds, 'study': study, 'phenotypes': phenotypes, 'credible_sets': credible_sets})
     except KeyError:
-        raise fastapi.HTTPException(status_code=400, detail=f'Invalid index: {index}')
+        raise fastapi.HTTPException(status_code=400, detail=f'Invalid index: {dataset_id}')
     except ValueError as e:
         raise fastapi.HTTPException(status_code=404, detail=str(e))
 
@@ -166,35 +166,38 @@ async def get_file_list(data_set_id: str):
     return get_possible_files(ds_uuid)
 
 
-@router.get("/files/{file_id}/{phenotype}/{file_type}/{file_name}", name="stream_file")
-async def stream_file(phenotype: str, file_id: str, file_type: str, file_name: str):
-    no_dash_id = file_id.replace('-', '')
+@router.get("/{ft}/{file_id}", name="stream_file")
+async def stream_file(file_id: str, ft: str):
+    no_dash_id = query.shortened_file_id_lookup(file_id, ft, engine)
     try:
-        if file_type == "credible-set":
+        if ft == "cs":
             s3_path = query.get_credible_set_file(engine, no_dash_id)
-        elif file_type == "data":
+        elif ft == "d":
             s3_path = query.get_phenotype_file(engine, no_dash_id)
         else:
-            raise fastapi.HTTPException(status_code=404, detail=f'Invalid file type: {file_type}')
+            raise fastapi.HTTPException(status_code=404, detail=f'Invalid file type: {ft}')
     except ValueError:
         raise fastapi.HTTPException(status_code=404, detail=f'Invalid file: {file_id}')
 
     split = s3_path[5:].split('/')
     # get path and bucket name from s3 uri
-    obj = s3.get_file_obj('/'.join(split[1:]), split[0])
+    bucket = split[0]
+    file = split[-1]
+    obj = s3.get_file_obj('/'.join(split[1:]), bucket)
 
     def generator():
         for chunk in iter(lambda: obj['Body'].read(4096), b''):
             yield chunk
 
-    return StreamingResponse(generator(), media_type='application/octet-stream')
+    return StreamingResponse(generator(), media_type='application/octet-stream',
+                             headers={"Content-Disposition": f"attachment; filename={file}"})
 
 
 def get_possible_files(ds_uuid):
     available_files = []
     phenos = query.get_phenotypes_for_dataset(engine, ds_uuid)
     available_files.extend(
-        [{"path": f"files/{str(pheno.id).replace('-', '')}/{pheno.phenotype}/data/{pheno.file_name}",
+        [{"path": f"d/{pheno.short_id}",
           "phenotype": pheno.phenotype, "name": pheno.file_name,
           "size": f"{round(pheno.file_size / (1024 * 1024), 2)} mb",
           "type": "data", "createdAt": pheno.created_at.strftime("%Y-%m-%d")}
@@ -203,7 +206,7 @@ def get_possible_files(ds_uuid):
     if phenos:
         credible_sets = query.get_credible_sets_for_dataset(engine, [pheno.id for pheno in phenos])
         available_files.extend(
-            [{"path": f"files/{str(cs.id).replace('-', '')}/{cs.phenotype}/credible-set/{cs.file_name}",
+            [{"path": f"cs/{cs.short_id}",
               "phenotype": cs.phenotype, "name": cs.file_name,
               "size": f"{round(cs.file_size / (1024 * 1024), 2)} mb", "type": "credible set",
               "createdAt": cs.created_at.strftime("%Y-%m-%d")}
