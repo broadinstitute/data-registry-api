@@ -11,6 +11,7 @@ def deploy(c, env, commit=None):
         env: The environment (e.g., 'dev', 'prd').
         commit: The commit to deploy. If not specified, the latest commit on main.
     """
+    c.forward_agent = True
     update_source(c, env, commit)
     migrate(c, env)
     restart(c, env)
