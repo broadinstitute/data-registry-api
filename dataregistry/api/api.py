@@ -223,7 +223,7 @@ async def upload_credible_set_for_phenotype(phenotype_data_set_id: str, credible
     try:
         file_path = f"credible_sets/{phenotype_data_set_id}"
         parser = StreamingFormDataParser(request.headers)
-        parser.register("file", S3Target(s3.get_file_path(file_path, filename), mode='wb'))
+        parser.register("file", GzipS3Target(s3.get_file_path(file_path, filename), mode='wb'))
         file_size = 0
         async for chunk in request.stream():
             file_size += len(chunk)
