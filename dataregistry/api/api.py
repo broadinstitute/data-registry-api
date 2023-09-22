@@ -7,10 +7,11 @@ from uuid import UUID
 
 import fastapi
 import requests
+import smart_open
 import sqlalchemy
 import xmltodict
 from botocore.exceptions import ClientError
-from fastapi import UploadFile, Depends, Header
+from fastapi import Depends
 from starlette.requests import Request
 from starlette.responses import StreamingResponse, Response
 from streaming_form_data import StreamingFormDataParser
@@ -124,7 +125,7 @@ async def upload_file_for_phenotype(data_set_id: str, phenotype: str, dichotomou
         saved_dataset = query.get_dataset(engine, UUID(data_set_id))
         file_path = f"{saved_dataset.name}/{phenotype}"
         parser = StreamingFormDataParser(request.headers)
-        parser.register("file", S3Target(s3.get_file_path(file_path, filename), mode='wb'))
+        parser.register("file", GzipS3Target(s3.get_file_path(file_path, filename), mode='wb'))
         file_size = 0
         async for chunk in request.stream():
             file_size += len(chunk)
@@ -222,7 +223,7 @@ async def upload_credible_set_for_phenotype(phenotype_data_set_id: str, credible
     try:
         file_path = f"credible_sets/{phenotype_data_set_id}"
         parser = StreamingFormDataParser(request.headers)
-        parser.register("file", S3Target(s3.get_file_path(file_path, filename), mode='wb'))
+        parser.register("file", GzipS3Target(s3.get_file_path(file_path, filename), mode='wb'))
         file_size = 0
         async for chunk in request.stream():
             file_size += len(chunk)
@@ -403,3 +404,17 @@ def logout(response: Response):
     response.delete_cookie(key=AUTH_COOKIE_NAME, domain='.kpndataregistry.org',
                            samesite='strict', secure=os.getenv('USE_HTTPS') == 'true')
     return {'status': 'success'}
+
+
+class GzipS3Target(S3Target):
+    def __init__(self, path, mode='wb', transport_params=None):
+        super().__init__(path, mode, transport_params)
+
+    def on_start(self):
+        self._fd = smart_open.open(
+            self._file_path,
+            self._mode,
+            compression='disable',
+            transport_params=self._transport_params,
+        )
+
