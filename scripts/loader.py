@@ -1,14 +1,16 @@
 import csv
 import datetime
 import uuid
+from collections import defaultdict
 
 import click
 
 from dataregistry.api import model, s3
 from dataregistry.api.model import DataFormat
-from scripts.apiclient import save_study, get_studies, get_datasets, save_dataset, save_data_file
+from scripts.apiclient import save_study, get_studies, get_datasets, save_dataset, save_data_file, \
+    get_existing_phenotypes
 
-data_sets_to_files = {}
+data_sets_to_files = defaultdict(list)
 
 
 def infer_sex(ds_name):
@@ -40,6 +42,7 @@ def load_file(submitter_name, submitter_email, csv_file):
     with open(csv_file, 'r') as csvfile:
         reader = csv.DictReader(csvfile)
 
+        existing_phenotypes = get_existing_phenotypes()
         for row in reader:
             if row['status'] != 'formatted':
                 continue
@@ -61,18 +64,14 @@ def load_file(submitter_name, submitter_email, csv_file):
             else:
                 ds = existing_datasets[ds_name]
 
-            if ds not in data_sets_to_files:
-                data_sets_to_files[ds] = []
-            data_sets_to_files[ds].append(
-                model.SavedPhenotypeDataSet(id=uuid.uuid4(), created_at=datetime.datetime.now(),
-                                            phenotype=row['portal_pheno'],
-                                            dichotomous=True if row['cases'] != '0' else False,
-                                            sample_size=row['subjects'],
-                                            cases=row['cases'],
-                                            controls=row['controls'],
-                                            file_name=row['original_dataset'],
-                                            s3_path='TBD',
-                                            file_size=100))
+            pds = model.SavedPhenotypeDataSet(id=uuid.uuid4(), created_at=datetime.datetime.now(), dataset_id=ds.id,
+                                                   phenotype=row['portal_pheno'],
+                                                   dichotomous=True if row['cases'] != '0' else False,
+                                                   sample_size=row['subjects'], cases=row['cases'],
+                                                   controls=row['controls'], file_name=row['original_dataset'], s3_path='TBD', file_size=100)
+            if pds not in existing_phenotypes:
+                data_sets_to_files[ds].append(pds)
+
     for ds in data_sets_to_files:
         for pd in data_sets_to_files[ds]:
             path = f"variants_raw/{get_tech_str(ds.data_type)}/{ds.name}/{pd.phenotype}"

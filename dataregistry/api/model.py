@@ -104,6 +104,7 @@ class SavedDataset(DataSet):
 
 class SavedPhenotypeDataSet(BaseModel):
     id: UUID
+    dataset_id: UUID
     phenotype: str
     dichotomous: bool
     file_name: str
@@ -114,6 +115,12 @@ class SavedPhenotypeDataSet(BaseModel):
     s3_path: str
     file_size: int
     short_id: Union[str, None]
+
+    def __hash__(self) -> int:
+        return hash((self.dataset_id, self.phenotype))
+
+    def __eq__(self, o: object) -> bool:
+        return isinstance(o, SavedPhenotypeDataSet) and self.phenotype == o.phenotype and self.dataset_id == o.dataset_id
 
 
 class SavedDatasetInfo(BaseModel):

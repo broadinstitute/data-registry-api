@@ -4,7 +4,7 @@ from typing import List
 import requests
 from pydantic import parse_obj_as
 
-from dataregistry.api.model import SavedStudy, SavedDataset
+from dataregistry.api.model import SavedStudy, SavedDataset, SavedPhenotypeDataSet
 
 ACCESS_HEADER = {"access-token": os.getenv('DATA_REGISTRY_API_KEY')}
 JSON_HEADER = {"Content-Type": "application/json"}
@@ -26,6 +26,11 @@ def save_dataset(dataset):
 def get_datasets() -> list:
     response = requests.get(DATASETS_URL, headers={**ACCESS_HEADER, **JSON_HEADER})
     return parse_obj_as(List[SavedDataset], response.json())
+
+
+def get_existing_phenotypes() -> list:
+    response = requests.get(f"{SERVER_URL}/api/phenotypefiles", headers={**ACCESS_HEADER, **JSON_HEADER})
+    return parse_obj_as(List[SavedPhenotypeDataSet], response.json())
 
 
 def get_studies() -> list:

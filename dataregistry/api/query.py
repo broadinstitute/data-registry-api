@@ -16,12 +16,22 @@ def get_all_datasets(engine) -> list:
     return [SavedDataset(**row._asdict()) for row in results]
 
 
+def get_all_phenotypes(engine) -> list:
+    with engine.connect() as conn:
+        results = conn.execute(text("""SELECT ds.id, ds.dataset_id, ds.phenotype, ds.dichotomous, ds.sample_size, ds.cases, 
+        ds.controls, ds.created_at, ds.file_name, ds.s3_path, ds.file_size, df.short_id  
+        FROM dataset_phenotypes ds join data_file_ids df on df.id = ds.id 
+            """))
+        return [SavedPhenotypeDataSet(**row._asdict()) for row in results]
+
+
 def get_dataset(engine, index: uuid.UUID) -> SavedDataset:
     with engine.connect() as conn:
         result = conn.execute(
-            text("""
-            SELECT * FROM datasets WHERE id = :id
-            """), {'id': str(index).replace('-', '')}
+            text("""select id, name, data_source_type, data_type, genome_build, ancestry, sex,
+        global_sample_size, status, data_submitter, data_submitter_email, data_contributor, data_contributor_email,
+        study_id, description, pub_id, publication, created_at, publicly_available from datasets where id = :id"""),
+            {'id': str(index).replace('-', '')}
         ).first()
 
     if result is None:

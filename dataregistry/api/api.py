@@ -52,6 +52,14 @@ async def api_datasets():
         raise fastapi.HTTPException(status_code=400, detail=str(e))
 
 
+@router.get('/phenotypefiles', response_class=fastapi.responses.ORJSONResponse)
+async def api_phenotype_files():
+    try:
+        return query.get_all_phenotypes(engine)
+    except ValueError as e:
+        raise fastapi.HTTPException(status_code=400, detail=str(e))
+
+
 @router.get('/datasets/{dataset_id}', response_class=fastapi.responses.ORJSONResponse)
 async def api_datasets(dataset_id: UUID):
     try:
@@ -142,8 +150,8 @@ async def upload_file_for_phenotype(data_set_id: str, phenotype: str, dichotomou
 
 @router.post("/savebioindexfile/{data_set_id}/{phenotype}/{dichotomous}/{sample_size}")
 async def save_file_for_phenotype(data_set_id: str, phenotype: str, dichotomous: bool, sample_size: int,
-                                    response: fastapi.Response, file_size: int, filename: str, file_path: str,
-                                    cases: int = None, controls: int = None):
+                                  response: fastapi.Response, file_size: int, filename: str, file_path: str,
+                                  cases: int = None, controls: int = None):
     try:
         pd_id = query.insert_phenotype_data_set(engine, data_set_id, phenotype,
                                                 f"s3://dig-analysis-data/{file_path}/{filename}", dichotomous,
@@ -417,4 +425,3 @@ class GzipS3Target(S3Target):
             compression='disable',
             transport_params=self._transport_params,
         )
-
