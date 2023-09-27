@@ -10,6 +10,8 @@ import requests
 import smart_open
 import sqlalchemy
 import xmltodict
+from bioindex.lib import config, migrate
+from bioindex.lib.index import Index
 from botocore.exceptions import ClientError
 from fastapi import Depends
 from starlette.requests import Request
@@ -20,7 +22,8 @@ from streaming_form_data.targets import S3Target
 from dataregistry.api import query, s3
 from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api.jwt import get_encoded_cookie_data, get_decoded_cookie_data
-from dataregistry.api.model import DataSet, Study, SavedDatasetInfo, SavedDataset, UserCredentials, User, SavedStudy
+from dataregistry.api.model import DataSet, Study, SavedDatasetInfo, SavedDataset, UserCredentials, User, SavedStudy, \
+    CreateBiondexRequest
 from dataregistry.pub_ids import PubIdType, infer_id_type
 
 AUTH_COOKIE_NAME = 'dr_auth_token'
@@ -48,6 +51,23 @@ NIH_API_TOOL_NAME = "data-registry"
 async def api_datasets():
     try:
         return query.get_all_datasets(engine)
+    except ValueError as e:
+        raise fastapi.HTTPException(status_code=400, detail=str(e))
+
+
+
+@router.post('/createbioindex', response_class=fastapi.responses.ORJSONResponse)
+async def create_bioindex(request: CreateBiondexRequest):
+    cf = config.Config()
+    e = migrate.migrate(cf)
+    Index.create(e, request.name, request.name, request.s3_path, request.schema_desc)
+    return {"message": f"Successfully created index {request.name}"}
+
+
+@router.get('/phenotypefiles', response_class=fastapi.responses.ORJSONResponse)
+async def api_phenotype_files():
+    try:
+        return query.get_all_phenotypes(engine)
     except ValueError as e:
         raise fastapi.HTTPException(status_code=400, detail=str(e))
 
