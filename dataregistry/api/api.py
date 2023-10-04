@@ -55,12 +55,14 @@ async def api_datasets():
         raise fastapi.HTTPException(status_code=400, detail=str(e))
 
 
-
 @router.post('/createbioindex', response_class=fastapi.responses.ORJSONResponse)
 async def create_bioindex(request: CreateBiondexRequest):
     cf = config.Config()
     e = migrate.migrate(cf)
     Index.create(e, request.name, request.name, request.s3_path, request.schema_desc)
+    new_index = Index.lookup(e, request.name, request.schema_desc.count(',')+1)
+    new_index.prepare(e)
+    new_index.build(cf, e, True)
     return {"message": f"Successfully created index {request.name}"}
 
 
@@ -162,8 +164,8 @@ async def upload_file_for_phenotype(data_set_id: str, phenotype: str, dichotomou
 
 @router.post("/savebioindexfile/{data_set_id}/{phenotype}/{dichotomous}/{sample_size}")
 async def save_file_for_phenotype(data_set_id: str, phenotype: str, dichotomous: bool, sample_size: int,
-                                    response: fastapi.Response, file_size: int, filename: str, file_path: str,
-                                    cases: int = None, controls: int = None):
+                                  response: fastapi.Response, file_size: int, filename: str, file_path: str,
+                                  cases: int = None, controls: int = None):
     try:
         pd_id = query.insert_phenotype_data_set(engine, data_set_id, phenotype,
                                                 f"s3://dig-analysis-data/{file_path}/{filename}", dichotomous,
@@ -437,4 +439,3 @@ class GzipS3Target(S3Target):
             compression='disable',
             transport_params=self._transport_params,
         )
-

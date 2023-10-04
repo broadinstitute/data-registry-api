@@ -134,7 +134,7 @@ def get_study_for_dataset(engine, study_id: str) -> SavedStudy:
 
 def get_phenotypes_for_dataset(engine, dataset_id: uuid.UUID) -> list:
     with engine.connect() as conn:
-        results = conn.execute(text("""SELECT ds.id, ds.phenotype, ds.dichotomous, ds.sample_size, ds.cases, 
+        results = conn.execute(text("""SELECT ds.id, ds.dataset_id, ds.phenotype, ds.dichotomous, ds.sample_size, ds.cases, 
         ds.controls, ds.created_at, ds.file_name, ds.s3_path, ds.file_size, df.short_id  
         FROM dataset_phenotypes ds join data_file_ids df on df.id = ds.id where dataset_id = :id
             """), {'id': str(dataset_id).replace('-', '')})
