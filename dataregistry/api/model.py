@@ -155,7 +155,11 @@ class User(BaseModel):
 
 
 class CreateBiondexRequest(BaseModel):
-    name: str
-    s3_path: str
-    bucket: str
+    dataset_id: UUID
     schema_desc: str
+
+
+class BioIndex(BaseModel):
+    dataset_id: UUID
+    schema_desc: str
+    url: str

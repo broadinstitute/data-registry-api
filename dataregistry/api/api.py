@@ -57,13 +57,31 @@ async def api_datasets():
 
 @router.post('/createbioindex', response_class=fastapi.responses.ORJSONResponse)
 async def create_bioindex(request: CreateBiondexRequest):
-    cf = config.Config()
-    e = migrate.migrate(cf)
-    Index.create(e, request.name, request.name, request.s3_path, request.schema_desc)
-    new_index = Index.lookup(e, request.name, request.schema_desc.count(',')+1)
-    new_index.prepare(e)
-    new_index.build(cf, e, True)
-    return {"message": f"Successfully created index {request.name}"}
+    dataset = query.get_dataset(engine, request.dataset_id)
+    s3_path = f"{dataset.name}/"
+    idx_name = str(request.dataset_id)
+    try:
+        existing_index = Index.lookup_all(engine, idx_name)[0]
+    except KeyError:
+        existing_index = None
+    if not existing_index:
+        Index.create(engine, idx_name, idx_name, s3_path, request.schema_desc)
+
+    new_index = Index.lookup(engine, idx_name, request.schema_desc.count(',') + 1)
+    new_index.prepare(engine, rebuild=True)
+    new_index.build(config.Config(), engine)
+    return {"message": f"Successfully created index {idx_name}"}
+
+
+@router.get('/bioindex/{dataset_id}', response_class=fastapi.responses.ORJSONResponse)
+async def get_bioindex(dataset_id: UUID):
+    schema = query.get_bioindex_schema(engine, str(dataset_id))
+    if schema:
+        host = os.getenv('MINI_BIO_INDEX_HOST')
+        if not host:
+            raise fastapi.HTTPException(status_code=500, detail='No mini bio index host set')
+        return {"url": f"{host}/api/bio/query/{dataset_id}?q=<query value>", "schema": f"{schema}"}
+    return {"message": f"No bioindex found for dataset {dataset_id}"}
 
 
 @router.get('/phenotypefiles', response_class=fastapi.responses.ORJSONResponse)
@@ -181,9 +199,6 @@ async def save_file_for_phenotype(data_set_id: str, phenotype: str, dichotomous:
 async def get_file_list(data_set_id: str):
     try:
         ds_uuid = UUID(data_set_id)
-        ds = query.get_dataset(engine, ds_uuid)
-        if not ds.publicly_available:
-            raise fastapi.HTTPException(status_code=403, detail=f'{data_set_id} is not publicly available')
     except ValueError:
         raise fastapi.HTTPException(status_code=404, detail=f'Invalid index: {data_set_id}')
     return get_possible_files(ds_uuid)
