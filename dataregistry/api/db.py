@@ -20,7 +20,7 @@ class DataRegistryDB:
                 self.url = os.getenv('DATA_REGISTRY_DB_CONNECTION')
             else:
                 self.config = get_sensitive_config()
-                self.url = '{engine}://{username}:{password}@{host}:{port}/{db}'.format(
+                self.url = '{engine}://{username}:{password}@{host}:{port}/{db}?local_infile=1'.format(
                     engine=self.config['engine'] + ('+pymysql' if self.config['engine'] == 'mysql' else ''),
                     username=self.config[self.username_field],
                     password=self.config[self.password_field],

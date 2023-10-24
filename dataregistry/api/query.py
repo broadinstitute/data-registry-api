@@ -22,7 +22,7 @@ def get_bioindex_schema(engine, dataset_id: str) -> str:
         result = conn.execute(text("""
             SELECT `schema` FROM `__Indexes` WHERE name= :id
             """), {'id': dataset_id}).first()
-    return result.schema
+    return result.schema if result is not None else None
 
 
 def get_dataset(engine, index: uuid.UUID) -> SavedDataset:
