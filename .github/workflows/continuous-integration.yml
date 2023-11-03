@@ -41,6 +41,7 @@ jobs:
       - name: Test with pytest
         env: # Or as an environment variable
           DATA_REGISTRY_API_KEY: ${{ secrets.API_KEY }}
+          AWS_DEFAULT_REGION: us-east-1
         run: |
           pytest
 
