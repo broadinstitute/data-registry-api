@@ -69,6 +69,7 @@ jobs:
         run: |
           eval "$(ssh-agent -s)"
           ssh-add <(echo "$PRIVATE_KEY")
+          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> $GITHUB_ENV
         env:
           PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
 
@@ -87,6 +88,7 @@ jobs:
       - name: Deploy with Fabric
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          SSH_AUTH_SOCK: ${{ env.SSH_AUTH_SOCK }}
         run: |
           cd deploy
           fab deploy --env=dev -H ec2-user@$DEPLOY_HOST
