@@ -1,4 +1,4 @@
-name: Tests
+name: CI
 
 on:
   push:
@@ -65,7 +65,15 @@ jobs:
         run: |
           pip install fabric
 
-      # This step assumes that you have an SSH private key stored as a GitHub secret to access the AWS instance
+      - name: Start SSH Agent
+        run: |
+          eval "$(ssh-agent -s)"
+          ssh-add <(echo "$PRIVATE_KEY")
+        env:
+          PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+
+
+        # This step assumes that you have an SSH private key stored as a GitHub secret to access the AWS instance
       - name: Setup SSH Key
         env:
           PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
@@ -73,10 +81,12 @@ jobs:
           mkdir -p ~/.ssh/
           echo "$PRIVATE_KEY" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts
+          ssh-keyscan "$PRIVATE_KEY" >> ~/.ssh/known_hosts
 
       - name: Deploy with Fabric
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
         run: |
           cd deploy
-          fab deploy --env=dev -H ec2-user@${{ secrets.DEPLOY_HOST }}
+          fab deploy --env=dev -H ec2-user@$DEPLOY_HOST
       
