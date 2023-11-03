@@ -4,7 +4,8 @@ import uuid
 
 from sqlalchemy import text
 
-from dataregistry.api.model import SavedDataset, DataSet, Study, SavedStudy, SavedPhenotypeDataSet, SavedCredibleSet
+from dataregistry.api.model import SavedDataset, DataSet, Study, SavedStudy, SavedPhenotypeDataSet, SavedCredibleSet, \
+    BioIndex
 from dataregistry.id_shortener import shorten_uuid
 
 
@@ -14,6 +15,14 @@ def get_all_datasets(engine) -> list:
         global_sample_size, status, data_submitter, data_submitter_email, data_contributor, data_contributor_email, 
         study_id, description, pub_id, publication, created_at, publicly_available from datasets"""))
     return [SavedDataset(**row._asdict()) for row in results]
+
+
+def get_bioindex_schema(engine, dataset_id: str) -> str:
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+            SELECT `schema` FROM `__Indexes` WHERE name= :id
+            """), {'id': dataset_id}).first()
+    return result.schema if result is not None else None
 
 
 def get_dataset(engine, index: uuid.UUID) -> SavedDataset:
@@ -134,7 +143,7 @@ def get_study_for_dataset(engine, study_id: str) -> SavedStudy:
 
 def get_phenotypes_for_dataset(engine, dataset_id: uuid.UUID) -> list:
     with engine.connect() as conn:
-        results = conn.execute(text("""SELECT ds.id, ds.phenotype, ds.dichotomous, ds.sample_size, ds.cases, 
+        results = conn.execute(text("""SELECT ds.id, ds.dataset_id, ds.phenotype, ds.dichotomous, ds.sample_size, ds.cases, 
         ds.controls, ds.created_at, ds.file_name, ds.s3_path, ds.file_size, df.short_id  
         FROM dataset_phenotypes ds join data_file_ids df on df.id = ds.id where dataset_id = :id
             """), {'id': str(dataset_id).replace('-', '')})
