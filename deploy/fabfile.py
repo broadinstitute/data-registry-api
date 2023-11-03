@@ -64,4 +64,5 @@ def migrate(c, env):
     directory = get_checkout_directory(env)
     with c.cd(directory):
         db = "dataregistry_qa" if env == 'dev' else "dataregistry"
+        c.run("python3.8 -m pip install -r requirements.txt")
         c.run(f"export DATA_REGISTRY_DB_NAME={db}; python3.8 -m alembic upgrade head")
