@@ -59,7 +59,6 @@ jobs:
 
 
       - uses: ./.github/actions/deploy
-      - name: deploy
         with:
           python-version: '3.8'
           deploy-environment: 'dev'
