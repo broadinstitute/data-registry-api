@@ -53,7 +53,7 @@ jobs:
     needs: [ test ]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     name: Deploy to QA
-    uses: ./.github/actions/deploy
+    uses: ./.github/actions/deploy@main
     with:
       python-version: '3.8'
       deploy-environment: 'dev'
