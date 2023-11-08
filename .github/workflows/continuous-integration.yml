@@ -69,6 +69,7 @@ jobs:
     name: Deploy to Prod
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v3
       - uses: ./.github/actions/deploy
         with:
           python-version: '3.8'
