@@ -58,7 +58,7 @@ jobs:
       - name: checkout
 
 
-      - uses: ./.github/actions/deploy@main
+      - uses: ./.github/actions/deploy
       - name: deploy
         with:
           python-version: '3.8'
