@@ -26,15 +26,18 @@ runs:
         python-version: ${{ inputs.python-version }}
 
     - name: Install Fabric and dependencies
+      shell: bash
       run: pip install fabric
 
     - name: Start SSH Agent
+      shell: bash
       run: |
         eval "$(ssh-agent -s)"
         ssh-add <(echo "${{ inputs.private-key }}")
         echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> $GITHUB_ENV
 
     - name: Setup SSH Key
+      shell: bash
       run: |
         mkdir -p ~/.ssh/
         echo "${{ inputs.private-key }}" > ~/.ssh/id_rsa
@@ -42,6 +45,7 @@ runs:
         ssh-keyscan "${{ inputs.host }}" >> ~/.ssh/known_hosts
 
     - name: Deploy with Fabric
+      shell: bash
       run: |
         cd deploy
         fab deploy --env=${{ inputs.deploy-environment }} -H ec2-user@${{ inputs.host }}
