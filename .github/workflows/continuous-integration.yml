@@ -62,3 +62,17 @@ jobs:
           deploy-environment: 'dev'
           host: ${{ secrets.DEPLOY_HOST }}
           private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+  deploy-prod:
+    needs: [ test ]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/V')
+    name: Deploy to Prod
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/deploy
+        with:
+          python-version: '3.8'
+          deploy-environment: 'prd'
+          host: ${{ secrets.DEPLOY_HOST }}
+          private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+          tag-name: ${{ github.ref_name }}

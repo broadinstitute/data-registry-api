@@ -13,6 +13,9 @@ inputs:
   private-key:
     description: 'SSH Private Key'
     required: true
+  tag-name:
+    description: 'Tag name for prod deployment'
+    required: false
 
 runs:
   using: 'composite'
@@ -48,6 +51,6 @@ runs:
       shell: bash
       run: |
         cd deploy
-        fab deploy --env=${{ inputs.deploy-environment }} -H ec2-user@${{ inputs.host }}
+        fab deploy --env=${{ inputs.deploy-environment }} -H ec2-user@${{ inputs.host }} ${{ inputs.tag-name }}
       env:
         SSH_AUTH_SOCK: ${{ env.SSH_AUTH_SOCK }}
