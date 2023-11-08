@@ -4,11 +4,12 @@ on:
   push:
     branches:
       - "main"
+    tags:
+      - 'V*.*.*'
 
   pull_request:
     branches:
       - "*"
-
 jobs:
   test:
     name: Run tests
@@ -39,7 +40,7 @@ jobs:
           pip list
 
       - name: Test with pytest
-        env: # Or as an environment variable
+        env:
           DATA_REGISTRY_API_KEY: ${{ secrets.API_KEY }}
           AWS_DEFAULT_REGION: us-east-1
         run: |
@@ -50,47 +51,12 @@ jobs:
           sh docker_db/docker_db.sh stop
 
   deploy-qa:
-    needs: [test]
+    needs: [ test ]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     name: Deploy to QA
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v2
-
-      - name: Set up Python
-        uses: actions/setup-python@v2
-        with:
-          python-version: 3.8
-
-      - name: Install Fabric and dependencies
-        run: |
-          pip install fabric
-
-      - name: Start SSH Agent
-        run: |
-          eval "$(ssh-agent -s)"
-          ssh-add <(echo "$PRIVATE_KEY")
-          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> $GITHUB_ENV
-        env:
-          PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-
-
-        # This step assumes that you have an SSH private key stored as a GitHub secret to access the AWS instance
-      - name: Setup SSH Key
-        env:
-          PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-          HOST: ${{ secrets.DEPLOY_HOST }}
-        run: |
-          mkdir -p ~/.ssh/
-          echo "$PRIVATE_KEY" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan "$HOST" >> ~/.ssh/known_hosts
-
-      - name: Deploy with Fabric
-        env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          SSH_AUTH_SOCK: ${{ env.SSH_AUTH_SOCK }}
-        run: |
-          cd deploy
-          fab deploy --env=dev -H ec2-user@$DEPLOY_HOST
-      
+    uses: ./.github/actions/deploy
+    with:
+      python-version: '3.8'
+      deploy-environment: 'dev'
+      host: ${{ secrets.DEPLOY_HOST }}
+      private-key: ${{ secrets.SSH_PRIVATE_KEY }}

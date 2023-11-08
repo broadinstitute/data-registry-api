@@ -1,0 +1,49 @@
+name: 'Setup and Deploy'
+description: 'Shared steps for deploying via Fabric'
+inputs:
+  python-version:
+    description: 'Python version for setting up Python'
+    required: true
+  deploy-environment:
+    description: 'Deployment environment'
+    required: true
+  host:
+    description: 'Host for deployment'
+    required: true
+  private-key:
+    description: 'SSH Private Key'
+    required: true
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install Fabric and dependencies
+      run: pip install fabric
+
+    - name: Start SSH Agent
+      run: |
+        eval "$(ssh-agent -s)"
+        ssh-add <(echo "${{ inputs.private-key }}")
+        echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> $GITHUB_ENV
+
+    - name: Setup SSH Key
+      run: |
+        mkdir -p ~/.ssh/
+        echo "${{ inputs.private-key }}" > ~/.ssh/id_rsa
+        chmod 600 ~/.ssh/id_rsa
+        ssh-keyscan "${{ inputs.host }}" >> ~/.ssh/known_hosts
+
+    - name: Deploy with Fabric
+      run: |
+        cd deploy
+        fab deploy --env=${{ inputs.deploy-environment }} -H ec2-user@${{ inputs.host }}
+      env:
+        SSH_AUTH_SOCK: ${{ env.SSH_AUTH_SOCK }}
