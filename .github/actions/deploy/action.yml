@@ -51,6 +51,10 @@ runs:
       shell: bash
       run: |
         cd deploy
-        fab deploy --env=${{ inputs.deploy-environment }} -H ec2-user@${{ inputs.host }} ${{ inputs.tag-name }}
+        if [[ -n "${{ inputs.tag-name }}" ]]; then
+          fab deploy --env=${{ inputs.deploy-environment }} -H ec2-user@${{ inputs.host }} --commit=${{ inputs.tag-name }}
+        else
+          fab deploy --env=${{ inputs.deploy-environment }} -H ec2-user@${{ inputs.host }}
+        fi
       env:
         SSH_AUTH_SOCK: ${{ env.SSH_AUTH_SOCK }}
