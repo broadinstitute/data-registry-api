@@ -53,9 +53,15 @@ jobs:
     needs: [ test ]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     name: Deploy to QA
-    uses: ./.github/actions/deploy@main
-    with:
-      python-version: '3.8'
-      deploy-environment: 'dev'
-      host: ${{ secrets.DEPLOY_HOST }}
-      private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: checkout
+
+
+      - uses: ./.github/actions/deploy@main
+      - name: deploy
+        with:
+          python-version: '3.8'
+          deploy-environment: 'dev'
+          host: ${{ secrets.DEPLOY_HOST }}
+          private-key: ${{ secrets.SSH_PRIVATE_KEY }}
