@@ -53,11 +53,8 @@ jobs:
     needs: [ test ]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     name: Deploy to QA
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - name: checkout
-
-
       - uses: ./.github/actions/deploy
         with:
           python-version: '3.8'
