@@ -55,6 +55,7 @@ jobs:
     name: Deploy to QA
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v3
       - uses: ./.github/actions/deploy
         with:
           python-version: '3.8'
