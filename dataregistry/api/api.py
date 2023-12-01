@@ -204,8 +204,18 @@ async def get_file_list(data_set_id: str):
     return get_possible_files(ds_uuid)
 
 
-@router.get("/{ft}/{file_id}", name="stream_file")
-async def stream_file(file_id: str, ft: str):
+@router.get("/filecontents/{ft}/{file_id}", name="stream_file")
+async def get_text_file(file_id: str, ft: str):
+    file_name, obj = await get_file_obj(file_id, ft)
+
+    # Read the text file content
+    file_content = obj['Body'].read().decode('utf-8')
+
+    # Return a JSON response with file name and content
+    return {'file': file_name, 'file-contents': file_content}
+
+
+async def get_file_obj(file_id, ft):
     no_dash_id = query.shortened_file_id_lookup(file_id, ft, engine)
     try:
         if ft == "cs":
@@ -216,19 +226,24 @@ async def stream_file(file_id: str, ft: str):
             raise fastapi.HTTPException(status_code=404, detail=f'Invalid file type: {ft}')
     except ValueError:
         raise fastapi.HTTPException(status_code=404, detail=f'Invalid file: {file_id}')
-
     split = s3_path[5:].split('/')
-    # get path and bucket name from s3 uri
     bucket = split[0]
-    file = split[-1]
-    obj = s3.get_file_obj('/'.join(split[1:]), bucket)
+    file_name = split[-1]
+    file_path = '/'.join(split[1:])
+    obj = s3.get_file_obj(file_path, bucket)
+    return file_name, obj
+
+
+@router.get("/{ft}/{file_id}", name="stream_file")
+async def stream_file(file_id: str, ft: str):
+    file_name, obj = await get_file_obj(file_id, ft)
 
     def generator():
         for chunk in iter(lambda: obj['Body'].read(4096), b''):
             yield chunk
 
     return StreamingResponse(generator(), media_type='application/octet-stream',
-                             headers={"Content-Disposition": f"attachment; filename={file}"})
+                             headers={"Content-Disposition": f"attachment; filename={file_name}"})
 
 
 def get_possible_files(ds_uuid):
