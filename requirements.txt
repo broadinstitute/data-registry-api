@@ -1,4 +1,4 @@
-git+https://github.com/broadinstitute/dig-bioindex.git@main#egg=bioindex
+git+https://github.com/broadinstitute/dig-bioindex.git@master#egg=bioindex
 aiofiles==22.1.0
 aiohttp==3.8.5
 aiosignal==1.3.1
