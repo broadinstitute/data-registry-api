@@ -4,13 +4,14 @@ import os
 import subprocess
 from datetime import datetime
 from uuid import UUID
+import io
 
 import fastapi
 import requests
 import smart_open
 import sqlalchemy
 import xmltodict
-from bioindex.lib import config, migrate
+from bioindex.lib import config
 from bioindex.lib.index import Index
 from botocore.exceptions import ClientError
 from fastapi import Depends
@@ -19,7 +20,7 @@ from starlette.responses import StreamingResponse, Response
 from streaming_form_data import StreamingFormDataParser
 from streaming_form_data.targets import S3Target
 
-from dataregistry.api import query, s3
+from dataregistry.api import query, s3, csv_utils
 from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api.jwt import get_encoded_cookie_data, get_decoded_cookie_data
 from dataregistry.api.model import DataSet, Study, SavedDatasetInfo, SavedDataset, UserCredentials, User, SavedStudy, \
@@ -90,6 +91,31 @@ async def api_phenotype_files():
         return query.get_all_phenotypes(engine)
     except ValueError as e:
         raise fastapi.HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/preview-delimited-file")
+async def preview_files(request: Request):
+    head_of_request = b''
+    async for chunk in request.stream():
+        head_of_request += chunk
+        if len(head_of_request) >= 1024:
+            break
+
+    lines = head_of_request.split(b'\n')
+
+    sampled_lines, file_name = await sample_file(lines)
+    df = await csv_utils.parse_file(sampled_lines, file_name)
+    return {"headers": {column: csv_utils.infer_data_type(df[column].dropna().iloc[0]) for column in df.columns}}
+
+
+async def sample_file(lines):
+    sample = ''
+    sample_size = min(10, len(lines))
+    for line in lines[4:sample_size + 4]:
+        if line.decode('utf-8') == '\r':
+            break
+        sample += line.decode('utf-8') + '\n'
+    return io.StringIO(sample), lines[1].decode('utf-8').split(';')[2].split('=')[1].strip().replace("\"", "")
 
 
 @router.get('/datasets/{dataset_id}', response_class=fastapi.responses.ORJSONResponse)
