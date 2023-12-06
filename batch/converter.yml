@@ -41,6 +41,10 @@ Resources:
             - 'python3'
             - 'sort_file.py'
           Essential: true
+          PortMappings:
+            - ContainerPort: 5000
+              HostPort: 5000
+              Protocol: tcp
           LogConfiguration:
               LogDriver: awslogs
               Options:

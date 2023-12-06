@@ -4,11 +4,11 @@ import numpy as np
 
 def infer_data_type(val):
     if isinstance(val, np.int64):
-        return 'int'
+        return 'INTEGER'
     elif isinstance(val, float):
-        return 'float'
+        return 'DECIMAL'
     else:
-        return 'string'
+        return 'TEXT'
 
 
 async def parse_file(file_content, file_name) -> pd.DataFrame:

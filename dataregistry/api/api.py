@@ -15,16 +15,17 @@ from bioindex.lib import config
 from bioindex.lib.index import Index
 from botocore.exceptions import ClientError
 from fastapi import Depends
+from starlette.background import BackgroundTasks
 from starlette.requests import Request
 from starlette.responses import StreamingResponse, Response
 from streaming_form_data import StreamingFormDataParser
-from streaming_form_data.targets import S3Target
+from streaming_form_data.targets import S3Target, ValueTarget
 
-from dataregistry.api import query, s3, csv_utils
+from dataregistry.api import query, s3, csv_utils, ecs
 from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api.jwt import get_encoded_cookie_data, get_decoded_cookie_data
 from dataregistry.api.model import DataSet, Study, SavedDatasetInfo, SavedDataset, UserCredentials, User, SavedStudy, \
-    CreateBiondexRequest
+    CreateBiondexRequest, CsvBioIndexRequest, BioIndexCreationStatus, SavedCsvBioIndexRequest
 from dataregistry.pub_ids import PubIdType, infer_id_type
 
 AUTH_COOKIE_NAME = 'dr_auth_token'
@@ -54,6 +55,29 @@ async def api_datasets():
         return query.get_all_datasets(engine)
     except ValueError as e:
         raise fastapi.HTTPException(status_code=400, detail=str(e))
+
+
+@router.post('/trackbioindex', response_class=fastapi.responses.ORJSONResponse)
+async def track_bioindex(request: CsvBioIndexRequest):
+    return {"id": query.add_bioindex_tracking(engine, request)}
+
+
+@router.get('/trackbioindex/{req_id}', response_class=fastapi.responses.ORJSONResponse)
+async def get_bioindex_tracking(req_id):
+    return query.get_bioindex_tracking(engine, req_id)
+
+
+@router.patch('/trackbioindex/{req_id}/{new_status}', response_class=fastapi.responses.ORJSONResponse)
+async def update_bioindex_tracking(req_id, new_status: BioIndexCreationStatus):
+    return query.update_bioindex_tracking(engine, req_id, new_status)
+
+
+@router.post('/enqueue-csv-process', response_class=fastapi.responses.ORJSONResponse)
+async def enqueue_csv_process(request: SavedCsvBioIndexRequest, background_tasks: BackgroundTasks):
+    background_tasks.add_task(ecs.run_ecs_sort_and_convert_job, request.s3_path, request.column,
+                              request.data_types, request.already_sorted, request.name)
+    query.update_bioindex_tracking(engine, request.name, BioIndexCreationStatus.SUBMITTED_FOR_PREPROCESSING)
+    return {"message": "Successfully enqueued csv processing"}
 
 
 @router.post('/createbioindex', response_class=fastapi.responses.ORJSONResponse)
@@ -179,6 +203,18 @@ async def api_publications(pub_id: str):
     return {"title": article_meta.get('ArticleTitle', ''), "publication": publication,
             'month_year_published': month_year_published, 'authors': authors, 'volume_issue': volume_issue,
             'pages': pages, 'elocation_id': get_elocation_id(article_meta)}
+
+
+@router.post("/upload-csv")
+async def upload_csv(request: Request):
+    filename = request.headers.get('Filename')
+    parser = StreamingFormDataParser(request.headers)
+    parser.register("file", S3Target(s3.get_file_path("csv", filename), mode='wb'))
+    file_size = 0
+    async for chunk in request.stream():
+        file_size += len(chunk)
+        parser.data_received(chunk)
+    return {"file_size": file_size, "s3_path": s3.get_file_path("csv", filename)}
 
 
 @router.post("/uploadfile/{data_set_id}/{phenotype}/{dichotomous}/{sample_size}")
