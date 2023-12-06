@@ -21,7 +21,7 @@ from starlette.responses import StreamingResponse, Response
 from streaming_form_data import StreamingFormDataParser
 from streaming_form_data.targets import S3Target, ValueTarget
 
-from dataregistry.api import query, s3, csv_utils, ecs
+from dataregistry.api import query, s3, csv_utils, ecs, bioidx
 from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api.jwt import get_encoded_cookie_data, get_decoded_cookie_data
 from dataregistry.api.model import DataSet, Study, SavedDatasetInfo, SavedDataset, UserCredentials, User, SavedStudy, \
@@ -76,7 +76,7 @@ async def update_bioindex_tracking(req_id, new_status: BioIndexCreationStatus):
 async def enqueue_csv_process(request: SavedCsvBioIndexRequest, background_tasks: BackgroundTasks):
     background_tasks.add_task(ecs.run_ecs_sort_and_convert_job, request.s3_path, request.column,
                               request.data_types, request.already_sorted, request.name)
-    query.update_bioindex_tracking(engine, request.name, BioIndexCreationStatus.SUBMITTED_FOR_PREPROCESSING)
+    query.update_bioindex_tracking(engine, request.name, BioIndexCreationStatus.SUBMITTED_FOR_PROCESSING)
     return {"message": "Successfully enqueued csv processing"}
 
 
@@ -85,28 +85,19 @@ async def create_bioindex(request: CreateBiondexRequest):
     dataset = query.get_dataset(engine, request.dataset_id)
     s3_path = f"{dataset.name}/"
     idx_name = str(request.dataset_id)
-    try:
-        existing_index = Index.lookup_all(engine, idx_name)[0]
-    except KeyError:
-        existing_index = None
-    if not existing_index:
-        Index.create(engine, idx_name, idx_name, s3_path, request.schema_desc)
-
-    new_index = Index.lookup(engine, idx_name, request.schema_desc.count(',') + 1)
-    new_index.prepare(engine, rebuild=True)
-    new_index.build(config.Config(), engine)
+    bioidx.create_new_bioindex(engine, request.dataset_id, s3_path, request.schema)
     return {"message": f"Successfully created index {idx_name}"}
 
 
-@router.get('/bioindex/{dataset_id}', response_class=fastapi.responses.ORJSONResponse)
-async def get_bioindex(dataset_id: UUID):
-    schema = query.get_bioindex_schema(engine, str(dataset_id))
+@router.get('/bioindex/{idx_id}', response_class=fastapi.responses.ORJSONResponse)
+async def get_bioindex(idx_id: UUID):
+    schema = query.get_bioindex_schema(engine, str(idx_id))
     if schema:
         host = os.getenv('MINI_BIO_INDEX_HOST')
         if not host:
             raise fastapi.HTTPException(status_code=500, detail='No mini bio index host set')
-        return {"url": f"{host}/api/bio/query/{dataset_id}?q=<query value>", "schema": f"{schema}"}
-    return {"message": f"No bioindex found for dataset {dataset_id}"}
+        return {"url": f"{host}/api/bio/query/{idx_id}?q=<query value>", "schema": f"{schema}"}
+    return {"message": f"No bioindex found for dataset {idx_id}"}
 
 
 @router.get('/phenotypefiles', response_class=fastapi.responses.ORJSONResponse)

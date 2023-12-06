@@ -43,22 +43,21 @@ def sort_file(file_name, columns_to_sort, schema_info):
     return sorted_file_name
 
 
-def convert_to_number(s):
-    try:
-        return int(s)
-    except ValueError:
-        try:
-            return float(s)
-        except ValueError:
-            return s
+def convert_to_number(val, col, mapping):
+    if mapping[col] == 'TEXT':
+        return val
+    if mapping[col] == 'INTEGER':
+        return int(val)
+    if mapping[col] == 'DECIMAL':
+        return float(val)
 
 
-def csv_to_jsonl(csv_file_path, jsonl_file_path):
+def csv_to_jsonl(csv_file_path, jsonl_file_path, mapping):
     with open(csv_file_path, 'r', newline='', encoding='utf-8') as csv_file, \
             open(jsonl_file_path, 'w', encoding='utf-8') as jsonl_file:
         reader = csv.DictReader(csv_file)
         for row in reader:
-            row_dict = {k: convert_to_number(v) for k, v in row.items()}
+            row_dict = {k: convert_to_number(v, k, mapping) for k, v in row.items()}
             jsonl_file.write(json.dumps(row_dict) + '\n')
 
 
@@ -75,10 +74,11 @@ def main(s3_path, columns_to_sort, schema, already_sorted):
     local_file = download_file_from_s3(s3_path)
     if not already_sorted:
         print("Sorting file")
+        sorted_file = sort_file(local_file, columns_to_sort, schema_info)
 
     json_file = local_file[:-3] + 'json'
     print("Converting to json")
-    csv_to_jsonl(local_file if already_sorted else sorted_file, json_file)
+    csv_to_jsonl(local_file if already_sorted else sorted_file, json_file, schema_info)
 
     print("Uploading json to s3")
     upload_file_to_s3(json_file, s3_path)

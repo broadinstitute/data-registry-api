@@ -1,8 +1,9 @@
+import os.path
 import time
 import boto3
 import json
 
-from dataregistry.api import query
+from dataregistry.api import query, bioidx
 from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api.model import BioIndexCreationStatus
 
@@ -78,5 +79,12 @@ def run_ecs_sort_and_convert_job(s3_path, sort_columns, schema_info, already_sor
             if container_exit_code != 0:
                 query.update_bioindex_tracking(engine, process_id, BioIndexCreationStatus.FAILED)
             else:
-                query.update_bioindex_tracking(engine, process_id, BioIndexCreationStatus.FINISHED)
+                query.update_bioindex_tracking(engine, process_id, BioIndexCreationStatus.INDEXING)
+                try:
+                    prefix = '/'.join(s3_path.replace('s3://', '').split('/')[1:-1]) + '/'
+                    bioidx.create_new_bioindex(engine, process_id, prefix, sort_columns)
+                    query.update_bioindex_tracking(engine, process_id, BioIndexCreationStatus.SUCCEEDED)
+                except Exception as e:
+                    print(f"Error creating bioindex: {e}")
+                    query.update_bioindex_tracking(engine, process_id, BioIndexCreationStatus.FAILED)
             return
