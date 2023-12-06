@@ -39,6 +39,7 @@ def run_ecs_sort_and_convert_job(s3_path, sort_columns, schema_info, already_sor
 
     response = ecs_client.run_task(
         cluster=CLUSTER,
+        region_name='us-east-1',
         launchType='FARGATE',
         taskDefinition='MiniBioindex',
         networkConfiguration={
