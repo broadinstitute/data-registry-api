@@ -74,6 +74,6 @@ xmltodict==0.13.0
 yarg==0.1.9
 yarl==1.9.2
 pandas==2.0.3
-numpy==1.26.2
+numpy==1.24.4
 pytz==2023.3.post1
 tzdata==2023.3
