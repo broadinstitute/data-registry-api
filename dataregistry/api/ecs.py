@@ -62,12 +62,12 @@ def run_ecs_sort_and_convert_job(s3_path, sort_columns, schema_info, already_sor
     )
 
     task_arn = response['tasks'][0]['taskArn']
-    running_task_response = wait_for_task_running(ecs_client, 'TsvConverterCluster', task_arn)
-    eni_id = get_eni_id(running_task_response)
-    public_ip = get_public_ip(ec2_client, eni_id)
+    # running_task_response = wait_for_task_running(ecs_client, 'TsvConverterCluster', task_arn)
+    # eni_id = get_eni_id(running_task_response)
+    # public_ip = get_public_ip(ec2_client, eni_id)
 
-    print(f"Public IP address of the ECS task: {public_ip}")
-    query.update_bioindex_ip(engine, process_id, public_ip)
+    # print(f"Public IP address of the ECS task: {public_ip}")
+    # query.update_bioindex_ip(engine, process_id, public_ip)
     while True:
         response = ecs_client.describe_tasks(
             cluster=CLUSTER,
