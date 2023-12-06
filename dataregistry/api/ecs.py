@@ -34,12 +34,11 @@ def get_public_ip(ec2_client, eni_id):
 
 
 def run_ecs_sort_and_convert_job(s3_path, sort_columns, schema_info, already_sorted, process_id):
-    ecs_client = boto3.client('ecs')
-    ec2_client = boto3.client('ec2')
+    ecs_client = boto3.client('ecs', region_name='us-east-1')
+    ec2_client = boto3.client('ec2', region_name='us-east-1')
 
     response = ecs_client.run_task(
         cluster=CLUSTER,
-        region_name='us-east-1',
         launchType='FARGATE',
         taskDefinition='MiniBioindex',
         networkConfiguration={
