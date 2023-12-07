@@ -200,12 +200,12 @@ async def api_publications(pub_id: str):
 async def upload_csv(request: Request):
     filename = request.headers.get('Filename')
     parser = StreamingFormDataParser(request.headers)
-    parser.register("file", S3Target(s3.get_file_path("csv", filename), mode='wb'))
+    parser.register("file", S3Target(s3.get_file_path("bioindex/uploads", filename), mode='wb'))
     file_size = 0
     async for chunk in request.stream():
         file_size += len(chunk)
         parser.data_received(chunk)
-    return {"file_size": file_size, "s3_path": s3.get_file_path("csv", filename)}
+    return {"file_size": file_size, "s3_path": s3.get_file_path("bioindex/uploads", filename)}
 
 
 @router.post("/uploadfile/{data_set_id}/{phenotype}/{dichotomous}/{sample_size}")

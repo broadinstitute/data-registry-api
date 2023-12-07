@@ -35,7 +35,7 @@ def get_public_ip(ec2_client, eni_id):
 
 def run_ecs_sort_and_convert_job(s3_path, sort_columns, schema_info, already_sorted, process_id):
     ecs_client = boto3.client('ecs', region_name='us-east-1')
-    ec2_client = boto3.client('ec2', region_name='us-east-1')
+    # ec2_client = boto3.client('ec2', region_name='us-east-1')
 
     response = ecs_client.run_task(
         cluster=CLUSTER,
@@ -54,7 +54,7 @@ def run_ecs_sort_and_convert_job(s3_path, sort_columns, schema_info, already_sor
                     'name': 'ConverterContainer',
                     'command': [
                         'python3', '-u', 'sort_file.py', '-s', s3_path, '-c', sort_columns,
-                        '-a', json.dumps(schema_info), '-o', str(already_sorted)
+                        '-a', json.dumps(schema_info), '-o', str(already_sorted), '-p', str(process_id)
                     ],
                 }
             ]
@@ -81,7 +81,7 @@ def run_ecs_sort_and_convert_job(s3_path, sort_columns, schema_info, already_sor
             else:
                 query.update_bioindex_tracking(engine, process_id, BioIndexCreationStatus.INDEXING)
                 try:
-                    prefix = '/'.join(s3_path.replace('s3://', '').split('/')[1:-1]) + '/'
+                    prefix = 'bioindex/' + str(process_id) + '/'
                     bioidx.create_new_bioindex(engine, process_id, prefix, sort_columns)
                     query.update_bioindex_tracking(engine, process_id, BioIndexCreationStatus.SUCCEEDED)
                 except Exception as e:

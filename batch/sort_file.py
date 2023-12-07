@@ -17,10 +17,10 @@ def download_file_from_s3(s3_path):
     return remote_file_name
 
 
-def upload_file_to_s3(file_name, s3_path):
+def upload_file_to_s3(file_name, s3_path, process_id):
     s3 = boto3.client('s3')
-    bucket, key = s3_path.replace("s3://", "").split("/", 1)
-    key = re.sub(r'/[^/]*$', '/' + file_name, key)
+    bucket = s3_path.replace("s3://", "").split("/")[0]
+    key = "bioindex/" + process_id + "/" + file_name
     s3.upload_file(file_name, bucket, key)
 
 
@@ -66,7 +66,8 @@ def csv_to_jsonl(csv_file_path, jsonl_file_path, mapping):
 @click.option('--columns_to_sort', '-c', type=str, required=True)
 @click.option('--schema', '-a', type=str, required=True)
 @click.option('--already_sorted', '-o', type=bool, required=True)
-def main(s3_path, columns_to_sort, schema, already_sorted):
+@click.option('--process_id', '-p', type=str, required=True)
+def main(s3_path, columns_to_sort, schema, already_sorted, process_id):
     sorted_file = None
     schema_info = json.loads(schema)
     columns_to_sort = columns_to_sort.split(',')
@@ -81,7 +82,7 @@ def main(s3_path, columns_to_sort, schema, already_sorted):
     csv_to_jsonl(local_file if already_sorted else sorted_file, json_file, schema_info)
 
     print("Uploading json to s3")
-    upload_file_to_s3(json_file, s3_path)
+    upload_file_to_s3(json_file, s3_path, process_id)
     print("finished")
 
     # Clean up local files
