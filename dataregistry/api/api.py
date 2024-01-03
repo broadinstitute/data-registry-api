@@ -113,10 +113,8 @@ async def preview_files(request: Request):
     head_of_request = b''
     async for chunk in request.stream():
         head_of_request += chunk
-        if len(head_of_request) >= 1024:
-            break
 
-    lines = head_of_request.split(b'\n')
+    lines = head_of_request.split(b'\n')[:-1]
 
     sampled_lines, file_name = await sample_file(lines)
     df = await csv_utils.parse_file(sampled_lines, file_name)
