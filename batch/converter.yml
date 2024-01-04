@@ -5,7 +5,7 @@ Resources:
   LogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: /ecs/myEcsLogGroup
+      LogGroupName: /ecs/dr/converter
       # Optionally set the retention policy
       RetentionInDays: 14
 
