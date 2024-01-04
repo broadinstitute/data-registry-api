@@ -4,9 +4,8 @@ import boto3
 import click
 import os
 import json
-import dask.dataframe as dd
 import pandas as pd
-import re
+import sqlite3
 
 
 def download_file_from_s3(s3_path):
@@ -30,20 +29,33 @@ def get_column_names_pandas(csv_file_path):
 
 
 def sort_file(file_name, columns_to_sort, schema_info):
+    conn = sqlite3.connect('temp.db')
     columns = get_column_names_pandas(file_name)
     if not set(columns_to_sort).issubset(set(columns)):
         raise Exception(f"Columns to sort {columns_to_sort} not found in file {file_name}")
     to_panda_types = {"TEXT": "str", "INTEGER": "Int64", "DECIMAL": "Float64"}
     schema_info = {k: to_panda_types[v] for k, v in schema_info.items()}
-    df = dd.read_csv(file_name, dtype=schema_info, assume_missing=True,
-                     sep=',' if file_name.endswith('.csv') else '\t')
-    sorted_df = df.sort_values(by=columns_to_sort)
+    for chunk in pd.read_csv(file_name, dtype=schema_info,
+                             sep=',' if file_name.endswith('.csv') else '\t', chunksize=10 ** 6):
+        chunk.to_sql('data', conn, if_exists='append', index=False)
+
     sorted_file_name = 'sorted_' + file_name
-    sorted_df.to_csv(sorted_file_name, single_file=True, index=False, quoting=csv.QUOTE_NONNUMERIC)
+    with open(sorted_file_name, 'w') as file:
+        conn.text_factory = str
+        cursor = conn.cursor()
+        cursor.execute(f"SELECT * FROM data LIMIT 0")
+        delimiter = ',' if file_name.endswith('.csv') else '\t'
+        file.write(delimiter.join([desc[0] for desc in cursor.description]) + '\n')
+        quoted_columns = [f'\"{column}\"' for column in columns_to_sort]
+        for row in cursor.execute(f"SELECT * FROM data ORDER BY {', '.join(quoted_columns)}"):
+            formatted_row = ["" if value is None else str(value) for value in row]
+            file.write(delimiter.join(formatted_row) + '\n')
     return sorted_file_name
 
 
-def convert_to_number(val, col, mapping):
+def convert_to_type(val, col, mapping):
+    if val is None or val == '':
+        return None
     if mapping[col] == 'TEXT':
         return val
     if mapping[col] == 'INTEGER':
@@ -55,9 +67,9 @@ def convert_to_number(val, col, mapping):
 def csv_to_jsonl(csv_file_path, jsonl_file_path, mapping):
     with open(csv_file_path, 'r', newline='', encoding='utf-8') as csv_file, \
             open(jsonl_file_path, 'w', encoding='utf-8') as jsonl_file:
-        reader = csv.DictReader(csv_file)
+        reader = csv.DictReader(csv_file, delimiter=',' if csv_file_path.endswith('.csv') else '\t')
         for row in reader:
-            row_dict = {k: convert_to_number(v, k, mapping) for k, v in row.items()}
+            row_dict = {k: convert_to_type(v, k, mapping) for k, v in row.items()}
             jsonl_file.write(json.dumps(row_dict) + '\n')
 
 

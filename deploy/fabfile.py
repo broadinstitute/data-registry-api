@@ -25,7 +25,7 @@ def update_source(c, env, commit=None):
     directory = get_checkout_directory(env)
     with c.cd(directory):
         if commit:
-            c.run(f"git fetch --all --tags && git checkout {commit}")
+            c.run(f"git fetch --all --tags && git checkout {commit} && git pull")
         else:
             c.run("git checkout main && git pull")
 
