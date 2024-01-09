@@ -13,7 +13,8 @@ import xmltodict
 from bioindex.lib import config, migrate
 from bioindex.lib.index import Index
 from botocore.exceptions import ClientError
-from fastapi import Depends
+from fastapi import Depends, Body
+from fastapi.security import OAuth2AuthorizationCodeBearer
 from starlette.requests import Request
 from starlette.responses import StreamingResponse, Response
 from streaming_form_data import StreamingFormDataParser
@@ -21,6 +22,7 @@ from streaming_form_data.targets import S3Target
 
 from dataregistry.api import query, s3
 from dataregistry.api.db import DataRegistryReadWriteDB
+from dataregistry.api.google_oauth import get_google_user
 from dataregistry.api.jwt import get_encoded_cookie_data, get_decoded_cookie_data
 from dataregistry.api.model import DataSet, Study, SavedDatasetInfo, SavedDataset, UserCredentials, User, SavedStudy, \
     CreateBiondexRequest
@@ -45,6 +47,13 @@ engine = DataRegistryReadWriteDB().get_engine()
 logger.info("Starting API")
 NIH_API_EMAIL = "dhite@broadinstitute.org"
 NIH_API_TOOL_NAME = "data-registry"
+
+oauth2_scheme = OAuth2AuthorizationCodeBearer(
+    authorizationUrl="https://accounts.google.com/o/oauth2/v2/auth",
+    tokenUrl="https://oauth2.googleapis.com/token",
+    refreshUrl="https://oauth2.googleapis.com/token",
+    scopes={"openid": "OpenID Connect scope", "email": "email scope"},
+)
 
 
 @router.get('/datasets', response_class=fastapi.responses.ORJSONResponse)
@@ -127,6 +136,16 @@ def get_elocation_id(article_meta):
     if isinstance(eloc_dict_list, list):
         eloc_dict_list = eloc_dict_list[0]
     return f"{eloc_dict_list.get('@EIdType')}: {eloc_dict_list.get('#text')}"
+
+
+@router.post("/google-login", response_class=fastapi.responses.ORJSONResponse)
+async def google_login(response: Response, body: dict = Body(...)):
+    user_info = get_google_user(body.get('code'))
+    response.set_cookie(key=AUTH_COOKIE_NAME,
+                        value=get_encoded_cookie_data(User(name=user_info['email'], email=user_info['email'], role='user')),
+                        domain='.kpndataregistry.org', samesite='strict',
+                        secure=os.getenv('USE_HTTPS') == 'true')
+    return {'status': 'success'}
 
 
 @router.get('/publications', response_class=fastapi.responses.ORJSONResponse)
