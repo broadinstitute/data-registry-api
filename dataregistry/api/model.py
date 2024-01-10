@@ -97,6 +97,30 @@ class DataSet(BaseModel, extra=Extra.forbid):
         return isinstance(o, DataSet) and self.name == o.name
 
 
+class BioIndexCreationStatus(str, Enum):
+    FILE_UPLOADED = "FILE UPLOADED"
+    SUBMITTED_FOR_PROCESSING = "SUBMITTED FOR PROCESSING"
+    SORTING = "SORTING"
+    CONVERTING_TO_JSON = "CONVERTING TO JSON"
+    INDEXING = "INDEXING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+
+
+class CsvBioIndexRequest(BaseModel):
+    column: str
+    status: BioIndexCreationStatus
+    already_sorted: bool
+    s3_path: str
+    data_types: Union[dict, None]
+    created_at: Union[datetime, None]
+
+
+class SavedCsvBioIndexRequest(CsvBioIndexRequest):
+    name: UUID
+    ip_address: Union[str, None]
+
+
 class SavedDataset(DataSet):
     id: UUID
     created_at: Union[datetime, None]

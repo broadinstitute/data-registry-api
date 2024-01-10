@@ -1,0 +1,94 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description:
+  Infrastructure for sorting and converting tsv/csv files to json
+Resources:
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/dr/converter
+      # Optionally set the retention policy
+      RetentionInDays: 14
+
+  MyECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: TsvConverterCluster
+      CapacityProviders:
+        - FARGATE_SPOT
+
+  EcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: dr-converter
+
+  ConverterTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: MiniBioindex
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: "1024"  # Equivalent to 1 vCPU
+      Memory: "8192"  # In MiB, so 8 GiB
+      EphemeralStorage:
+        SizeInGiB: 100
+      ExecutionRoleArn: !GetAtt ConverterJobRole.Arn
+      TaskRoleArn: !GetAtt ConverterJobRole.Arn
+      ContainerDefinitions:
+        - Name: ConverterContainer
+          Image: !Sub '${AWS::AccountId}.dkr.ecr.us-east-1.amazonaws.com/dr-converter'
+          Command:
+            - 'python3'
+            - 'sort_file.py'
+          Essential: true
+          PortMappings:
+            - ContainerPort: 5000
+              HostPort: 5000
+              Protocol: tcp
+          LogConfiguration:
+              LogDriver: awslogs
+              Options:
+                awslogs-group: !Ref LogGroup
+                awslogs-region: !Ref 'AWS::Region'
+                awslogs-stream-prefix: ConverterContainer
+
+  ConverterJobRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: 'Allow'
+            Principal:
+              Service:
+                - 'ecs-tasks.amazonaws.com'
+            Action:
+              - 'sts:AssumeRole'
+      Path: '/'
+      Policies:
+        - PolicyName: 'S3Access'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action:
+                  - 's3:GetObject'
+                  - 's3:PutObject'
+                Resource:
+                  - 'arn:aws:s3:::dig-data-registry-qa'
+                  - 'arn:aws:s3:::dig-data-registry-qa/*'
+        - PolicyName: 'ECSTaskExecution'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action:
+                  - 'ecr:GetAuthorizationToken'
+                  - 'ecr:BatchCheckLayerAvailability'
+                  - 'ecr:GetDownloadUrlForLayer'
+                  - 'ecr:BatchGetImage'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: '*'
+
+
