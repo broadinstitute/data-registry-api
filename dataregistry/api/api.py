@@ -1,3 +1,4 @@
+import io
 import json
 import logging
 import os
@@ -10,22 +11,19 @@ import requests
 import smart_open
 import sqlalchemy
 import xmltodict
-from bioindex.lib import config, migrate
-from bioindex.lib.index import Index
 from botocore.exceptions import ClientError
-from fastapi import Depends, Body
-from fastapi.security import OAuth2AuthorizationCodeBearer
+from fastapi import Depends
 from starlette.requests import Request
 from starlette.responses import StreamingResponse, Response
 from streaming_form_data import StreamingFormDataParser
 from streaming_form_data.targets import S3Target
 
-from dataregistry.api import query, s3
+from dataregistry.api import query, s3, csv_utils, ecs, bioidx
 from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api.google_oauth import get_google_user
 from dataregistry.api.jwt import get_encoded_cookie_data, get_decoded_cookie_data
 from dataregistry.api.model import DataSet, Study, SavedDatasetInfo, SavedDataset, UserCredentials, User, SavedStudy, \
-    CreateBiondexRequest
+    CreateBiondexRequest, CsvBioIndexRequest, BioIndexCreationStatus, SavedCsvBioIndexRequest
 from dataregistry.pub_ids import PubIdType, infer_id_type
 
 AUTH_COOKIE_NAME = 'dr_auth_token'
@@ -64,33 +62,47 @@ async def api_datasets():
         raise fastapi.HTTPException(status_code=400, detail=str(e))
 
 
+@router.post('/trackbioindex', response_class=fastapi.responses.ORJSONResponse)
+async def track_bioindex(request: CsvBioIndexRequest):
+    return {"id": query.add_bioindex_tracking(engine, request)}
+
+
+@router.get('/trackbioindex/{req_id}', response_class=fastapi.responses.ORJSONResponse)
+async def get_bioindex_tracking(req_id):
+    return query.get_bioindex_tracking(engine, req_id)
+
+
+@router.patch('/trackbioindex/{req_id}/{new_status}', response_class=fastapi.responses.ORJSONResponse)
+async def update_bioindex_tracking(req_id, new_status: BioIndexCreationStatus):
+    return query.update_bioindex_tracking(engine, req_id, new_status)
+
+
+@router.post('/enqueue-csv-process', response_class=fastapi.responses.ORJSONResponse)
+async def enqueue_csv_process(request: SavedCsvBioIndexRequest, background_tasks: BackgroundTasks):
+    background_tasks.add_task(ecs.run_ecs_sort_and_convert_job, request.s3_path, request.column,
+                              request.data_types, request.already_sorted, request.name)
+    query.update_bioindex_tracking(engine, request.name, BioIndexCreationStatus.SUBMITTED_FOR_PROCESSING)
+    return {"message": "Successfully enqueued csv processing"}
+
+
 @router.post('/createbioindex', response_class=fastapi.responses.ORJSONResponse)
 async def create_bioindex(request: CreateBiondexRequest):
     dataset = query.get_dataset(engine, request.dataset_id)
     s3_path = f"{dataset.name}/"
     idx_name = str(request.dataset_id)
-    try:
-        existing_index = Index.lookup_all(engine, idx_name)[0]
-    except KeyError:
-        existing_index = None
-    if not existing_index:
-        Index.create(engine, idx_name, idx_name, s3_path, request.schema_desc)
-
-    new_index = Index.lookup(engine, idx_name, request.schema_desc.count(',') + 1)
-    new_index.prepare(engine, rebuild=True)
-    new_index.build(config.Config(), engine)
+    bioidx.create_new_bioindex(engine, request.dataset_id, s3_path, request.schema)
     return {"message": f"Successfully created index {idx_name}"}
 
 
-@router.get('/bioindex/{dataset_id}', response_class=fastapi.responses.ORJSONResponse)
-async def get_bioindex(dataset_id: UUID):
-    schema = query.get_bioindex_schema(engine, str(dataset_id))
+@router.get('/bioindex/{idx_id}', response_class=fastapi.responses.ORJSONResponse)
+async def get_bioindex(idx_id: UUID):
+    schema = query.get_bioindex_schema(engine, str(idx_id))
     if schema:
         host = os.getenv('MINI_BIO_INDEX_HOST')
         if not host:
             raise fastapi.HTTPException(status_code=500, detail='No mini bio index host set')
-        return {"url": f"{host}/api/bio/query/{dataset_id}?q=<query value>", "schema": f"{schema}"}
-    return {"message": f"No bioindex found for dataset {dataset_id}"}
+        return {"url": f"{host}/api/bio/query/{idx_id}?q=<query value>", "schema": f"{schema}"}
+    return {"message": f"No bioindex found for dataset {idx_id}"}
 
 
 @router.get('/phenotypefiles', response_class=fastapi.responses.ORJSONResponse)
@@ -99,6 +111,29 @@ async def api_phenotype_files():
         return query.get_all_phenotypes(engine)
     except ValueError as e:
         raise fastapi.HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/preview-delimited-file")
+async def preview_files(request: Request):
+    head_of_request = b''
+    async for chunk in request.stream():
+        head_of_request += chunk
+
+    lines = head_of_request.split(b'\n')[:-1]
+
+    sampled_lines, file_name = await sample_file(lines)
+    df = await csv_utils.parse_file(sampled_lines, file_name)
+    return {"headers": {column: csv_utils.infer_data_type(df[column].dropna().iloc[0]) for column in df.columns}}
+
+
+async def sample_file(lines):
+    sample = ''
+    sample_size = min(10, len(lines))
+    for line in lines[4:sample_size + 4]:
+        if line.decode('utf-8') == '\r':
+            break
+        sample += line.decode('utf-8') + '\n'
+    return io.StringIO(sample), lines[1].decode('utf-8').split(';')[2].split('=')[1].strip().replace("\"", "")
 
 
 @router.get('/datasets/{dataset_id}', response_class=fastapi.responses.ORJSONResponse)
@@ -172,6 +207,18 @@ async def api_publications(pub_id: str):
     return {"title": article_meta.get('ArticleTitle', ''), "publication": publication,
             'month_year_published': month_year_published, 'authors': authors, 'volume_issue': volume_issue,
             'pages': pages, 'elocation_id': get_elocation_id(article_meta)}
+
+
+@router.post("/upload-csv")
+async def upload_csv(request: Request):
+    filename = request.headers.get('Filename')
+    parser = StreamingFormDataParser(request.headers)
+    parser.register("file", S3Target(s3.get_file_path("bioindex/uploads", filename), mode='wb'))
+    file_size = 0
+    async for chunk in request.stream():
+        file_size += len(chunk)
+        parser.data_received(chunk)
+    return {"file_size": file_size, "s3_path": s3.get_file_path("bioindex/uploads", filename)}
 
 
 @router.post("/uploadfile/{data_set_id}/{phenotype}/{dichotomous}/{sample_size}")

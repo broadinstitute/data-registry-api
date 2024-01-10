@@ -5,7 +5,7 @@ import uuid
 from sqlalchemy import text
 
 from dataregistry.api.model import SavedDataset, DataSet, Study, SavedStudy, SavedPhenotypeDataSet, SavedCredibleSet, \
-    BioIndex
+    BioIndex, CsvBioIndexRequest, SavedCsvBioIndexRequest
 from dataregistry.id_shortener import shorten_uuid
 
 
@@ -247,3 +247,40 @@ def shortened_file_id_lookup(short_file_id: str, file_type: str, engine) -> str:
             raise ValueError(f"No records for id {short_file_id}")
         else:
             return result.id
+
+
+def add_bioindex_tracking(engine, request: CsvBioIndexRequest):
+    idx_id = uuid.uuid4()
+    str_id = str(idx_id).replace('-', '')
+    with engine.connect() as conn:
+        sql_params = {'name': str_id, 'status': request.status, 'column': request.column,
+                      'already_sorted': request.already_sorted, 's3_path': request.s3_path}
+        conn.execute(text("""INSERT INTO bidx_tracking (name, status, `column`, already_sorted, s3_path, created_at) 
+            VALUES(:name, :status, :column, :already_sorted, :s3_path, NOW())"""), sql_params)
+        conn.commit()
+        return idx_id
+
+
+def get_bioindex_tracking(engine, req_id) -> SavedCsvBioIndexRequest:
+    with engine.connect() as conn:
+        params = {'name': str(req_id).replace('-', '')}
+        result = conn.execute(text("""SELECT name, status, `column`, already_sorted, s3_path, created_at, ip_address 
+        from bidx_tracking where name = :name"""), params).first()
+    if result is None:
+        raise ValueError(f"No records for id {req_id}")
+    else:
+        return SavedCsvBioIndexRequest(**result._asdict())
+
+
+def update_bioindex_tracking(engine, req_id, new_status):
+    with engine.connect() as conn:
+        params = {'name': str(req_id).replace('-', ''), 'status': new_status}
+        conn.execute(text("""UPDATE bidx_tracking SET status = :status where name = :name"""), params)
+        conn.commit()
+
+
+def update_bioindex_ip(engine, req_id, ip_address):
+    with engine.connect() as conn:
+        params = {'name': str(req_id).replace('-', ''), 'ip_address': ip_address}
+        conn.execute(text("""UPDATE bidx_tracking SET ip_address = :ip_address where name = :name"""), params)
+        conn.commit()
