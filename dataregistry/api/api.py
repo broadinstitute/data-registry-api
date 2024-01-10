@@ -142,9 +142,9 @@ def get_elocation_id(article_meta):
 async def google_login(response: Response, body: dict = Body(...)):
     user_info = get_google_user(body.get('code'))
     response.set_cookie(key=AUTH_COOKIE_NAME,
-                        value=get_encoded_cookie_data(User(name=user_info['email'], email=user_info['email'], role='user')),
+                        httponly=True, value=get_encoded_cookie_data(User(name=user_info['email'], email=user_info['email'], role='user')),
                         domain='.kpndataregistry.org', samesite='strict',
-                        secure=os.getenv('USE_HTTPS') == 'true')
+                        secure=os.getenv('USE_HTTPS') == 'true', expires=datetime.utcnow())
     return {'status': 'success'}
 
 
@@ -452,7 +452,7 @@ def login(response: Response, creds: UserCredentials):
     in_list, user = is_user_in_list(creds)
     if not in_list and not is_drupal_user(creds):
         raise fastapi.HTTPException(status_code=401, detail='Invalid username or password')
-    response.set_cookie(key=AUTH_COOKIE_NAME, value=get_encoded_cookie_data(user if user else
+    response.set_cookie(key=AUTH_COOKIE_NAME, httponly=True, value=get_encoded_cookie_data(user if user else
                                                                             User(name=creds.email, email=creds.email,
                                                                                  role='user')),
                         domain='.kpndataregistry.org', samesite='strict',
