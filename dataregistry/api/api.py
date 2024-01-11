@@ -178,11 +178,12 @@ def get_elocation_id(article_meta):
 @router.post("/google-login", response_class=fastapi.responses.ORJSONResponse)
 async def google_login(response: Response, body: dict = Body(...)):
     user_info = get_google_user(body.get('code'))
-    response.set_cookie(key=AUTH_COOKIE_NAME,
-                        httponly=True, value=get_encoded_cookie_data(User(name=user_info['email'], email=user_info['email'], role='user')),
-                        domain='.kpndataregistry.org', samesite='strict',
-                        secure=os.getenv('USE_HTTPS') == 'true', expires=datetime.utcnow())
-    return {'status': 'success'}
+    user = query.get_user(engine, UserCredentials(name=user_info.get('email'), password=None))
+    if not user:
+        raise fastapi.HTTPException(status_code=401, detail='Username is not in our system')
+    else:
+        log_user_in(response, user)
+        return {'status': 'success'}
 
 
 @router.get('/publications', response_class=fastapi.responses.ORJSONResponse)
@@ -488,35 +489,23 @@ def is_logged_in(user: User = Depends(get_current_user)):
         raise fastapi.HTTPException(status_code=401, detail='Not logged in')
 
 
-def is_drupal_user(creds):
-    response = requests.post(f"{os.getenv('DRUPAL_HOST')}/user/login?_format=json", data=json.dumps({
-        'name': creds.email,
-        'pass': creds.password
-    }), headers={'Content-Type': 'application/json'})
-    return response.status_code == 200
+def log_user_in(response: Response, user: User):
+    query.log_user_in(engine, user)
+    response.set_cookie(key=AUTH_COOKIE_NAME, httponly=True,
+                        value=get_encoded_cookie_data(User(name=user.name,
+                                                           roles=user.roles)),
+                        domain='.kpndataregistry.org', samesite='strict',
+                        secure=os.getenv('USE_HTTPS') == 'true')
 
 
 @router.post('/login')
 def login(response: Response, creds: UserCredentials):
-    in_list, user = is_user_in_list(creds)
-    if not in_list and not is_drupal_user(creds):
+    user = query.get_user(engine, creds)
+    if user:
+        log_user_in(response, user)
+        return {'status': 'success'}
+    else:
         raise fastapi.HTTPException(status_code=401, detail='Invalid username or password')
-    response.set_cookie(key=AUTH_COOKIE_NAME, httponly=True, value=get_encoded_cookie_data(user if user else
-                                                                            User(name=creds.email, email=creds.email,
-                                                                                 role='user')),
-                        domain='.kpndataregistry.org', samesite='strict',
-                        secure=os.getenv('USE_HTTPS') == 'true')
-    return {'status': 'success'}
-
-
-def is_user_in_list(creds: UserCredentials):
-    user = next((user for user in get_users() if user.email == creds.email), None)
-    return user is not None and 'password' == creds.password, user
-
-
-def get_users() -> list:
-    return [User(name='admin', email='admin@kpnteam.org', role='admin'),
-            User(name='user', email='user@kpnteam.org', role='user')]
 
 
 @router.post('/logout')
