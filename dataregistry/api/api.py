@@ -178,6 +178,7 @@ def get_elocation_id(article_meta):
 @router.post("/google-login", response_class=fastapi.responses.ORJSONResponse)
 async def google_login(response: Response, body: dict = Body(...)):
     user_info = get_google_user(body.get('code'))
+    print(user_info)
     user = query.get_user(engine, UserCredentials(name=user_info.get('email'), password=None))
     if not user:
         raise fastapi.HTTPException(status_code=401, detail='Username is not in our system')
