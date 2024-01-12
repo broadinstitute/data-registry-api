@@ -308,7 +308,7 @@ def get_internal_user_info(conn, creds, params) -> Optional[User]:
         return None
 
 
-def get_user_info(conn, params):
+def get_user_info(conn, params) -> Optional[User]:
     result = conn.execute(text("SELECT user_name, roles FROM users WHERE user_name = :user_name"), params).fetchone()
     if not result:
         return None
