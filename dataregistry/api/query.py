@@ -1,11 +1,14 @@
 import datetime
+import json
 import re
 import uuid
+from typing import Optional
 
+import bcrypt
 from sqlalchemy import text
 
 from dataregistry.api.model import SavedDataset, DataSet, Study, SavedStudy, SavedPhenotypeDataSet, SavedCredibleSet, \
-    BioIndex, CsvBioIndexRequest, SavedCsvBioIndexRequest
+    BioIndex, CsvBioIndexRequest, SavedCsvBioIndexRequest, User
 from dataregistry.id_shortener import shorten_uuid
 
 
@@ -283,4 +286,37 @@ def update_bioindex_ip(engine, req_id, ip_address):
     with engine.connect() as conn:
         params = {'name': str(req_id).replace('-', ''), 'ip_address': ip_address}
         conn.execute(text("""UPDATE bidx_tracking SET ip_address = :ip_address where name = :name"""), params)
+        conn.commit()
+
+
+def get_user(engine, creds) -> Optional[User]:
+    with engine.connect() as conn:
+        params = {'user_name': creds.name}
+        if creds.password is not None:
+            return get_internal_user_info(conn, creds, params)
+        else:
+            return get_user_info(conn, params)
+
+
+def get_internal_user_info(conn, creds, params) -> Optional[User]:
+    result = conn.execute(text("SELECT password FROM users WHERE user_name = :user_name and oauth_provider is null"),
+                          params).fetchone()
+
+    if result and bcrypt.checkpw(creds.password.encode('utf-8'), result[0].encode('utf-8')):
+        return get_user_info(conn, params)
+    else:
+        return None
+
+
+def get_user_info(conn, params) -> Optional[User]:
+    result = conn.execute(text("SELECT user_name, roles FROM users WHERE user_name = :user_name"), params).fetchone()
+    if not result:
+        return None
+    return User(roles=json.loads(result[1]), name=result[0])
+
+
+def log_user_in(engine, user):
+    with engine.connect() as conn:
+        conn.execute(text("UPDATE users SET last_login = NOW() where user_name = :user_name"),
+                     {'user_name': user.name})
         conn.commit()

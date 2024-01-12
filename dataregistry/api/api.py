@@ -1,28 +1,28 @@
+import io
 import json
 import logging
 import os
 import subprocess
 from datetime import datetime
 from uuid import UUID
-import io
 
 import fastapi
 import requests
 import smart_open
 import sqlalchemy
 import xmltodict
-from bioindex.lib import config
-from bioindex.lib.index import Index
 from botocore.exceptions import ClientError
-from fastapi import Depends
+from fastapi import Depends, Body
+from fastapi.security import OAuth2AuthorizationCodeBearer
 from starlette.background import BackgroundTasks
 from starlette.requests import Request
 from starlette.responses import StreamingResponse, Response
 from streaming_form_data import StreamingFormDataParser
-from streaming_form_data.targets import S3Target, ValueTarget
+from streaming_form_data.targets import S3Target
 
 from dataregistry.api import query, s3, csv_utils, ecs, bioidx
 from dataregistry.api.db import DataRegistryReadWriteDB
+from dataregistry.api.google_oauth import get_google_user
 from dataregistry.api.jwt import get_encoded_cookie_data, get_decoded_cookie_data
 from dataregistry.api.model import DataSet, Study, SavedDatasetInfo, SavedDataset, UserCredentials, User, SavedStudy, \
     CreateBiondexRequest, CsvBioIndexRequest, BioIndexCreationStatus, SavedCsvBioIndexRequest
@@ -47,6 +47,13 @@ engine = DataRegistryReadWriteDB().get_engine()
 logger.info("Starting API")
 NIH_API_EMAIL = "dhite@broadinstitute.org"
 NIH_API_TOOL_NAME = "data-registry"
+
+oauth2_scheme = OAuth2AuthorizationCodeBearer(
+    authorizationUrl="https://accounts.google.com/o/oauth2/v2/auth",
+    tokenUrl="https://oauth2.googleapis.com/token",
+    refreshUrl="https://oauth2.googleapis.com/token",
+    scopes={"openid": "OpenID Connect scope", "email": "email scope"},
+)
 
 
 @router.get('/datasets', response_class=fastapi.responses.ORJSONResponse)
@@ -166,6 +173,17 @@ def get_elocation_id(article_meta):
     if isinstance(eloc_dict_list, list):
         eloc_dict_list = eloc_dict_list[0]
     return f"{eloc_dict_list.get('@EIdType')}: {eloc_dict_list.get('#text')}"
+
+
+@router.post("/google-login", response_class=fastapi.responses.ORJSONResponse)
+async def google_login(response: Response, body: dict = Body(...)):
+    user_info = get_google_user(body.get('code'))
+    user = query.get_user(engine, UserCredentials(name=user_info.get('email'), password=None))
+    if not user:
+        raise fastapi.HTTPException(status_code=401, detail='Username is not in our system')
+    else:
+        log_user_in(response, user)
+        return {'status': 'success'}
 
 
 @router.get('/publications', response_class=fastapi.responses.ORJSONResponse)
@@ -471,35 +489,23 @@ def is_logged_in(user: User = Depends(get_current_user)):
         raise fastapi.HTTPException(status_code=401, detail='Not logged in')
 
 
-def is_drupal_user(creds):
-    response = requests.post(f"{os.getenv('DRUPAL_HOST')}/user/login?_format=json", data=json.dumps({
-        'name': creds.email,
-        'pass': creds.password
-    }), headers={'Content-Type': 'application/json'})
-    return response.status_code == 200
+def log_user_in(response: Response, user: User):
+    query.log_user_in(engine, user)
+    response.set_cookie(key=AUTH_COOKIE_NAME, httponly=True,
+                        value=get_encoded_cookie_data(User(name=user.name,
+                                                           roles=user.roles)),
+                        domain='.kpndataregistry.org', samesite='strict',
+                        secure=os.getenv('USE_HTTPS') == 'true')
 
 
 @router.post('/login')
 def login(response: Response, creds: UserCredentials):
-    in_list, user = is_user_in_list(creds)
-    if not in_list and not is_drupal_user(creds):
+    user = query.get_user(engine, creds)
+    if user:
+        log_user_in(response, user)
+        return {'status': 'success'}
+    else:
         raise fastapi.HTTPException(status_code=401, detail='Invalid username or password')
-    response.set_cookie(key=AUTH_COOKIE_NAME, value=get_encoded_cookie_data(user if user else
-                                                                            User(name=creds.email, email=creds.email,
-                                                                                 role='user')),
-                        domain='.kpndataregistry.org', samesite='strict',
-                        secure=os.getenv('USE_HTTPS') == 'true')
-    return {'status': 'success'}
-
-
-def is_user_in_list(creds: UserCredentials):
-    user = next((user for user in get_users() if user.email == creds.email), None)
-    return user is not None and 'password' == creds.password, user
-
-
-def get_users() -> list:
-    return [User(name='admin', email='admin@kpnteam.org', role='admin'),
-            User(name='user', email='user@kpnteam.org', role='user')]
 
 
 @router.post('/logout')

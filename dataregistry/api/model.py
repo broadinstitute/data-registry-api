@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import Union
+from typing import Union, List
 from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field, Extra
@@ -168,14 +168,13 @@ class SavedCredibleSet(BaseModel):
 
 
 class UserCredentials(BaseModel):
-    email: str
-    password: str
+    name: str
+    password: Union[str, None]
 
 
 class User(BaseModel):
     name: str
-    email: str
-    role: str
+    roles: List[str]
 
 
 class CreateBiondexRequest(BaseModel):
