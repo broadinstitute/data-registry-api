@@ -175,6 +175,7 @@ class UserCredentials(BaseModel):
 class User(BaseModel):
     name: str
     roles: List[str]
+    api_token: Union[str, None]
 
 
 class CreateBiondexRequest(BaseModel):

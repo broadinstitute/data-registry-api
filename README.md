@@ -6,8 +6,7 @@ You can start a local mysql via `./docker_db/docker_db.sh start` and the run `al
 You'll likely want/need to specify the following environment variables:
 - `DATA_REGISTRY_DB_CONNECTION` - the connection string to the database, e.g. `export DATA_REGISTRY_DB_CONNECTION=mysql+pymysql://dataregistry:dataregistry@localhost:3307/dataregistry`will work if you're using the docker_db script
 - `DATA_REGISTRY_S3_BUCKET` - the s3 bucket to use for storing the files (use dig-data-registry-qa unless you need prod data)
-- `DATA_REGISTRY_API_KEY` - this is the api key that the server will look for in nearly all requests and return a 403
-- `DRUPAL_HOST` - the drupal instance to use to look up users
+- `JWT_SECRET` - this is the secret used to encode and decode data auth info in JWT format
 
 To set up dependencies via virtual environment:
 `python -m venv venv`

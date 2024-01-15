@@ -4,6 +4,7 @@ import logging
 import os
 import subprocess
 from datetime import datetime
+from typing import Optional
 from uuid import UUID
 
 import fastapi
@@ -12,7 +13,7 @@ import smart_open
 import sqlalchemy
 import xmltodict
 from botocore.exceptions import ClientError
-from fastapi import Depends, Body
+from fastapi import Depends, Body, Header
 from fastapi.security import OAuth2AuthorizationCodeBearer
 from starlette.background import BackgroundTasks
 from starlette.requests import Request
@@ -23,7 +24,7 @@ from streaming_form_data.targets import S3Target
 from dataregistry.api import query, s3, csv_utils, ecs, bioidx
 from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api.google_oauth import get_google_user
-from dataregistry.api.jwt import get_encoded_cookie_data, get_decoded_cookie_data
+from dataregistry.api.jwt import get_encoded_jwt_data, get_decoded_jwt_data
 from dataregistry.api.model import DataSet, Study, SavedDatasetInfo, SavedDataset, UserCredentials, User, SavedStudy, \
     CreateBiondexRequest, CsvBioIndexRequest, BioIndexCreationStatus, SavedCsvBioIndexRequest
 from dataregistry.pub_ids import PubIdType, infer_id_type
@@ -56,8 +57,27 @@ oauth2_scheme = OAuth2AuthorizationCodeBearer(
 )
 
 
+async def get_current_user(request: Request, authorization: Optional[str] = Header(None)):
+    auth_cookie = request.cookies.get(AUTH_COOKIE_NAME)
+    if auth_cookie:
+        data = get_decoded_jwt_data(auth_cookie)
+        if data:
+            user = User(**data)
+            user.api_token = auth_cookie
+            return user
+
+    if authorization:
+        schema, _, token = authorization.partition(' ')
+        if schema.lower() == 'bearer' and token:
+            data = get_decoded_jwt_data(token)
+            if data:
+                return User(**data)
+
+    raise fastapi.HTTPException(status_code=401, detail='Not logged in')
+
+
 @router.get('/datasets', response_class=fastapi.responses.ORJSONResponse)
-async def api_datasets():
+async def api_datasets(user: User = Depends(get_current_user)):
     try:
         return query.get_all_datasets(engine)
     except ValueError as e:
@@ -470,17 +490,6 @@ async def api_record_delete(index: int):
         raise fastapi.HTTPException(status_code=400, detail=str(e))
 
 
-async def get_current_user(request: Request):
-    auth = request.cookies.get(AUTH_COOKIE_NAME)
-    if not auth:
-        raise fastapi.HTTPException(status_code=401, detail='Not logged in')
-    data = get_decoded_cookie_data(auth)
-    if not data:
-        raise fastapi.HTTPException(status_code=401, detail='Not logged in')
-    user = User(**data)
-    return user
-
-
 @router.get('/is-logged-in')
 def is_logged_in(user: User = Depends(get_current_user)):
     if user:
@@ -492,8 +501,8 @@ def is_logged_in(user: User = Depends(get_current_user)):
 def log_user_in(response: Response, user: User):
     query.log_user_in(engine, user)
     response.set_cookie(key=AUTH_COOKIE_NAME, httponly=True,
-                        value=get_encoded_cookie_data(User(name=user.name,
-                                                           roles=user.roles)),
+                        value=get_encoded_jwt_data(User(name=user.name,
+                                                        roles=user.roles)),
                         domain='.kpndataregistry.org', samesite='strict',
                         secure=os.getenv('USE_HTTPS') == 'true')
 
