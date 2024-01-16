@@ -175,6 +175,7 @@ class UserCredentials(BaseModel):
 class User(BaseModel):
     name: str
     roles: List[str]
+    is_internal: Union[bool, None]
     api_token: Union[str, None]
 
 

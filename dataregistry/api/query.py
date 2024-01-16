@@ -309,14 +309,22 @@ def get_internal_user_info(conn, creds, params) -> Optional[User]:
 
 
 def get_user_info(conn, params) -> Optional[User]:
-    result = conn.execute(text("SELECT user_name, roles FROM users WHERE user_name = :user_name"), params).fetchone()
+    result = conn.execute(text("SELECT user_name, roles, (oauth_provider IS NULL) AS is_internal "
+                               "FROM users WHERE user_name = :user_name"), params).fetchone()
     if not result:
         return None
-    return User(roles=json.loads(result[1]), name=result[0])
+    return User(roles=json.loads(result[1]), name=result[0], is_internal=result[2])
 
 
 def log_user_in(engine, user):
     with engine.connect() as conn:
         conn.execute(text("UPDATE users SET last_login = NOW() where user_name = :user_name"),
                      {'user_name': user.name})
+        conn.commit()
+
+
+def update_password(engine, new_password: str, user: User):
+    with engine.connect() as conn:
+        conn.execute(text("UPDATE users SET password = :password WHERE user_name = :user_name"),
+                     {'password': bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()), 'user_name': user.name})
         conn.commit()

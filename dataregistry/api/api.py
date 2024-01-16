@@ -206,6 +206,12 @@ async def google_login(response: Response, body: dict = Body(...)):
         return {'status': 'success'}
 
 
+@router.post("/change-password", response_class=fastapi.responses.ORJSONResponse)
+async def change_password(postBody: dict = Body(...), user: User = Depends(get_current_user)):
+    new_password = postBody.get('password')
+    query.update_password(engine, new_password, user)
+
+
 @router.get('/publications', response_class=fastapi.responses.ORJSONResponse)
 async def api_publications(pub_id: str):
     if infer_id_type(pub_id) != PubIdType.PMID:
@@ -502,7 +508,7 @@ def log_user_in(response: Response, user: User):
     query.log_user_in(engine, user)
     response.set_cookie(key=AUTH_COOKIE_NAME, httponly=True,
                         value=get_encoded_jwt_data(User(name=user.name,
-                                                        roles=user.roles)),
+                                                        roles=user.roles, is_internal=user.is_internal)),
                         domain='.kpndataregistry.org', samesite='strict',
                         secure=os.getenv('USE_HTTPS') == 'true')
 
