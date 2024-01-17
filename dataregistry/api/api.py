@@ -77,7 +77,7 @@ async def get_current_user(request: Request, authorization: Optional[str] = Head
 
 
 @router.get('/datasets', response_class=fastapi.responses.ORJSONResponse)
-async def api_datasets(user: User = Depends(get_current_user)):
+async def api_datasets():
     try:
         return query.get_all_datasets(engine)
     except ValueError as e:
@@ -253,7 +253,8 @@ async def upload_csv(request: Request):
 @router.post("/uploadfile/{data_set_id}/{phenotype}/{dichotomous}/{sample_size}")
 async def upload_file_for_phenotype(data_set_id: str, phenotype: str, dichotomous: bool, request: Request,
                                     sample_size: int, response: fastapi.Response, cases: int = None,
-                                    controls: int = None):
+                                    controls: int = None, user: User = Depends(get_current_user)):
+    check_perms(data_set_id, user, "You don't have permission to add files to this dataset")
     filename = request.headers.get('Filename')
     logger.info(f"Uploading file {filename} for phenotype {phenotype} in dataset {data_set_id}")
     try:
@@ -365,7 +366,10 @@ def get_possible_files(ds_uuid):
 
 @router.post("/crediblesetupload/{phenotype_data_set_id}/{credible_set_name}")
 async def upload_credible_set_for_phenotype(phenotype_data_set_id: str, credible_set_name: str,
-                                            request: Request, response: fastapi.Response):
+                                            request: Request, response: fastapi.Response,
+                                            user: User = Depends(get_current_user)):
+    check_perms(query.get_dataset_id_for_phenotype(engine, phenotype_data_set_id), user,
+                "You can't upload files to that dataset")
     filename = request.headers.get('Filename')
     try:
         file_path = f"credible_sets/{phenotype_data_set_id}"
@@ -396,7 +400,8 @@ async def version():
 
 
 @router.delete("/datasets/{data_set_id}")
-async def delete_dataset(data_set_id: str, response: fastapi.Response):
+async def delete_dataset(data_set_id: str, response: fastapi.Response, user: User = Depends(get_current_user)):
+    check_perms(data_set_id, user, "You don't have permission to delete this dataset")
     try:
         query.delete_dataset(engine, data_set_id)
     except Exception as e:
@@ -408,7 +413,10 @@ async def delete_dataset(data_set_id: str, response: fastapi.Response):
 
 
 @router.delete("/phenotypes/{phenotype_data_set_id}")
-async def delete_phenotype(phenotype_data_set_id: str, response: fastapi.Response):
+async def delete_phenotype(phenotype_data_set_id: str, response: fastapi.Response,
+                           user: User = Depends(get_current_user)):
+    check_perms(query.get_dataset_id_for_phenotype(engine, phenotype_data_set_id), user,
+                "You don't have permission to delete files in this dataset")
     try:
         query.delete_phenotype(engine, phenotype_data_set_id)
     except Exception as e:
@@ -450,12 +458,12 @@ async def get_studies():
 
 
 @router.post('/datasets', response_class=fastapi.responses.ORJSONResponse)
-async def save_dataset(req: DataSet):
+async def save_dataset(req: DataSet, user: User = Depends(get_current_user)):
     """
     The body of the request contains the information to insert into the records db
     """
     try:
-        dataset_id = query.insert_dataset(engine, req)
+        dataset_id = query.insert_dataset(engine, req, user.id)
         return SavedDataset(id=dataset_id, created_at=datetime.now(), **req.dict())
     except sqlalchemy.exc.IntegrityError as e:
         raise fastapi.HTTPException(status_code=400, detail=str(e))
@@ -464,13 +472,10 @@ async def save_dataset(req: DataSet):
 
 
 @router.patch('/datasets', response_class=fastapi.responses.ORJSONResponse)
-async def update_dataset(req: SavedDataset):
-    """
-    The body of the request contains the information to insert into the records db
-    """
+async def update_dataset(req: SavedDataset, user: User = Depends(get_current_user)):
+    check_perms(str(req.id).replace('-', ''), user, "You do not have permission to update this dataset")
     try:
         query.update_dataset(engine, req)
-
         return fastapi.responses.Response(content=None, status_code=200)
     except sqlalchemy.exc.IntegrityError as e:
         raise fastapi.HTTPException(status_code=400, detail=str(e))
@@ -478,22 +483,11 @@ async def update_dataset(req: SavedDataset):
         raise fastapi.HTTPException(status_code=400, detail=str(e))
 
 
-@router.delete('/records/{index}', response_class=fastapi.responses.ORJSONResponse)
-async def api_record_delete(index: int):
-    """
-    Soft delete both the database (by setting the `deleted` field to the current timestamp)
-    And s3 (by adding a file called _DELETED in which to identify deleted buckets from the CLI)
-    """
-    try:
-        s3_record_id = query.delete_record(engine, index)
-
-        return {
-            's3_record_id': s3_record_id
-        }
-    except sqlalchemy.exc.IntegrityError as e:
-        raise fastapi.HTTPException(status_code=400, detail=str(e))
-    except ClientError as e:
-        raise fastapi.HTTPException(status_code=400, detail=str(e))
+def check_perms(ds_id: str, user: User, msg: str):
+    if "admin" not in user.roles:
+        ds_owner = query.get_data_set_owner(engine, ds_id)
+        if ds_owner != user.id:
+            raise fastapi.HTTPException(status_code=401, detail=msg)
 
 
 @router.get('/is-logged-in')
@@ -507,8 +501,7 @@ def is_logged_in(user: User = Depends(get_current_user)):
 def log_user_in(response: Response, user: User):
     query.log_user_in(engine, user)
     response.set_cookie(key=AUTH_COOKIE_NAME, httponly=True,
-                        value=get_encoded_jwt_data(User(name=user.name,
-                                                        roles=user.roles, is_internal=user.is_internal)),
+                        value=get_encoded_jwt_data(user),
                         domain='.kpndataregistry.org', samesite='strict',
                         secure=os.getenv('USE_HTTPS') == 'true')
 
