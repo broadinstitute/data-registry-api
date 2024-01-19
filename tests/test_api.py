@@ -145,7 +145,7 @@ def add_ds_with_file(api_client, public=False):
     assert create_record_res.status_code == HTTP_200_OK
     with open("tests/sample_upload.txt", "rb") as f:
         dataset_id = create_record_res.json()['id'].replace('-', '')
-        upload_response = api_client.post(f"/api/uploadfile/{dataset_id}/t1d/true/10",
+        upload_response = api_client.post(f"/api/uploadfile/{dataset_id}/true/10?phenotype=t1d",
                                           headers={AUTHORIZATION: auth_token, "Filename": "sample_upload.txt"},
                                           files={"file": f})
         assert upload_response.status_code == HTTP_200_OK
