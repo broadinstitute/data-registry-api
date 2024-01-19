@@ -13,7 +13,7 @@ import smart_open
 import sqlalchemy
 import xmltodict
 from botocore.exceptions import ClientError
-from fastapi import Depends, Body, Header
+from fastapi import Depends, Body, Header, Query
 from fastapi.security import OAuth2AuthorizationCodeBearer
 from starlette.background import BackgroundTasks
 from starlette.requests import Request
@@ -250,10 +250,12 @@ async def upload_csv(request: Request):
     return {"file_size": file_size, "s3_path": s3.get_file_path("bioindex/uploads", filename)}
 
 
-@router.post("/uploadfile/{data_set_id}/{phenotype}/{dichotomous}/{sample_size}")
-async def upload_file_for_phenotype(data_set_id: str, phenotype: str, dichotomous: bool, request: Request,
+@router.post("/uploadfile/{data_set_id}/{dichotomous}/{sample_size}")
+async def upload_file_for_phenotype(data_set_id: str, dichotomous: bool, request: Request,
                                     sample_size: int, response: fastapi.Response, cases: int = None,
-                                    controls: int = None, user: User = Depends(get_current_user)):
+                                    controls: int = None, user: User = Depends(get_current_user),
+                                    phenotype: str = Query(None, title="Phenotype",
+                                                           description="Phenotype for file")):
     check_perms(data_set_id, user, "You don't have permission to add files to this dataset")
     filename = request.headers.get('Filename')
     logger.info(f"Uploading file {filename} for phenotype {phenotype} in dataset {data_set_id}")
