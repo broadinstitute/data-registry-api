@@ -69,18 +69,19 @@ def get_studies(engine):
     return [SavedStudy(**row._asdict()) for row in results]
 
 
-def insert_dataset(engine, data: DataSet):
+def insert_dataset(engine, data: DataSet, user_id: int):
     with engine.connect() as conn:
         sql_params = data.dict()
         dataset_id = str(uuid.uuid4()).replace('-', '')
-        sql_params.update({'id': dataset_id})
+        sql_params.update({'id': dataset_id, 'user_id': user_id})
         conn.execute(text("""
             INSERT INTO datasets (id, name, data_source_type, data_type, genome_build,
             ancestry, data_contributor, data_contributor_email, data_submitter, data_submitter_email,  
-            sex, global_sample_size, status, description, pub_id, publication, study_id, created_at, publicly_available) 
+            sex, global_sample_size, status, description, pub_id, publication, study_id, created_at, 
+            publicly_available, user_id) 
             VALUES(:id, :name, :data_source_type, :data_type, :genome_build, :ancestry, :data_contributor, 
             :data_contributor_email, :data_submitter, :data_submitter_email, :sex, :global_sample_size, :status, 
-            :description, :pub_id, :publication, :study_id, NOW(), :publicly_available)
+            :description, :pub_id, :publication, :study_id, NOW(), :publicly_available, :user_id)
         """), sql_params)
         conn.commit()
         return dataset_id
@@ -208,6 +209,16 @@ def get_phenotype_file(engine, phenotype_id: str) -> str:
             return result.s3_path
 
 
+def get_dataset_id_for_phenotype(engine, phenotype_data_set_id: str) -> Optional[str]:
+    with engine.connect() as conn:
+        result = conn.execute(text("""SELECT dataset_id FROM dataset_phenotypes where id = :id"""),
+                     {'id': phenotype_data_set_id}).fetchone()
+        if result:
+            return result[0]
+        else:
+            return None
+
+
 def get_credible_sets_for_dataset(engine, phenotype_ids: list) -> list:
     if len(phenotype_ids) == 0:
         return []
@@ -309,10 +320,14 @@ def get_internal_user_info(conn, creds, params) -> Optional[User]:
 
 
 def get_user_info(conn, params) -> Optional[User]:
-    result = conn.execute(text("SELECT user_name, roles FROM users WHERE user_name = :user_name"), params).fetchone()
+    result = conn.execute(text("SELECT id, user_name, roles, (oauth_provider IS NULL) AS is_internal "
+                               "FROM users WHERE user_name = :user_name"), params).first()
     if not result:
         return None
-    return User(roles=json.loads(result[1]), name=result[0])
+
+    user_dict = result._asdict()
+    return User(id=user_dict['id'], name=user_dict['user_name'], roles=json.loads(user_dict['roles']),
+                is_internal=user_dict['is_internal'])
 
 
 def log_user_in(engine, user):
@@ -320,3 +335,18 @@ def log_user_in(engine, user):
         conn.execute(text("UPDATE users SET last_login = NOW() where user_name = :user_name"),
                      {'user_name': user.name})
         conn.commit()
+
+
+def update_password(engine, new_password: str, user: User):
+    with engine.connect() as conn:
+        conn.execute(text("UPDATE users SET password = :password WHERE user_name = :user_name"),
+                     {'password': bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()),
+                      'user_name': user.name})
+        conn.commit()
+
+
+def get_data_set_owner(engine, ds_id):
+    with engine.connect() as conn:
+        result = conn.execute(text("select user_id from datasets where id = :ds_id"),
+                              {'ds_id': ds_id}).fetchone()
+        return result[0] if result else None

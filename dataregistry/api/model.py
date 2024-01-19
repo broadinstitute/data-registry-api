@@ -123,6 +123,7 @@ class SavedCsvBioIndexRequest(CsvBioIndexRequest):
 
 class SavedDataset(DataSet):
     id: UUID
+    user_id: Union[int, None]
     created_at: Union[datetime, None]
 
 
@@ -175,6 +176,9 @@ class UserCredentials(BaseModel):
 class User(BaseModel):
     name: str
     roles: List[str]
+    is_internal: Union[bool, None]
+    api_token: Union[str, None]
+    id: Union[int, None]
 
 
 class CreateBiondexRequest(BaseModel):
