@@ -6,5 +6,5 @@ RUN apt-get update && \
     apt-get install -y git && \
     pip install --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
-CMD ["python", "-m", "dataregistry.main", "serve"]
+CMD ["python", "-m", "dataregistry.main", "-e", "dataregistry/.env",  "serve"]
 
