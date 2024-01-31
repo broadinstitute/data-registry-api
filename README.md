@@ -4,10 +4,9 @@
 ### Running Locally
 You will need python 3.8 or above installed and docker if you wish to use local docker db server.
 You can start a local mysql via `./docker_db/docker_db.sh start` and the run `alembic upgrade head` to create the db tables.
-You'll likely want/need to specify the following environment variables:
+You'll likely want/need to specify the following environment variables either in your .env file (don't commit to vcs) or in your cli invocation:
 - `DATA_REGISTRY_DB_CONNECTION` - the connection string to the database, e.g. `export DATA_REGISTRY_DB_CONNECTION=mysql+pymysql://dataregistry:dataregistry@localhost:3307/dataregistry`will work if you're using the docker_db script
 - `DATA_REGISTRY_S3_BUCKET` - the s3 bucket to use for storing the files (use dig-data-registry-qa unless you need prod data)
-- `DATA_REGISTRY_API_KEY` - this is the api key that the server will look for in nearly all requests and return a 403
 - `GOOGLE_OAUTH_CLIENT_ID` - this necessary if you will be testing authentication look this up https://console.cloud.google.com/apis/credentials?project=kpn-data-registry
 - `GOOGLE_OAUTH_CLIENT_SECRET` - same as above
 - `GOOGLE_OAUTH_REDIRECT_URI` - http://local.kpndataregistry.org:3000/login/callback
@@ -41,6 +40,7 @@ variables with the -e option in the docker run invocation below.
 `docker run --rm --name dr_container -p 5000:5000 <name>`
 
 With some environment variables specified: `docker run -e DATA_REGISTRY_DB_CONNECTION=<> --rm --name dr_container -p 5000:5000 <name>`
+Docker will use environment variables in your .env file too so you can override everything there if you like. 
 
 ## Deploying the server
 - This [Jenkins Job](http://107.22.69.235:8080/view/Data%20Registry/job/DR%20-%20Backend%20-%20Dev/) will deploy the head of the main branch to http://ec2-3-84-156-50.compute-1.amazonaws.com:5000/docs
