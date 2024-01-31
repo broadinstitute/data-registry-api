@@ -40,8 +40,6 @@ jobs:
           pip list
 
       - name: Test with pytest
-        env:
-          DATA_REGISTRY_API_KEY: ${{ secrets.API_KEY }}
         run: |
           pytest
 

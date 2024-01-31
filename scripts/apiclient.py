@@ -6,7 +6,7 @@ from pydantic import parse_obj_as
 
 from dataregistry.api.model import SavedStudy, SavedDataset
 
-ACCESS_HEADER = {"access-token": os.getenv('DATA_REGISTRY_API_KEY')}
+ACCESS_HEADER = {"access-token": "SOMETHING"}
 JSON_HEADER = {"Content-Type": "application/json"}
 SERVER_URL = os.getenv('DATA_REGISTRY_API_SERVER', "http://localhost:5000")
 STUDIES_URL = f"{SERVER_URL}/api/studies"

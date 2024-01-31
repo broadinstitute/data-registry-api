@@ -4,6 +4,7 @@ import logging
 import os
 import subprocess
 from datetime import datetime
+from typing import Optional
 from uuid import UUID
 
 import fastapi
@@ -12,7 +13,7 @@ import smart_open
 import sqlalchemy
 import xmltodict
 from botocore.exceptions import ClientError
-from fastapi import Depends, Body
+from fastapi import Depends, Body, Header, Query
 from fastapi.security import OAuth2AuthorizationCodeBearer
 from starlette.background import BackgroundTasks
 from starlette.requests import Request
@@ -23,7 +24,7 @@ from streaming_form_data.targets import S3Target
 from dataregistry.api import query, s3, csv_utils, ecs, bioidx
 from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api.google_oauth import get_google_user
-from dataregistry.api.jwt import get_encoded_cookie_data, get_decoded_cookie_data
+from dataregistry.api.jwt import get_encoded_jwt_data, get_decoded_jwt_data
 from dataregistry.api.model import DataSet, Study, SavedDatasetInfo, SavedDataset, UserCredentials, User, SavedStudy, \
     CreateBiondexRequest, CsvBioIndexRequest, BioIndexCreationStatus, SavedCsvBioIndexRequest
 from dataregistry.pub_ids import PubIdType, infer_id_type
@@ -54,6 +55,25 @@ oauth2_scheme = OAuth2AuthorizationCodeBearer(
     refreshUrl="https://oauth2.googleapis.com/token",
     scopes={"openid": "OpenID Connect scope", "email": "email scope"},
 )
+
+
+async def get_current_user(request: Request, authorization: Optional[str] = Header(None)):
+    auth_cookie = request.cookies.get(AUTH_COOKIE_NAME)
+    if auth_cookie:
+        data = get_decoded_jwt_data(auth_cookie)
+        if data:
+            user = User(**data)
+            user.api_token = auth_cookie
+            return user
+
+    if authorization:
+        schema, _, token = authorization.partition(' ')
+        if schema.lower() == 'bearer' and token:
+            data = get_decoded_jwt_data(token)
+            if data:
+                return User(**data)
+
+    raise fastapi.HTTPException(status_code=401, detail='Not logged in')
 
 
 @router.get('/datasets', response_class=fastapi.responses.ORJSONResponse)
@@ -186,6 +206,12 @@ async def google_login(response: Response, body: dict = Body(...)):
         return {'status': 'success'}
 
 
+@router.post("/change-password", response_class=fastapi.responses.ORJSONResponse)
+async def change_password(postBody: dict = Body(...), user: User = Depends(get_current_user)):
+    new_password = postBody.get('password')
+    query.update_password(engine, new_password, user)
+
+
 @router.get('/publications', response_class=fastapi.responses.ORJSONResponse)
 async def api_publications(pub_id: str):
     if infer_id_type(pub_id) != PubIdType.PMID:
@@ -224,10 +250,13 @@ async def upload_csv(request: Request):
     return {"file_size": file_size, "s3_path": s3.get_file_path("bioindex/uploads", filename)}
 
 
-@router.post("/uploadfile/{data_set_id}/{phenotype}/{dichotomous}/{sample_size}")
-async def upload_file_for_phenotype(data_set_id: str, phenotype: str, dichotomous: bool, request: Request,
+@router.post("/uploadfile/{data_set_id}/{dichotomous}/{sample_size}")
+async def upload_file_for_phenotype(data_set_id: str, dichotomous: bool, request: Request,
                                     sample_size: int, response: fastapi.Response, cases: int = None,
-                                    controls: int = None):
+                                    controls: int = None, user: User = Depends(get_current_user),
+                                    phenotype: str = Query(None, title="Phenotype",
+                                                           description="Phenotype for file")):
+    check_perms(data_set_id, user, "You don't have permission to add files to this dataset")
     filename = request.headers.get('Filename')
     logger.info(f"Uploading file {filename} for phenotype {phenotype} in dataset {data_set_id}")
     try:
@@ -339,7 +368,10 @@ def get_possible_files(ds_uuid):
 
 @router.post("/crediblesetupload/{phenotype_data_set_id}/{credible_set_name}")
 async def upload_credible_set_for_phenotype(phenotype_data_set_id: str, credible_set_name: str,
-                                            request: Request, response: fastapi.Response):
+                                            request: Request, response: fastapi.Response,
+                                            user: User = Depends(get_current_user)):
+    check_perms(query.get_dataset_id_for_phenotype(engine, phenotype_data_set_id), user,
+                "You can't upload files to that dataset")
     filename = request.headers.get('Filename')
     try:
         file_path = f"credible_sets/{phenotype_data_set_id}"
@@ -370,7 +402,8 @@ async def version():
 
 
 @router.delete("/datasets/{data_set_id}")
-async def delete_dataset(data_set_id: str, response: fastapi.Response):
+async def delete_dataset(data_set_id: str, response: fastapi.Response, user: User = Depends(get_current_user)):
+    check_perms(data_set_id, user, "You don't have permission to delete this dataset")
     try:
         query.delete_dataset(engine, data_set_id)
     except Exception as e:
@@ -382,7 +415,10 @@ async def delete_dataset(data_set_id: str, response: fastapi.Response):
 
 
 @router.delete("/phenotypes/{phenotype_data_set_id}")
-async def delete_phenotype(phenotype_data_set_id: str, response: fastapi.Response):
+async def delete_phenotype(phenotype_data_set_id: str, response: fastapi.Response,
+                           user: User = Depends(get_current_user)):
+    check_perms(query.get_dataset_id_for_phenotype(engine, phenotype_data_set_id), user,
+                "You don't have permission to delete files in this dataset")
     try:
         query.delete_phenotype(engine, phenotype_data_set_id)
     except Exception as e:
@@ -424,12 +460,12 @@ async def get_studies():
 
 
 @router.post('/datasets', response_class=fastapi.responses.ORJSONResponse)
-async def save_dataset(req: DataSet):
+async def save_dataset(req: DataSet, user: User = Depends(get_current_user)):
     """
     The body of the request contains the information to insert into the records db
     """
     try:
-        dataset_id = query.insert_dataset(engine, req)
+        dataset_id = query.insert_dataset(engine, req, user.id)
         return SavedDataset(id=dataset_id, created_at=datetime.now(), **req.dict())
     except sqlalchemy.exc.IntegrityError as e:
         raise fastapi.HTTPException(status_code=400, detail=str(e))
@@ -438,13 +474,10 @@ async def save_dataset(req: DataSet):
 
 
 @router.patch('/datasets', response_class=fastapi.responses.ORJSONResponse)
-async def update_dataset(req: SavedDataset):
-    """
-    The body of the request contains the information to insert into the records db
-    """
+async def update_dataset(req: SavedDataset, user: User = Depends(get_current_user)):
+    check_perms(str(req.id).replace('-', ''), user, "You do not have permission to update this dataset")
     try:
         query.update_dataset(engine, req)
-
         return fastapi.responses.Response(content=None, status_code=200)
     except sqlalchemy.exc.IntegrityError as e:
         raise fastapi.HTTPException(status_code=400, detail=str(e))
@@ -452,33 +485,11 @@ async def update_dataset(req: SavedDataset):
         raise fastapi.HTTPException(status_code=400, detail=str(e))
 
 
-@router.delete('/records/{index}', response_class=fastapi.responses.ORJSONResponse)
-async def api_record_delete(index: int):
-    """
-    Soft delete both the database (by setting the `deleted` field to the current timestamp)
-    And s3 (by adding a file called _DELETED in which to identify deleted buckets from the CLI)
-    """
-    try:
-        s3_record_id = query.delete_record(engine, index)
-
-        return {
-            's3_record_id': s3_record_id
-        }
-    except sqlalchemy.exc.IntegrityError as e:
-        raise fastapi.HTTPException(status_code=400, detail=str(e))
-    except ClientError as e:
-        raise fastapi.HTTPException(status_code=400, detail=str(e))
-
-
-async def get_current_user(request: Request):
-    auth = request.cookies.get(AUTH_COOKIE_NAME)
-    if not auth:
-        raise fastapi.HTTPException(status_code=401, detail='Not logged in')
-    data = get_decoded_cookie_data(auth)
-    if not data:
-        raise fastapi.HTTPException(status_code=401, detail='Not logged in')
-    user = User(**data)
-    return user
+def check_perms(ds_id: str, user: User, msg: str):
+    if "admin" not in user.roles:
+        ds_owner = query.get_data_set_owner(engine, ds_id)
+        if ds_owner != user.id:
+            raise fastapi.HTTPException(status_code=401, detail=msg)
 
 
 @router.get('/is-logged-in')
@@ -492,8 +503,7 @@ def is_logged_in(user: User = Depends(get_current_user)):
 def log_user_in(response: Response, user: User):
     query.log_user_in(engine, user)
     response.set_cookie(key=AUTH_COOKIE_NAME, httponly=True,
-                        value=get_encoded_cookie_data(User(name=user.name,
-                                                           roles=user.roles)),
+                        value=get_encoded_jwt_data(user),
                         domain='.kpndataregistry.org', samesite='strict',
                         secure=os.getenv('USE_HTTPS') == 'true')
 

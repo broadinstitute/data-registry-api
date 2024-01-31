@@ -38,9 +38,9 @@ variables with the -e option in the docker run invocation below.
 
 `docker build -t <name> .`
 
-`docker run --r --name dr_container -p 5000:5000 <name>`
+`docker run --rm --name dr_container -p 5000:5000 <name>`
 
-With some environment variables specified: `docker run -e DATA_REGISTRY_API_KEY=<> -e DATA_REGISTRY_DB_CONNECTION=<> --rm --name dr_container -p 5000:5000 <name>`
+With some environment variables specified: `docker run -e DATA_REGISTRY_DB_CONNECTION=<> --rm --name dr_container -p 5000:5000 <name>`
 
 ## Deploying the server
 - This [Jenkins Job](http://107.22.69.235:8080/view/Data%20Registry/job/DR%20-%20Backend%20-%20Dev/) will deploy the head of the main branch to http://ec2-3-84-156-50.compute-1.amazonaws.com:5000/docs
