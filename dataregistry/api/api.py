@@ -229,7 +229,7 @@ async def api_publications(pub_id: str):
     publication = article_meta.get('Journal').get('Title')
     authors = format_authors(article_meta.get('AuthorList').get('Author'))
     volume_issue = f"{article_meta.get('Journal').get('JournalIssue').get('Volume')}({article_meta.get('Journal').get('JournalIssue').get('Issue')})"
-    pages = article_meta.get('Pagination').get('MedlinePgn')
+    pages = article_meta.get('Pagination').get('MedlinePgn') if article_meta.get('Pagination')  else 'N/A'
 
     month_year_published = f"{article_meta.get('Journal').get('JournalIssue').get('PubDate').get('Year')} {article_meta.get('Journal').get('JournalIssue').get('PubDate').get('Month')}"
 
