@@ -29,6 +29,9 @@ from dataregistry.api.model import DataSet, Study, SavedDatasetInfo, SavedDatase
     CreateBiondexRequest, CsvBioIndexRequest, BioIndexCreationStatus, SavedCsvBioIndexRequest
 from dataregistry.pub_ids import PubIdType, infer_id_type
 
+SUPER_USER = "admin"
+VIEW_ALL_ROLES = {SUPER_USER, 'analyst'}
+
 AUTH_COOKIE_NAME = 'dr_auth_token'
 
 router = fastapi.APIRouter()
@@ -48,14 +51,6 @@ engine = DataRegistryReadWriteDB().get_engine()
 logger.info("Starting API")
 NIH_API_EMAIL = "dhite@broadinstitute.org"
 NIH_API_TOOL_NAME = "data-registry"
-
-oauth2_scheme = OAuth2AuthorizationCodeBearer(
-    authorizationUrl="https://accounts.google.com/o/oauth2/v2/auth",
-    tokenUrl="https://oauth2.googleapis.com/token",
-    refreshUrl="https://oauth2.googleapis.com/token",
-    scopes={"openid": "OpenID Connect scope", "email": "email scope"},
-)
-
 
 async def get_current_user(request: Request, authorization: Optional[str] = Header(None)):
     auth_cookie = request.cookies.get(AUTH_COOKIE_NAME)
@@ -77,9 +72,12 @@ async def get_current_user(request: Request, authorization: Optional[str] = Head
 
 
 @router.get('/datasets', response_class=fastapi.responses.ORJSONResponse)
-async def api_datasets():
+async def api_datasets(user: User = Depends(get_current_user)):
     try:
-        return query.get_all_datasets(engine)
+        if VIEW_ALL_ROLES.intersection(user.roles):
+            return query.get_all_datasets(engine)
+        else:
+            return query.get_all_datasets_for_user(engine, user)
     except ValueError as e:
         raise fastapi.HTTPException(status_code=400, detail=str(e))
 
@@ -159,8 +157,9 @@ async def sample_file(lines):
 
 
 @router.get('/datasets/{dataset_id}', response_class=fastapi.responses.ORJSONResponse)
-async def api_datasets(dataset_id: UUID):
+async def api_datasets(dataset_id: UUID, user: User = Depends(get_current_user)):
     try:
+        check_perms(str(dataset_id), user, "You don't have permission to dataset")
         ds = query.get_dataset(engine, dataset_id)
         study = query.get_study_for_dataset(engine, ds.study_id)
         phenotypes = query.get_phenotypes_for_dataset(engine, dataset_id)
@@ -486,7 +485,7 @@ async def update_dataset(req: SavedDataset, user: User = Depends(get_current_use
 
 
 def check_perms(ds_id: str, user: User, msg: str):
-    if "admin" not in user.roles:
+    if VIEW_ALL_ROLES.intersection(user.roles):
         ds_owner = query.get_data_set_owner(engine, ds_id)
         if ds_owner != user.id:
             raise fastapi.HTTPException(status_code=401, detail=msg)

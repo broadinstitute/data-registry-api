@@ -40,8 +40,12 @@ def before_each_test():
         con.execute(text("TRUNCATE TABLE dataset_phenotypes"))
         con.execute(text("TRUNCATE TABLE credible_sets"))
         con.execute(text("TRUNCATE TABLE users"))
-        con.execute(text("INSERT INTO users (id, user_name, roles, oauth_provider, created_at) "
-                         "values (1, 'testuser@broadinstitute.org', JSON_ARRAY('admin'), 'google', NOW())"))
+        con.execute(text("TRUNCATE TABLE roles"))
+        con.execute(text("TRUNCATE TABLE user_roles"))
+        con.execute(text("INSERT INTO users (id, user_name, oauth_provider, created_at) "
+                         "values (1, 'testuser@broadinstitute.org', 'google', NOW())"))
+        con.execute(text("INSERT INTO roles (role) VALUES ('admin')"))
+        con.execute(text("INSERT INTO user_roles (user_id, role_id) VALUES (1, 1)"))
         con.commit()
         con.execute(text("SET FOREIGN_KEY_CHECKS = 1"))
 
