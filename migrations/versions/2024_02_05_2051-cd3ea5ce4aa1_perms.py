@@ -37,10 +37,9 @@ def upgrade() -> None:
     conn.execute(text(query))
     query = """
         CREATE TABLE `user_roles` (
-        `id` int NOT NULL AUTO_INCREMENT,
         `user_id` int NOT NULL,
         `role_id` int NOT NULL,
-        PRIMARY KEY (`id`),
+        PRIMARY KEY (`user_id`, `role_id`),
         CONSTRAINT `user_role_user_fk` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) on delete cascade,
         CONSTRAINT `user_role_role_fk` FOREIGN KEY (`role_id`) REFERENCES `roles`(`id`) on delete cascade
         )
@@ -48,10 +47,9 @@ def upgrade() -> None:
     conn.execute(text(query))
     query = """
         CREATE TABLE `role_permissions` (
-        `id` int NOT NULL AUTO_INCREMENT,
         `permission_id` int NOT NULL,
         `role_id` int NOT NULL,
-        PRIMARY KEY (`id`),
+        PRIMARY KEY (`permission_id`, `role_id`),
         CONSTRAINT `role_perms_perm_fk` FOREIGN KEY (`permission_id`) REFERENCES `permissions` (`id`) on delete cascade,
         CONSTRAINT `role_perms_role_fk` FOREIGN KEY (`role_id`) REFERENCES `roles`(`id`) on delete cascade
         )

@@ -466,8 +466,8 @@ async def save_dataset(req: DataSet, user: User = Depends(get_current_user)):
     try:
         dataset_id = query.insert_dataset(engine, req, user.id)
         return SavedDataset(id=dataset_id, created_at=datetime.now(), **req.dict())
-    except sqlalchemy.exc.IntegrityError as e:
-        raise fastapi.HTTPException(status_code=400, detail=str(e))
+    except sqlalchemy.exc.IntegrityError:
+        raise fastapi.HTTPException(status_code=409, detail='Dataset name already exists')
     except ClientError as e:
         raise fastapi.HTTPException(status_code=400, detail=str(e))
 
@@ -485,7 +485,7 @@ async def update_dataset(req: SavedDataset, user: User = Depends(get_current_use
 
 
 def check_perms(ds_id: str, user: User, msg: str):
-    if VIEW_ALL_ROLES.intersection(user.roles):
+    if not VIEW_ALL_ROLES.intersection(user.roles):
         ds_owner = query.get_data_set_owner(engine, ds_id)
         if ds_owner != user.id:
             raise fastapi.HTTPException(status_code=401, detail=msg)
