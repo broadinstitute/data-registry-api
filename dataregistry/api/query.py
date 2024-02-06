@@ -222,7 +222,7 @@ def get_dataset_id_for_phenotype(engine, phenotype_data_set_id: str) -> Optional
         result = conn.execute(text("""SELECT dataset_id FROM dataset_phenotypes where id = :id"""),
                      {'id': phenotype_data_set_id}).fetchone()
         if result:
-            return result[0]
+            return result[0].decode('UTF-8')
         else:
             return None
 
