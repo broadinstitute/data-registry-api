@@ -19,6 +19,14 @@ def get_all_datasets(engine) -> list:
         study_id, description, pub_id, publication, created_at, publicly_available from datasets"""))
     return [SavedDataset(**row._asdict()) for row in results]
 
+def get_all_datasets_for_user(engine, user: User) -> list:
+    with engine.connect() as conn:
+        results = conn.execute(text("""select id, name, data_source_type, data_type, genome_build, ancestry, sex, 
+        global_sample_size, status, data_submitter, data_submitter_email, data_contributor, data_contributor_email, 
+        study_id, description, pub_id, publication, created_at, publicly_available 
+        from datasets where user_id = :user_id"""), {'user_id': user.id})
+    return [SavedDataset(**row._asdict()) for row in results]
+
 
 def get_bioindex_schema(engine, dataset_id: str) -> str:
     with engine.connect() as conn:
@@ -214,7 +222,7 @@ def get_dataset_id_for_phenotype(engine, phenotype_data_set_id: str) -> Optional
         result = conn.execute(text("""SELECT dataset_id FROM dataset_phenotypes where id = :id"""),
                      {'id': phenotype_data_set_id}).fetchone()
         if result:
-            return result[0]
+            return result[0].decode('UTF-8')
         else:
             return None
 
@@ -320,15 +328,40 @@ def get_internal_user_info(conn, creds, params) -> Optional[User]:
 
 
 def get_user_info(conn, params) -> Optional[User]:
-    result = conn.execute(text("SELECT id, user_name, roles, (oauth_provider IS NULL) AS is_internal "
-                               "FROM users WHERE user_name = :user_name"), params).first()
+    result = conn.execute(text("SELECT u.id, u.user_name, r.role, p.permission, "
+                               "(oauth_provider IS NULL) AS is_internal FROM users u "
+                               "LEFT JOIN user_roles ur on ur.user_id = u.id "
+                               "LEFT JOIN roles r on ur.role_id = r.id "
+                               "LEFT JOIN role_permissions rp ON rp.role_id = r.id "
+                               "LEFT JOIN permissions p on p.id = rp.permission_id "
+                               "WHERE u.user_name = :user_name"), params).mappings().all()
     if not result:
         return None
 
-    user_dict = result._asdict()
-    return User(id=user_dict['id'], name=user_dict['user_name'], roles=json.loads(user_dict['roles']),
-                is_internal=user_dict['is_internal'])
+    return User(**process_user_roles_permissions(result))
 
+def process_user_roles_permissions(result):
+    user_dict = {}
+    roles = set()
+    permissions = set()
+
+    for row in result:
+        if not user_dict:
+            user_dict = {
+                'id': row['id'],
+                'name': row['user_name'],
+                'is_internal': row['is_internal'],
+                'roles': [],
+                'permissions': []
+            }
+        if row['role'] and row['role'] not in roles:
+            roles.add(row['role'])
+            user_dict['roles'].append(row['role'])
+        if row['permission'] and row['permission'] not in permissions:
+            permissions.add(row['permission'])
+            user_dict['permissions'].append(row['permission'])
+
+    return user_dict
 
 def log_user_in(engine, user):
     with engine.connect() as conn:
@@ -348,5 +381,5 @@ def update_password(engine, new_password: str, user: User):
 def get_data_set_owner(engine, ds_id):
     with engine.connect() as conn:
         result = conn.execute(text("select user_id from datasets where id = :ds_id"),
-                              {'ds_id': ds_id}).fetchone()
+                              {'ds_id': ds_id.replace('-', '')}).fetchone()
         return result[0] if result else None
