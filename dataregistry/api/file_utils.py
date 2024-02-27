@@ -47,9 +47,24 @@ async def sample_file(lines: list) -> Tuple[io.StringIO, str]:
 
 
 async def get_text_sample(file: UploadFile) -> list:
-    content = await file.read()
-    lines = content.decode('utf-8').splitlines()
-    return lines
+    text_bytes = b""
+    while True:
+        chunk = await file.read(2048)
+        if not chunk:
+            break
+        text_bytes += chunk
+
+    lines = []
+    text_stream = io.StringIO(text_bytes.decode('utf-8'))
+    try:
+        line = text_stream.readline()
+        while line:
+            lines.append(line.rstrip('\n'))
+            line = text_stream.readline()
+    except EOFError:
+        pass
+
+    return lines[:-1]
 
 
 async def get_compressed_sample(file: UploadFile) -> list:
