@@ -383,3 +383,12 @@ def get_data_set_owner(engine, ds_id):
         result = conn.execute(text("select user_id from datasets where id = :ds_id"),
                               {'ds_id': ds_id.replace('-', '')}).fetchone()
         return result[0] if result else None
+
+
+def save_file_upload_info(engine, dataset, metadata, s3_path, filename, file_size, uploader):
+    with engine.connect() as conn:
+        conn.execute(text("""INSERT INTO file_uploads(dataset, file_name, file_size, uploaded_at, uploaded_by, metadata, s3_path) 
+                          VALUES(:dataset, :file_name, :file_size, NOW(), :uploaded_by, :metadata, :s3_path)"""),
+                     {'dataset': dataset, 'file_name': filename, 'file_size': file_size, 'uploaded_by': uploader,
+                      'metadata': json.dumps(metadata), 's3_path': s3_path})
+        conn.commit()

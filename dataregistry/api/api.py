@@ -3,6 +3,7 @@ import io
 import json
 import logging
 import os
+import re
 import subprocess
 from datetime import datetime
 from typing import Optional
@@ -29,6 +30,9 @@ from dataregistry.api.google_oauth import get_google_user
 from dataregistry.api.jwt import get_encoded_jwt_data, get_decoded_jwt_data
 from dataregistry.api.model import DataSet, Study, SavedDatasetInfo, SavedDataset, UserCredentials, User, SavedStudy, \
     CreateBiondexRequest, CsvBioIndexRequest, BioIndexCreationStatus, SavedCsvBioIndexRequest
+from dataregistry.api.validators import HermesValidator
+
+HERMES_VALIDATOR = HermesValidator()
 from dataregistry.pub_ids import PubIdType, infer_id_type
 
 SUPER_USER = "admin"
@@ -136,6 +140,17 @@ async def api_phenotype_files():
         raise fastapi.HTTPException(status_code=400, detail=str(e))
 
 
+def find_dupe_cols(header, is_csv, panda_header):
+    if is_csv:
+        header_list = header.split(',')
+    else:
+        header_list = header.split('\t')
+
+    header_list = [col.replace('"', '').rstrip() for col in header_list]
+    renamed_columns = [col for col in panda_header if col not in header_list]
+    return renamed_columns
+
+
 @router.post("/preview-delimited-file")
 async def preview_files(file: UploadFile):
     contents = await file.read(100)
@@ -147,6 +162,10 @@ async def preview_files(file: UploadFile):
         sample_lines = await file_utils.get_text_sample(file)
 
     df = await file_utils.parse_file(io.StringIO('\n'.join(sample_lines)), file.filename)
+    dupes = find_dupe_cols(sample_lines[0], ".csv" in file.filename, df.columns)
+    if len(dupes) > 0:
+        duped_col_str = ', '.join(set([re.sub(r"\.\d+$", '', dupe) for dupe in dupes]))
+        raise fastapi.HTTPException(detail=f"{duped_col_str} specified more than once", status_code=400)
     return {"columns": [column for column in df.columns]}
 
 
@@ -243,8 +262,18 @@ async def upload_csv(request: Request):
     return {"file_size": file_size, "s3_path": s3.get_file_path("bioindex/uploads", filename)}
 
 
+@router.get("/hermes-upload-columns")
+async def hermes_upload_columns():
+    return HERMES_VALIDATOR.column_options()
+
+
+@router.post("/validate-hermes")
+async def validate(body: dict = Body(...)):
+    return HERMES_VALIDATOR.validate(body)
+
+
 @router.post("/upload-hermes")
-async def upload_csv(request: Request):
+async def upload_csv(request: Request, user: User = Depends(get_current_user)):
     filename = request.headers.get('Filename')
     dataset = request.headers.get('Dataset')
     metadata_str = request.headers.get('Metadata')
@@ -257,6 +286,7 @@ async def upload_csv(request: Request):
         file_size += len(chunk)
         parser.data_received(chunk)
     s3.upload_metadata(metadata, s3_path)
+    query.save_file_upload_info(engine, dataset, metadata, s3_path, filename, file_size, user.name)
     return {"file_size": file_size, "s3_path": s3.get_file_path(s3_path, filename)}
 
 
