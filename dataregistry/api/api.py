@@ -10,14 +10,12 @@ from typing import Optional
 from uuid import UUID
 
 import fastapi
-import pysam
 import requests
 import smart_open
 import sqlalchemy
 import xmltodict
 from botocore.exceptions import ClientError
 from fastapi import Depends, Body, Header, Query, UploadFile
-from fastapi.security import OAuth2AuthorizationCodeBearer
 from starlette.background import BackgroundTasks
 from starlette.requests import Request
 from starlette.responses import StreamingResponse, Response
