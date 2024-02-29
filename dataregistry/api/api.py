@@ -290,6 +290,11 @@ async def upload_csv(request: Request, user: User = Depends(get_current_user)):
     return {"file_size": file_size, "s3_path": s3.get_file_path(s3_path, filename)}
 
 
+@router.get("/upload-hermes")
+async def fetch_file_uploads():
+    return query.fetch_file_uploads(engine)
+
+
 @router.post("/uploadfile/{data_set_id}/{dichotomous}/{sample_size}")
 async def upload_file_for_phenotype(data_set_id: str, dichotomous: bool, request: Request,
                                     sample_size: int, response: fastapi.Response, cases: int = None,

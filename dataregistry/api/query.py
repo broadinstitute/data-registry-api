@@ -8,7 +8,7 @@ import bcrypt
 from sqlalchemy import text
 
 from dataregistry.api.model import SavedDataset, DataSet, Study, SavedStudy, SavedPhenotypeDataSet, SavedCredibleSet, \
-    BioIndex, CsvBioIndexRequest, SavedCsvBioIndexRequest, User
+    BioIndex, CsvBioIndexRequest, SavedCsvBioIndexRequest, User, FileUpload
 from dataregistry.id_shortener import shorten_uuid
 
 
@@ -18,6 +18,7 @@ def get_all_datasets(engine) -> list:
         global_sample_size, status, data_submitter, data_submitter_email, data_contributor, data_contributor_email, 
         study_id, description, pub_id, publication, created_at, publicly_available from datasets"""))
     return [SavedDataset(**row._asdict()) for row in results]
+
 
 def get_all_datasets_for_user(engine, user: User) -> list:
     with engine.connect() as conn:
@@ -220,7 +221,7 @@ def get_phenotype_file(engine, phenotype_id: str) -> str:
 def get_dataset_id_for_phenotype(engine, phenotype_data_set_id: str) -> Optional[str]:
     with engine.connect() as conn:
         result = conn.execute(text("""SELECT dataset_id FROM dataset_phenotypes where id = :id"""),
-                     {'id': phenotype_data_set_id}).fetchone()
+                              {'id': phenotype_data_set_id}).fetchone()
         if result:
             return result[0].decode('UTF-8')
         else:
@@ -340,6 +341,7 @@ def get_user_info(conn, params) -> Optional[User]:
 
     return User(**process_user_roles_permissions(result))
 
+
 def process_user_roles_permissions(result):
     user_dict = {}
     roles = set()
@@ -362,6 +364,7 @@ def process_user_roles_permissions(result):
             user_dict['permissions'].append(row['permission'])
 
     return user_dict
+
 
 def log_user_in(engine, user):
     with engine.connect() as conn:
@@ -387,8 +390,15 @@ def get_data_set_owner(engine, ds_id):
 
 def save_file_upload_info(engine, dataset, metadata, s3_path, filename, file_size, uploader):
     with engine.connect() as conn:
-        conn.execute(text("""INSERT INTO file_uploads(dataset, file_name, file_size, uploaded_at, uploaded_by, metadata, s3_path) 
-                          VALUES(:dataset, :file_name, :file_size, NOW(), :uploaded_by, :metadata, :s3_path)"""),
+        conn.execute(text("""INSERT INTO file_uploads(dataset, file_name, file_size, uploaded_at, uploaded_by, 
+        metadata, s3_path) VALUES(:dataset, :file_name, :file_size, NOW(), :uploaded_by, :metadata, :s3_path)"""),
                      {'dataset': dataset, 'file_name': filename, 'file_size': file_size, 'uploaded_by': uploader,
                       'metadata': json.dumps(metadata), 's3_path': s3_path})
         conn.commit()
+
+
+def fetch_file_uploads(engine):
+    with engine.connect() as conn:
+        results = conn.execute(text("select id, dataset as dataset_name, file_name, file_size, uploaded_at, uploaded_by, "
+                                    "metadata->>'$.phenotype' as phenotype from file_uploads"))
+        return [FileUpload(**row._asdict()) for row in results]
