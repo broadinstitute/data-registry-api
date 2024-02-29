@@ -191,3 +191,13 @@ class BioIndex(BaseModel):
     dataset_id: UUID
     schema_desc: str
     url: str
+
+
+class FileUpload(BaseModel):
+    id: int
+    dataset_name: str
+    file_name: str
+    file_size: int
+    uploaded_at: datetime
+    uploaded_by: str
+    phenotype: str

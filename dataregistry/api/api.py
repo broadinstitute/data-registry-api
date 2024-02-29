@@ -1,7 +1,9 @@
+import gzip
 import io
 import json
 import logging
 import os
+import re
 import subprocess
 from datetime import datetime
 from typing import Optional
@@ -13,20 +15,22 @@ import smart_open
 import sqlalchemy
 import xmltodict
 from botocore.exceptions import ClientError
-from fastapi import Depends, Body, Header, Query
-from fastapi.security import OAuth2AuthorizationCodeBearer
+from fastapi import Depends, Body, Header, Query, UploadFile
 from starlette.background import BackgroundTasks
 from starlette.requests import Request
 from starlette.responses import StreamingResponse, Response
 from streaming_form_data import StreamingFormDataParser
 from streaming_form_data.targets import S3Target
 
-from dataregistry.api import query, s3, csv_utils, ecs, bioidx
+from dataregistry.api import query, s3, file_utils, ecs, bioidx
 from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api.google_oauth import get_google_user
 from dataregistry.api.jwt import get_encoded_jwt_data, get_decoded_jwt_data
 from dataregistry.api.model import DataSet, Study, SavedDatasetInfo, SavedDataset, UserCredentials, User, SavedStudy, \
     CreateBiondexRequest, CsvBioIndexRequest, BioIndexCreationStatus, SavedCsvBioIndexRequest
+from dataregistry.api.validators import HermesValidator
+
+HERMES_VALIDATOR = HermesValidator()
 from dataregistry.pub_ids import PubIdType, infer_id_type
 
 SUPER_USER = "admin"
@@ -51,6 +55,7 @@ engine = DataRegistryReadWriteDB().get_engine()
 logger.info("Starting API")
 NIH_API_EMAIL = "dhite@broadinstitute.org"
 NIH_API_TOOL_NAME = "data-registry"
+
 
 async def get_current_user(request: Request, authorization: Optional[str] = Header(None)):
     auth_cookie = request.cookies.get(AUTH_COOKIE_NAME)
@@ -110,7 +115,7 @@ async def create_bioindex(request: CreateBiondexRequest):
     dataset = query.get_dataset(engine, request.dataset_id)
     s3_path = f"{dataset.name}/"
     idx_name = str(request.dataset_id)
-    bioidx.create_new_bioindex(engine, request.dataset_id, s3_path, request.schema)
+    bioidx.create_new_bioindex(engine, request.dataset_id, s3_path, request.schema_desc)
     return {"message": f"Successfully created index {idx_name}"}
 
 
@@ -133,27 +138,33 @@ async def api_phenotype_files():
         raise fastapi.HTTPException(status_code=400, detail=str(e))
 
 
+def find_dupe_cols(header, is_csv, panda_header):
+    if is_csv:
+        header_list = header.split(',')
+    else:
+        header_list = header.split('\t')
+
+    header_list = [col.replace('"', '').rstrip() for col in header_list]
+    renamed_columns = [col for col in panda_header if col not in header_list]
+    return renamed_columns
+
+
 @router.post("/preview-delimited-file")
-async def preview_files(request: Request):
-    head_of_request = b''
-    async for chunk in request.stream():
-        head_of_request += chunk
+async def preview_files(file: UploadFile):
+    contents = await file.read(100)
+    await file.seek(0)
 
-    lines = head_of_request.split(b'\n')[:-1]
+    if contents.startswith(b'\x1f\x8b'):
+        sample_lines = await file_utils.get_compressed_sample(file)
+    else:
+        sample_lines = await file_utils.get_text_sample(file)
 
-    sampled_lines, file_name = await sample_file(lines)
-    df = await csv_utils.parse_file(sampled_lines, file_name)
-    return {"headers": {column: csv_utils.infer_data_type(df[column].dropna().iloc[0]) for column in df.columns}}
-
-
-async def sample_file(lines):
-    sample = ''
-    sample_size = min(10, len(lines))
-    for line in lines[4:sample_size + 4]:
-        if line.decode('utf-8') == '\r':
-            break
-        sample += line.decode('utf-8') + '\n'
-    return io.StringIO(sample), lines[1].decode('utf-8').split(';')[2].split('=')[1].strip().replace("\"", "")
+    df = await file_utils.parse_file(io.StringIO('\n'.join(sample_lines)), file.filename)
+    dupes = find_dupe_cols(sample_lines[0], ".csv" in file.filename, df.columns)
+    if len(dupes) > 0:
+        duped_col_str = ', '.join(set([re.sub(r"\.\d+$", '', dupe) for dupe in dupes]))
+        raise fastapi.HTTPException(detail=f"{duped_col_str} specified more than once", status_code=400)
+    return {"columns": [column for column in df.columns]}
 
 
 @router.get('/datasets/{dataset_id}', response_class=fastapi.responses.ORJSONResponse)
@@ -228,7 +239,7 @@ async def api_publications(pub_id: str):
     publication = article_meta.get('Journal').get('Title')
     authors = format_authors(article_meta.get('AuthorList').get('Author'))
     volume_issue = f"{article_meta.get('Journal').get('JournalIssue').get('Volume')}({article_meta.get('Journal').get('JournalIssue').get('Issue')})"
-    pages = article_meta.get('Pagination').get('MedlinePgn') if article_meta.get('Pagination')  else 'N/A'
+    pages = article_meta.get('Pagination').get('MedlinePgn') if article_meta.get('Pagination') else 'N/A'
 
     month_year_published = f"{article_meta.get('Journal').get('JournalIssue').get('PubDate').get('Year')} {article_meta.get('Journal').get('JournalIssue').get('PubDate').get('Month')}"
 
@@ -247,6 +258,39 @@ async def upload_csv(request: Request):
         file_size += len(chunk)
         parser.data_received(chunk)
     return {"file_size": file_size, "s3_path": s3.get_file_path("bioindex/uploads", filename)}
+
+
+@router.get("/hermes-upload-columns")
+async def hermes_upload_columns():
+    return HERMES_VALIDATOR.column_options()
+
+
+@router.post("/validate-hermes")
+async def validate(body: dict = Body(...)):
+    return HERMES_VALIDATOR.validate(body)
+
+
+@router.post("/upload-hermes")
+async def upload_csv(request: Request, user: User = Depends(get_current_user)):
+    filename = request.headers.get('Filename')
+    dataset = request.headers.get('Dataset')
+    metadata_str = request.headers.get('Metadata')
+    metadata = json.loads(metadata_str) if metadata_str else {}
+    parser = StreamingFormDataParser(request.headers)
+    s3_path = f"hermes/{dataset}"
+    parser.register("file", S3Target(s3.get_file_path(s3_path, filename), mode='wb'))
+    file_size = 0
+    async for chunk in request.stream():
+        file_size += len(chunk)
+        parser.data_received(chunk)
+    s3.upload_metadata(metadata, s3_path)
+    query.save_file_upload_info(engine, dataset, metadata, s3_path, filename, file_size, user.name)
+    return {"file_size": file_size, "s3_path": s3.get_file_path(s3_path, filename)}
+
+
+@router.get("/upload-hermes")
+async def fetch_file_uploads():
+    return query.fetch_file_uploads(engine)
 
 
 @router.post("/uploadfile/{data_set_id}/{dichotomous}/{sample_size}")

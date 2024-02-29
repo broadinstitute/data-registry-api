@@ -1,3 +1,5 @@
+import json
+
 import boto3
 import os
 
@@ -16,6 +18,11 @@ def create_dataset_directory(record_name, bucket_name):
 def _create_directory(directory):
     s3_client = boto3.client('s3', region_name=S3_REGION)
     s3_client.put_object(Bucket=BASE_BUCKET, Key=directory)
+
+
+def upload_metadata(metadata, path):
+    s3_client = boto3.client('s3', region_name=S3_REGION)
+    s3_client.put_object(Bucket=BASE_BUCKET, Key=f"{path}/metadata", Body=json.dumps(metadata).encode('utf-8'))
 
 
 def initiate_multi_part(directory: str, filename: str):
