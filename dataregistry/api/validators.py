@@ -15,8 +15,8 @@ class Validator(ABC):
         missing_columns = [c for c in self.required_columns if c not in cols]
         return [f'{col} is required' for col in missing_columns]
 
-    def column_options(self) -> list:
-        return sorted(self.required_columns + self.optional_columns)
+    def column_options(self) -> dict:
+        return {'required': self.required_columns, 'optional': self.optional_columns}
 
     @staticmethod
     def infer_columns(data) -> dict:
