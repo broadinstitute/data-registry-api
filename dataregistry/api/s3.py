@@ -20,6 +20,10 @@ def _create_directory(directory):
     s3_client.put_object(Bucket=BASE_BUCKET, Key=directory)
 
 
+def get_full_s3_path(path, file):
+    return f's3://{BASE_BUCKET}/{path}/{file}'
+
+
 def upload_metadata(metadata, path):
     s3_client = boto3.client('s3', region_name=S3_REGION)
     s3_client.put_object(Bucket=BASE_BUCKET, Key=f"{path}/metadata", Body=json.dumps(metadata).encode('utf-8'))

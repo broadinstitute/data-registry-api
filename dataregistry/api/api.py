@@ -1,4 +1,3 @@
-import gzip
 import io
 import json
 import logging
@@ -22,7 +21,7 @@ from starlette.responses import StreamingResponse, Response
 from streaming_form_data import StreamingFormDataParser
 from streaming_form_data.targets import S3Target
 
-from dataregistry.api import query, s3, file_utils, ecs, bioidx
+from dataregistry.api import query, s3, file_utils, ecs, bioidx, batch
 from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api.google_oauth import get_google_user
 from dataregistry.api.jwt import get_encoded_jwt_data, get_decoded_jwt_data
@@ -271,7 +270,7 @@ async def validate(body: dict = Body(...)):
 
 
 @router.post("/upload-hermes")
-async def upload_csv(request: Request, user: User = Depends(get_current_user)):
+async def upload_csv(request: Request, background_tasks: BackgroundTasks, user: User = Depends(get_current_user)):
     filename = request.headers.get('Filename')
     dataset = request.headers.get('Dataset')
     metadata_str = request.headers.get('Metadata')
@@ -284,8 +283,14 @@ async def upload_csv(request: Request, user: User = Depends(get_current_user)):
         file_size += len(chunk)
         parser.data_received(chunk)
     s3.upload_metadata(metadata, s3_path)
-    query.save_file_upload_info(engine, dataset, metadata, s3_path, filename, file_size, user.name)
+    file_guid = query.save_file_upload_info(engine, dataset, metadata, s3_path, filename, file_size, user.name)
+    background_tasks.add_task(batch.submit_and_await_job, engine, s3.get_full_s3_path(s3_path, filename), file_guid)
     return {"file_size": file_size, "s3_path": s3.get_file_path(s3_path, filename)}
+
+
+@router.get("/upload-hermes/{file_id}")
+async def fetch_file_uploads(file_id: UUID):
+    return query.fetch_file_upload(engine, str(file_id).replace('-', ''))
 
 
 @router.get("/upload-hermes")

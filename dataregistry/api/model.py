@@ -194,10 +194,12 @@ class BioIndex(BaseModel):
 
 
 class FileUpload(BaseModel):
-    id: int
+    id: UUID
     dataset_name: str
     file_name: str
     file_size: int
     uploaded_at: datetime
     uploaded_by: str
     phenotype: str
+    qc_status: str
+    qc_log: Union[str, None]

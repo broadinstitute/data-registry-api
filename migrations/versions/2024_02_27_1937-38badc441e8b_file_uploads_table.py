@@ -20,7 +20,7 @@ def upgrade() -> None:
     conn = op.get_bind()
     query = """
         CREATE TABLE `file_uploads` (
-        `id` int NOT NULL AUTO_INCREMENT,
+        `id` binary(32) NOT NULL,
         `dataset` varchar(100) NOT NULL,
         `file_name` varchar(100) NOT NULL,
         `file_size` int NOT NULL,
@@ -28,6 +28,8 @@ def upgrade() -> None:
         `uploaded_by` varchar(100) NOT NULL,
         `metadata` json not null,
         `s3_path` varchar(200) NOT NULL,
+        `qc_status` varchar(100) NOT NULL,
+        `qc_log` text NULL,
         PRIMARY KEY (`id`)
         )
         """
