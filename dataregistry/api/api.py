@@ -213,7 +213,7 @@ async def google_login(response: Response, body: dict = Body(...)):
         raise fastapi.HTTPException(status_code=401, detail='Username is not in our system')
     else:
         log_user_in(response, user)
-        return {'status': 'success'}
+        return {'status': 'success', user: user}
 
 
 @router.post("/change-password", response_class=fastapi.responses.ORJSONResponse)
@@ -556,7 +556,7 @@ def login(response: Response, creds: UserCredentials):
     user = query.get_user(engine, creds)
     if user:
         log_user_in(response, user)
-        return {'status': 'success'}
+        return {'status': 'success', user: user}
     else:
         raise fastapi.HTTPException(status_code=401, detail='Invalid username or password')
 
