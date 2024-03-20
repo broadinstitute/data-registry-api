@@ -14,17 +14,17 @@ from dataregistry.id_shortener import shorten_uuid
 
 def get_all_datasets(engine) -> list:
     with engine.connect() as conn:
-        results = conn.execute(text("""select id, name, data_source_type, data_type, genome_build, ancestry, sex, 
-        global_sample_size, status, data_submitter, data_submitter_email, data_contributor, data_contributor_email, 
+        results = conn.execute(text("""select id, name, data_source_type, data_type, genome_build, ancestry, sex,
+        global_sample_size, status, data_submitter, data_submitter_email, data_contributor, data_contributor_email,
         study_id, description, pub_id, publication, created_at, publicly_available from datasets"""))
     return [SavedDataset(**row._asdict()) for row in results]
 
 
 def get_all_datasets_for_user(engine, user: User) -> list:
     with engine.connect() as conn:
-        results = conn.execute(text("""select id, name, data_source_type, data_type, genome_build, ancestry, sex, 
-        global_sample_size, status, data_submitter, data_submitter_email, data_contributor, data_contributor_email, 
-        study_id, description, pub_id, publication, created_at, publicly_available 
+        results = conn.execute(text("""select id, name, data_source_type, data_type, genome_build, ancestry, sex,
+        global_sample_size, status, data_submitter, data_submitter_email, data_contributor, data_contributor_email,
+        study_id, description, pub_id, publication, created_at, publicly_available
         from datasets where user_id = :user_id"""), {'user_id': user.id})
     return [SavedDataset(**row._asdict()) for row in results]
 
@@ -71,8 +71,8 @@ def insert_study(engine, data: Study):
 def get_studies(engine):
     with engine.connect() as conn:
         results = conn.execute(text("""
-                SELECT id, name, institution, created_at 
-                FROM studies 
+                SELECT id, name, institution, created_at
+                FROM studies
             """)
                                )
     return [SavedStudy(**row._asdict()) for row in results]
@@ -85,11 +85,11 @@ def insert_dataset(engine, data: DataSet, user_id: int):
         sql_params.update({'id': dataset_id, 'user_id': user_id})
         conn.execute(text("""
             INSERT INTO datasets (id, name, data_source_type, data_type, genome_build,
-            ancestry, data_contributor, data_contributor_email, data_submitter, data_submitter_email,  
-            sex, global_sample_size, status, description, pub_id, publication, study_id, created_at, 
-            publicly_available, user_id) 
-            VALUES(:id, :name, :data_source_type, :data_type, :genome_build, :ancestry, :data_contributor, 
-            :data_contributor_email, :data_submitter, :data_submitter_email, :sex, :global_sample_size, :status, 
+            ancestry, data_contributor, data_contributor_email, data_submitter, data_submitter_email,
+            sex, global_sample_size, status, description, pub_id, publication, study_id, created_at,
+            publicly_available, user_id)
+            VALUES(:id, :name, :data_source_type, :data_type, :genome_build, :ancestry, :data_contributor,
+            :data_contributor_email, :data_submitter, :data_submitter_email, :sex, :global_sample_size, :status,
             :description, :pub_id, :publication, :study_id, NOW(), :publicly_available, :user_id)
         """), sql_params)
         conn.commit()
@@ -101,11 +101,11 @@ def update_dataset(engine, data: SavedDataset):
         sql_params = data.dict()
         sql_params.update({'id': str(data.id).replace('-', '')})
         conn.execute(text("""
-            UPDATE datasets SET name = :name, data_source_type = :data_source_type, data_type = :data_type, 
+            UPDATE datasets SET name = :name, data_source_type = :data_source_type, data_type = :data_type,
             genome_build = :genome_build, ancestry = :ancestry, data_contributor = :data_contributor,
-            data_contributor_email = :data_contributor_email, data_submitter = :data_submitter, 
-            data_submitter_email = :data_submitter_email, sex = :sex, global_sample_size = :global_sample_size, 
-            status = :status, description = :description, pub_id = :pub_id, publication = :publication, 
+            data_contributor_email = :data_contributor_email, data_submitter = :data_submitter,
+            data_submitter_email = :data_submitter_email, sex = :sex, global_sample_size = :global_sample_size,
+            status = :status, description = :description, pub_id = :pub_id, publication = :publication,
             study_id = :study_id, publicly_available = :publicly_available where id = :id
         """), sql_params)
         conn.commit()
@@ -120,9 +120,9 @@ def insert_phenotype_data_set(engine, dataset_id: str, phenotype: str, s3_path: 
                       'controls': controls, 'file_size': file_size
                       }
         conn.execute(text("""
-            INSERT INTO dataset_phenotypes (id, dataset_id, phenotype, s3_path, dichotomous, sample_size, cases, 
-            created_at, file_name, controls, file_size) 
-            VALUES(:id, :dataset_id, :phenotype, :s3_path, :dichotomous, :sample_size, :cases, NOW(), :file_name, 
+            INSERT INTO dataset_phenotypes (id, dataset_id, phenotype, s3_path, dichotomous, sample_size, cases,
+            created_at, file_name, controls, file_size)
+            VALUES(:id, :dataset_id, :phenotype, :s3_path, :dichotomous, :sample_size, :cases, NOW(), :file_name,
             :controls, :file_size)"""), sql_params)
         save_shortened_file_id(conn, pd_id, 'd')
         conn.commit()
@@ -135,7 +135,7 @@ def insert_credible_set(engine, phenotype_dataset_id: str, s3_path: str, name: s
         sql_params = {'id': credible_set_id, 'phenotype_data_set_id': phenotype_dataset_id, 's3_path': s3_path,
                       'name': name, 'file_name': file_name, 'file_size': file_size}
         conn.execute(text("""
-            INSERT INTO credible_sets (id, phenotype_data_set_id, s3_path, name, file_name, file_size, created_at) 
+            INSERT INTO credible_sets (id, phenotype_data_set_id, s3_path, name, file_name, file_size, created_at)
             VALUES(:id, :phenotype_data_set_id, :s3_path, :name, :file_name, :file_size, NOW())"""), sql_params)
         save_shortened_file_id(conn, credible_set_id, 'cs')
         conn.commit()
@@ -145,7 +145,7 @@ def insert_credible_set(engine, phenotype_dataset_id: str, s3_path: str, name: s
 def get_study_for_dataset(engine, study_id: str) -> SavedStudy:
     with engine.connect() as conn:
         result = conn.execute(text("""
-                SELECT id, name, institution, created_at 
+                SELECT id, name, institution, created_at
                 FROM studies where id = :id
             """), {'id': study_id}).first()
         if result is None:
@@ -156,8 +156,8 @@ def get_study_for_dataset(engine, study_id: str) -> SavedStudy:
 
 def get_phenotypes_for_dataset(engine, dataset_id: uuid.UUID) -> list:
     with engine.connect() as conn:
-        results = conn.execute(text("""SELECT ds.id, ds.dataset_id, ds.phenotype, ds.dichotomous, ds.sample_size, ds.cases, 
-        ds.controls, ds.created_at, ds.file_name, ds.s3_path, ds.file_size, df.short_id  
+        results = conn.execute(text("""SELECT ds.id, ds.dataset_id, ds.phenotype, ds.dichotomous, ds.sample_size, ds.cases,
+        ds.controls, ds.created_at, ds.file_name, ds.s3_path, ds.file_size, df.short_id
         FROM dataset_phenotypes ds join data_file_ids df on df.id = ds.id where dataset_id = :id
             """), {'id': str(dataset_id).replace('-', '')})
         if results is None:
@@ -170,7 +170,7 @@ def delete_dataset(engine, data_set_id):
     with engine.connect() as conn:
         no_dash_id = str(data_set_id).replace('-', '')
         conn.execute(text("""
-            DELETE FROM credible_sets where phenotype_data_set_id in 
+            DELETE FROM credible_sets where phenotype_data_set_id in
             ( select id from dataset_phenotypes where dataset_id = :id)
         """), {'id': no_dash_id})
         conn.execute(text("""
@@ -196,8 +196,8 @@ def delete_phenotype(engine, phenotype_id):
 
 def get_credible_set_file(engine, credible_set_id: str) -> str:
     with engine.connect() as conn:
-        result = conn.execute(text("""SELECT cs.s3_path FROM credible_sets cs 
-        join dataset_phenotypes p on cs.phenotype_data_set_id = p.id 
+        result = conn.execute(text("""SELECT cs.s3_path FROM credible_sets cs
+        join dataset_phenotypes p on cs.phenotype_data_set_id = p.id
         join datasets d on p.dataset_id = d.id
         where cs.id = :id and d.publicly_available = true
             """), {'id': credible_set_id}).first()
@@ -209,7 +209,7 @@ def get_credible_set_file(engine, credible_set_id: str) -> str:
 
 def get_phenotype_file(engine, phenotype_id: str) -> str:
     with engine.connect() as conn:
-        result = conn.execute(text("""SELECT p.s3_path FROM dataset_phenotypes p 
+        result = conn.execute(text("""SELECT p.s3_path FROM dataset_phenotypes p
         join datasets d on p.dataset_id = d.id where p.id = :id and d.publicly_available = true
             """), {'id': phenotype_id}).first()
         if result is None:
@@ -233,8 +233,8 @@ def get_credible_sets_for_dataset(engine, phenotype_ids: list) -> list:
         return []
     with engine.connect() as conn:
         params = {'ids': tuple([str(p_id).replace('-', '') for p_id in phenotype_ids])}
-        results = conn.execute(text("""SELECT cs.id, cs.phenotype_data_set_id, cs.name, cs.s3_path, cs.file_name, 
-        cs.created_at, cs.file_size, p.phenotype, cfi.short_id FROM credible_sets cs join dataset_phenotypes p 
+        results = conn.execute(text("""SELECT cs.id, cs.phenotype_data_set_id, cs.name, cs.s3_path, cs.file_name,
+        cs.created_at, cs.file_size, p.phenotype, cfi.short_id FROM credible_sets cs join dataset_phenotypes p
         on cs.phenotype_data_set_id = p.id join cs_file_ids cfi on cfi.id = cs.id where phenotype_data_set_id in :ids
             """), params)
         if results is None:
@@ -247,12 +247,12 @@ def save_shortened_file_id(conn, file_id: str, file_type: str):
     short_id = shorten_uuid(file_id)
     if file_type == 'd':
         conn.execute(text("""
-            INSERT INTO data_file_ids (id, short_id) 
+            INSERT INTO data_file_ids (id, short_id)
             VALUES (:full, :short)
         """), {'full': file_id, 'short': short_id})
     elif file_type == 'cs':
         conn.execute(text("""
-            INSERT INTO cs_file_ids (id, short_id) 
+            INSERT INTO cs_file_ids (id, short_id)
             VALUES (:full, :short)
         """), {'full': file_id, 'short': short_id})
     return short_id
@@ -278,7 +278,7 @@ def add_bioindex_tracking(engine, request: CsvBioIndexRequest):
     with engine.connect() as conn:
         sql_params = {'name': str_id, 'status': request.status, 'column': request.column,
                       'already_sorted': request.already_sorted, 's3_path': request.s3_path}
-        conn.execute(text("""INSERT INTO bidx_tracking (name, status, `column`, already_sorted, s3_path, created_at) 
+        conn.execute(text("""INSERT INTO bidx_tracking (name, status, `column`, already_sorted, s3_path, created_at)
             VALUES(:name, :status, :column, :already_sorted, :s3_path, NOW())"""), sql_params)
         conn.commit()
         return idx_id
@@ -287,7 +287,7 @@ def add_bioindex_tracking(engine, request: CsvBioIndexRequest):
 def get_bioindex_tracking(engine, req_id) -> SavedCsvBioIndexRequest:
     with engine.connect() as conn:
         params = {'name': str(req_id).replace('-', '')}
-        result = conn.execute(text("""SELECT name, status, `column`, already_sorted, s3_path, created_at, ip_address 
+        result = conn.execute(text("""SELECT name, status, `column`, already_sorted, s3_path, created_at, ip_address
         from bidx_tracking where name = :name"""), params).first()
     if result is None:
         raise ValueError(f"No records for id {req_id}")
@@ -311,7 +311,7 @@ def update_bioindex_ip(engine, req_id, ip_address):
 
 def get_user(engine, creds) -> Optional[User]:
     with engine.connect() as conn:
-        params = {'user_name': creds.name}
+        params = {'user_name': creds.user_name}
         if creds.password is not None:
             return get_internal_user_info(conn, creds, params)
         else:
@@ -329,7 +329,7 @@ def get_internal_user_info(conn, creds, params) -> Optional[User]:
 
 
 def get_user_info(conn, params) -> Optional[User]:
-    result = conn.execute(text("SELECT u.id, u.user_name, r.role, p.permission, "
+    result = conn.execute(text("SELECT u.id, u.user_name, u.first_name, u.last_name, u.email, u.avatar, u.is_active, r.role, p.permission, "
                                "(oauth_provider IS NULL) AS is_internal FROM users u "
                                "LEFT JOIN user_roles ur on ur.user_id = u.id "
                                "LEFT JOIN roles r on ur.role_id = r.id "
@@ -351,7 +351,13 @@ def process_user_roles_permissions(result):
         if not user_dict:
             user_dict = {
                 'id': row['id'],
-                'name': row['user_name'],
+                'user_name': row['user_name'],
+                'first_name': row['first_name'],
+                'last_name': row['last_name'],
+                'email': row['email'],
+                'avatar': row['avatar'],
+                'is_active': row['is_active'],
+                'last_login': row['last_login'],
                 'is_internal': row['is_internal'],
                 'roles': [],
                 'permissions': []
@@ -369,7 +375,7 @@ def process_user_roles_permissions(result):
 def log_user_in(engine, user):
     with engine.connect() as conn:
         conn.execute(text("UPDATE users SET last_login = NOW() where user_name = :user_name"),
-                     {'user_name': user.name})
+                     {'user_name': user.user_name})
         conn.commit()
 
 
@@ -377,7 +383,7 @@ def update_password(engine, new_password: str, user: User):
     with engine.connect() as conn:
         conn.execute(text("UPDATE users SET password = :password WHERE user_name = :user_name"),
                      {'password': bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()),
-                      'user_name': user.name})
+                      'user_name': user.user_name})
         conn.commit()
 
 
@@ -390,7 +396,7 @@ def get_data_set_owner(engine, ds_id):
 
 def save_file_upload_info(engine, dataset, metadata, s3_path, filename, file_size, uploader):
     with engine.connect() as conn:
-        conn.execute(text("""INSERT INTO file_uploads(dataset, file_name, file_size, uploaded_at, uploaded_by, 
+        conn.execute(text("""INSERT INTO file_uploads(dataset, file_name, file_size, uploaded_at, uploaded_by,
         metadata, s3_path) VALUES(:dataset, :file_name, :file_size, NOW(), :uploaded_by, :metadata, :s3_path)"""),
                      {'dataset': dataset, 'file_name': filename, 'file_size': file_size, 'uploaded_by': uploader,
                       'metadata': json.dumps(metadata), 's3_path': s3_path})
