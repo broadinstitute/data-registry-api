@@ -329,7 +329,7 @@ def get_internal_user_info(conn, creds, params) -> Optional[User]:
 
 
 def get_user_info(conn, params) -> Optional[User]:
-    result = conn.execute(text("SELECT u.id, u.user_name, u.first_name, u.last_name, u.email, u.avatar, u.is_active, r.role, p.permission, "
+    result = conn.execute(text("SELECT u.id, u.user_name, u.first_name, u.last_name, u.email, u.avatar, u.is_active, u.last_login, r.role, p.permission, "
                                "(oauth_provider IS NULL) AS is_internal FROM users u "
                                "LEFT JOIN user_roles ur on ur.user_id = u.id "
                                "LEFT JOIN roles r on ur.role_id = r.id "
