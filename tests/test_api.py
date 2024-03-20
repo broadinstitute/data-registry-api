@@ -11,7 +11,7 @@ from dataregistry.api.jwt import get_encoded_jwt_data
 
 AUTHORIZATION = "Authorization"
 
-auth_token = f"Bearer {get_encoded_jwt_data(User(name='test', roles=['admin'], id=1))}"
+auth_token = f"Bearer {get_encoded_jwt_data(User(user_name='test', roles=['admin'], id=1))}"
 
 dataset_api_path = '/api/datasets'
 study_api_path = '/api/studies'
