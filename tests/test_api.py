@@ -185,3 +185,13 @@ def test_invalid_record_post(api_client: TestClient):
     new_record['ancestry'] = 'bad-ancestry'
     response = api_client.post(dataset_api_path, headers={AUTHORIZATION: auth_token}, json=new_record)
     assert response.status_code == HTTP_422_UNPROCESSABLE_ENTITY
+
+
+def test_delete_dataset(api_client: TestClient):
+    ds_with_file = add_ds_with_file(api_client)['dataset']
+    ds_id = ds_with_file['id']
+    del_response = api_client.delete(f"{dataset_api_path}/{ds_id}", headers={AUTHORIZATION: auth_token})
+    assert del_response.status_code == HTTP_200_OK
+    saved_dataset_response = api_client.get(f"{dataset_api_path}/{ds_id}", headers={AUTHORIZATION: auth_token})
+    assert saved_dataset_response.status_code == HTTP_404_NOT_FOUND
+
