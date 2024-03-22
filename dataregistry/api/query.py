@@ -302,13 +302,6 @@ def update_bioindex_tracking(engine, req_id, new_status):
         conn.commit()
 
 
-def update_bioindex_ip(engine, req_id, ip_address):
-    with engine.connect() as conn:
-        params = {'name': str(req_id).replace('-', ''), 'ip_address': ip_address}
-        conn.execute(text("""UPDATE bidx_tracking SET ip_address = :ip_address where name = :name"""), params)
-        conn.commit()
-
-
 def get_user(engine, creds) -> Optional[User]:
     with engine.connect() as conn:
         params = {'user_name': creds.name}
@@ -399,6 +392,7 @@ def save_file_upload_info(engine, dataset, metadata, s3_path, filename, file_siz
 
 def fetch_file_uploads(engine):
     with engine.connect() as conn:
-        results = conn.execute(text("select id, dataset as dataset_name, file_name, file_size, uploaded_at, uploaded_by, "
-                                    "metadata->>'$.phenotype' as phenotype from file_uploads"))
+        results = conn.execute(
+            text("select id, dataset as dataset_name, file_name, file_size, uploaded_at, uploaded_by, "
+                 "metadata->>'$.phenotype' as phenotype from file_uploads"))
         return [FileUpload(**row._asdict()) for row in results]
