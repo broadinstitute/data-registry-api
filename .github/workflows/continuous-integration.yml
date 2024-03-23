@@ -39,13 +39,19 @@ jobs:
         run: | 
           pip list
 
-      - name: Test with pytest
+      - name: Test with pytest with coverage
         run: |
-          pytest
+          coverage run -m pytest
 
       - name: Stop MySQL
         run: |
           sh docker_db/docker_db.sh stop
+
+      - name: Coveralls
+        uses: coverallsapp/github-action@master
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
 
   deploy-qa:
     needs: [ test ]
