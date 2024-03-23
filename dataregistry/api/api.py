@@ -200,12 +200,14 @@ def get_elocation_id(article_meta):
 @router.post("/google-login", response_class=fastapi.responses.ORJSONResponse)
 async def google_login(response: Response, body: dict = Body(...)):
     user_info = get_google_user(body.get('code'))
-    user = query.get_user(engine, UserCredentials(name=user_info.get('email'), password=None))
+    #print out user_info to see what it looks like
+    print(user_info)
+    user = query.get_user(engine, UserCredentials(user_name=user_info.get('email'), password=None))
     if not user:
         raise fastapi.HTTPException(status_code=401, detail='Username is not in our system')
     else:
         log_user_in(response, user)
-        return {'status': 'success'}
+        return {'status': 'success', 'user': user}
 
 
 @router.post("/change-password", response_class=fastapi.responses.ORJSONResponse)
@@ -276,7 +278,7 @@ async def upload_csv(request: Request, user: User = Depends(get_current_user)):
         file_size += len(chunk)
         parser.data_received(chunk)
     s3.upload_metadata(metadata, s3_path)
-    query.save_file_upload_info(engine, dataset, metadata, s3_path, filename, file_size, user.name)
+    query.save_file_upload_info(engine, dataset, metadata, s3_path, filename, file_size, user.user_name)
     return {"file_size": file_size, "s3_path": s3.get_file_path(s3_path, filename)}
 
 
@@ -529,7 +531,7 @@ def login(response: Response, creds: UserCredentials):
     user = query.get_user(engine, creds)
     if user:
         log_user_in(response, user)
-        return {'status': 'success'}
+        return {'status': 'success', 'user': user}
     else:
         raise fastapi.HTTPException(status_code=401, detail='Invalid username or password')
 
