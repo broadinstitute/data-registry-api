@@ -41,17 +41,26 @@ jobs:
 
       - name: Test with pytest with coverage
         run: |
-          pytest --cov=. --cov-report=lcov
+          pytest --cov=. --cov-report=json
 
       - name: Stop MySQL
         run: |
           sh docker_db/docker_db.sh stop
 
-      - name: Coveralls
-        uses: coverallsapp/github-action@master
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          path-to-lcov: ./coverage.lcov
+      - name: Update README with coverage badge
+        run: python .github/scripts/update_coverage_badge.py
+
+      - name: Commit and push if changed
+        run: |
+          git config --global user.email "action@github.com"
+          git config --global user.name "GitHub Action"
+          git diff
+          if git diff --exit-code --quiet; then
+            echo "No changes in coverage"
+          else
+            git add README.md
+            git commit -m "Update coverage badge"
+            git push
 
 
   deploy-qa:
