@@ -187,6 +187,7 @@ def test_invalid_record_post(api_client: TestClient):
     assert response.status_code == HTTP_422_UNPROCESSABLE_ENTITY
 
 
+@mock_s3
 def test_delete_dataset(api_client: TestClient):
     ds_with_file = add_ds_with_file(api_client)['dataset']
     ds_id = ds_with_file['id']
@@ -196,6 +197,7 @@ def test_delete_dataset(api_client: TestClient):
     assert saved_dataset_response.status_code == HTTP_404_NOT_FOUND
 
 
+@mock_s3
 def test_delete_dataset_without_auth(api_client: TestClient):
     ds_with_file = add_ds_with_file(api_client)['dataset']
     ds_id = ds_with_file['id']
@@ -203,6 +205,7 @@ def test_delete_dataset_without_auth(api_client: TestClient):
     assert response.status_code == HTTP_401_UNAUTHORIZED
 
 
+@mock_s3
 def test_delete_without_access(api_client: TestClient):
     ds_with_file = add_ds_with_file(api_client)['dataset']
     ds_id = ds_with_file['id']
