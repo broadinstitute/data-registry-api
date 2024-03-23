@@ -41,7 +41,7 @@ jobs:
 
       - name: Test with pytest with coverage
         run: |
-          coverage run -m pytest
+          pytest --cov=.
 
       - name: Stop MySQL
         run: |
