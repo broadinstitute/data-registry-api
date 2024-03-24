@@ -1,3 +1,4 @@
+import json
 import re
 
 import boto3
@@ -211,3 +212,23 @@ def test_delete_without_access(api_client: TestClient):
     ds_id = ds_with_file['id']
     response = api_client.delete(f"{dataset_api_path}/{ds_id}", headers={AUTHORIZATION: view_only_token})
     assert response.status_code == HTTP_401_UNAUTHORIZED
+
+
+def test_preview_delimited_file(api_client: TestClient):
+    with open('tests/test_csv_upload.csv', mode='rb') as f:
+        res = api_client.post('api/preview-delimited-file', headers={AUTHORIZATION: auth_token},
+                              files={'file': f})
+        assert res.json() == {'columns': ['p-value', 'z-score', 'maf', 'chromosome', 'position', 'reference']}
+
+
+@mock_s3
+def test_upload_hermes_csv(api_client: TestClient):
+    set_up_moto_bucket()
+    with open('tests/test_csv_upload.csv', mode='rb') as f:
+        res = api_client.post('api/upload-hermes', headers={AUTHORIZATION: auth_token, 'Filename': 'foo.csv',
+                                                            'Dataset': 'unit-test-dataset',
+                                                            'Metadata': json.dumps({'b': 1})},
+                              files={'file': f})
+    result_dict = res.json()
+    assert "file_size" in result_dict
+    assert "s3_path" in result_dict

@@ -200,7 +200,7 @@ def get_elocation_id(article_meta):
 @router.post("/google-login", response_class=fastapi.responses.ORJSONResponse)
 async def google_login(response: Response, body: dict = Body(...)):
     user_info = get_google_user(body.get('code'))
-    #print out user_info to see what it looks like
+    # print out user_info to see what it looks like
     print(user_info)
     user = query.get_user(engine, UserCredentials(user_name=user_info.get('email'), password=None))
     if not user:
@@ -265,7 +265,7 @@ async def validate(body: dict = Body(...)):
 
 
 @router.post("/upload-hermes")
-async def upload_csv(request: Request, user: User = Depends(get_current_user)):
+async def upload_hermes_csv(request: Request, user: User = Depends(get_current_user)):
     filename = request.headers.get('Filename')
     dataset = request.headers.get('Dataset')
     metadata_str = request.headers.get('Metadata')
@@ -313,21 +313,6 @@ async def upload_file_for_phenotype(data_set_id: str, dichotomous: bool, request
         logger.exception("There was a problem uploading file", e)
         response.status_code = 400
         return {"message": f"There was an error uploading the file {filename}"}
-
-
-@router.post("/savebioindexfile/{data_set_id}/{phenotype}/{dichotomous}/{sample_size}")
-async def save_file_for_phenotype(data_set_id: str, phenotype: str, dichotomous: bool, sample_size: int,
-                                  response: fastapi.Response, file_size: int, filename: str, file_path: str,
-                                  cases: int = None, controls: int = None):
-    try:
-        pd_id = query.insert_phenotype_data_set(engine, data_set_id, phenotype,
-                                                f"s3://dig-analysis-data/{file_path}/{filename}", dichotomous,
-                                                sample_size, cases, controls, filename, file_size)
-        return {"message": f"Successfully saved {filename}", "phenotype_data_set_id": pd_id}
-    except Exception as e:
-        logger.exception("There was a saving a bioindex file", e)
-        response.status_code = 400
-        return {"message": f"There was a saving a bioindex file {filename}"}
 
 
 @router.get("/filelist/{data_set_id}")

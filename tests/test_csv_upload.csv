@@ -1,0 +1,4 @@
+p-value,z-score,maf,chromosome,position,reference
+.68,99,blah,1,5230823,AC
+.63,99,blah,1,5230923,AC
+.623,99,blah,1,5230913,AC
