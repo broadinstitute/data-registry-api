@@ -130,14 +130,6 @@ async def get_bioindex(idx_id: UUID):
     return {"message": f"No bioindex found for dataset {idx_id}"}
 
 
-@router.get('/phenotypefiles', response_class=fastapi.responses.ORJSONResponse)
-async def api_phenotype_files():
-    try:
-        return query.get_all_phenotypes(engine)
-    except ValueError as e:
-        raise fastapi.HTTPException(status_code=400, detail=str(e))
-
-
 def find_dupe_cols(header, is_csv, panda_header):
     if is_csv:
         header_list = header.split(',')
@@ -219,8 +211,8 @@ async def google_login(response: Response, body: dict = Body(...)):
 
 
 @router.post("/change-password", response_class=fastapi.responses.ORJSONResponse)
-async def change_password(postBody: dict = Body(...), user: User = Depends(get_current_user)):
-    new_password = postBody.get('password')
+async def change_password(post_body: dict = Body(...), user: User = Depends(get_current_user)):
+    new_password = post_body.get('password')
     query.update_password(engine, new_password, user)
 
 
@@ -472,25 +464,6 @@ async def delete_phenotype(phenotype_data_set_id: str, response: fastapi.Respons
         return {"message": f"There was an error deleting the phenotype {phenotype_data_set_id}"}
 
     return {"message": f"Successfully deleted phenotype {phenotype_data_set_id}"}
-
-
-async def multipart_upload_to_s3(file, file_path):
-    upload = s3.initiate_multi_part(file_path, file.filename)
-    part_number = 1
-    parts = []
-    size = 0
-    # read and put 50 mb at a time--is that too small?
-    while contents := await file.read(1024 * 1024 * 50):
-        logger.info(f"Uploading part {part_number} of {file.filename}")
-        size += len(contents)
-        upload_part_response = s3.put_bytes(file_path, file.filename, contents, upload, part_number)
-        parts.append({
-            'PartNumber': part_number,
-            'ETag': upload_part_response['ETag']
-        })
-        part_number = part_number + 1
-    s3.finalize_upload(file_path, file.filename, parts, upload)
-    return size
 
 
 @router.post('/studies', response_class=fastapi.responses.ORJSONResponse)
