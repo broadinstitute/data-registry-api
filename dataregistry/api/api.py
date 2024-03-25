@@ -31,7 +31,7 @@ from dataregistry.api.model import DataSet, Study, SavedDatasetInfo, SavedDatase
 from dataregistry.api.validators import HermesValidator
 
 HERMES_VALIDATOR = HermesValidator()
-from dataregistry.pub_ids import PubIdType, infer_id_type
+from dataregistry.pub_med import PubIdType, infer_id_type, format_authors, get_elocation_id
 
 SUPER_USER = "admin"
 VIEW_ALL_ROLES = {SUPER_USER, 'analyst'}
@@ -175,33 +175,9 @@ async def api_datasets(dataset_id: UUID, user: User = Depends(get_current_user))
         raise fastapi.HTTPException(status_code=404, detail=str(e))
 
 
-def format_authors(author_list):
-    if len(author_list) < 2:
-        return f"{author_list[0].get('LastName', '')} {author_list[0].get('Initials', '')}"
-    else:
-        result = ''
-        for author in author_list[0:2]:
-            result += f"{author.get('LastName', '')} {author.get('Initials', '')}, "
-        if len(author_list) > 2:
-            return result + 'et al.'
-        else:
-            return result[:-2]
-
-
-def get_elocation_id(article_meta):
-    eloc_dict_list = article_meta.get('ELocationID')
-    if not eloc_dict_list:
-        return None
-    if isinstance(eloc_dict_list, list):
-        eloc_dict_list = eloc_dict_list[0]
-    return f"{eloc_dict_list.get('@EIdType')}: {eloc_dict_list.get('#text')}"
-
-
 @router.post("/google-login", response_class=fastapi.responses.ORJSONResponse)
 async def google_login(response: Response, body: dict = Body(...)):
     user_info = get_google_user(body.get('code'))
-    # print out user_info to see what it looks like
-    print(user_info)
     user = query.get_user(engine, UserCredentials(user_name=user_info.get('email'), password=None))
     if not user:
         raise fastapi.HTTPException(status_code=401, detail='Username is not in our system')
