@@ -300,17 +300,6 @@ async def get_file_list(data_set_id: str):
     return get_possible_files(ds_uuid)
 
 
-@router.get("/filecontents/{ft}/{file_id}", name="stream_file")
-async def get_text_file(file_id: str, ft: str):
-    file_name, obj = await get_file_obj(file_id, ft)
-
-    # Read the text file content
-    file_content = obj['Body'].read().decode('utf-8')
-
-    # Return a JSON response with file name and content
-    return {'file': file_name, 'file-contents': file_content}
-
-
 async def get_file_obj(file_id, ft):
     no_dash_id = query.shortened_file_id_lookup(file_id, ft, engine)
     try:

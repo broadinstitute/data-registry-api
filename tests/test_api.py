@@ -236,6 +236,7 @@ def test_upload_hermes_csv(api_client: TestClient):
 
 @mock_s3
 def test_upload_csv(api_client: TestClient):
+    set_up_moto_bucket()
     with open('tests/test_csv_upload.csv', mode='rb') as f:
         response = api_client.post('api/upload-csv', headers={AUTHORIZATION: auth_token, "Filename": "unit-test.csv"},
                                    files={"file": f})
@@ -250,16 +251,6 @@ def test_delete_phenotype(api_client: TestClient):
     response = api_client.delete(f'api/phenotypes/{str(p_id).replace("-", "")}',
                                  headers={AUTHORIZATION: auth_token})
     assert response.status_code == HTTP_200_OK
-
-
-@mock_s3
-def test_get_text_file(api_client: TestClient):
-    new_ds_record = add_ds_with_file(api_client, public=True)
-    short_id = new_ds_record['phenotypes'][0]['short_id']
-    response = api_client.get(f'api/filecontents/d/{short_id}',
-                              headers={AUTHORIZATION: auth_token})
-    assert response.status_code == HTTP_200_OK
-    assert response.json()['file-contents'] == 'The answer is 47!\n'
 
 
 def test_api_publications(mocker, api_client: TestClient):
