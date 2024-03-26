@@ -234,6 +234,7 @@ def test_upload_hermes_csv(api_client: TestClient):
     assert "s3_path" in result_dict
 
 
+@mock_s3
 def test_upload_csv(api_client: TestClient):
     with open('tests/test_csv_upload.csv', mode='rb') as f:
         response = api_client.post('api/upload-csv', headers={AUTHORIZATION: auth_token, "Filename": "unit-test.csv"},
