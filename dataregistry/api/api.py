@@ -30,7 +30,7 @@ from dataregistry.api.model import DataSet, Study, SavedDatasetInfo, SavedDatase
 from dataregistry.api.validators import HermesValidator
 
 HERMES_VALIDATOR = HermesValidator()
-from dataregistry.pub_ids import PubIdType, infer_id_type
+from dataregistry.pub_med import PubIdType, infer_id_type, format_authors, get_elocation_id
 
 SUPER_USER = "admin"
 VIEW_ALL_ROLES = {SUPER_USER, 'analyst'}
@@ -129,14 +129,6 @@ async def get_bioindex(idx_id: UUID):
     return {"message": f"No bioindex found for dataset {idx_id}"}
 
 
-@router.get('/phenotypefiles', response_class=fastapi.responses.ORJSONResponse)
-async def api_phenotype_files():
-    try:
-        return query.get_all_phenotypes(engine)
-    except ValueError as e:
-        raise fastapi.HTTPException(status_code=400, detail=str(e))
-
-
 def find_dupe_cols(header, is_csv, panda_header):
     if is_csv:
         header_list = header.split(',')
@@ -182,42 +174,20 @@ async def api_datasets(dataset_id: UUID, user: User = Depends(get_current_user))
         raise fastapi.HTTPException(status_code=404, detail=str(e))
 
 
-def format_authors(author_list):
-    if len(author_list) < 2:
-        return f"{author_list[0].get('LastName', '')} {author_list[0].get('Initials', '')}"
-    else:
-        result = ''
-        for author in author_list[0:2]:
-            result += f"{author.get('LastName', '')} {author.get('Initials', '')}, "
-        if len(author_list) > 2:
-            return result + 'et al.'
-        else:
-            return result[:-2]
-
-
-def get_elocation_id(article_meta):
-    eloc_dict_list = article_meta.get('ELocationID')
-    if not eloc_dict_list:
-        return None
-    if isinstance(eloc_dict_list, list):
-        eloc_dict_list = eloc_dict_list[0]
-    return f"{eloc_dict_list.get('@EIdType')}: {eloc_dict_list.get('#text')}"
-
-
 @router.post("/google-login", response_class=fastapi.responses.ORJSONResponse)
 async def google_login(response: Response, body: dict = Body(...)):
     user_info = get_google_user(body.get('code'))
-    user = query.get_user(engine, UserCredentials(name=user_info.get('email'), password=None))
+    user = query.get_user(engine, UserCredentials(user_name=user_info.get('email'), password=None))
     if not user:
         raise fastapi.HTTPException(status_code=401, detail='Username is not in our system')
     else:
         log_user_in(response, user)
-        return {'status': 'success'}
+        return {'status': 'success', 'user': user}
 
 
 @router.post("/change-password", response_class=fastapi.responses.ORJSONResponse)
-async def change_password(postBody: dict = Body(...), user: User = Depends(get_current_user)):
-    new_password = postBody.get('password')
+async def change_password(post_body: dict = Body(...), user: User = Depends(get_current_user)):
+    new_password = post_body.get('password')
     query.update_password(engine, new_password, user)
 
 
@@ -270,7 +240,7 @@ async def validate(body: dict = Body(...)):
 
 
 @router.post("/upload-hermes")
-async def upload_csv(request: Request, background_tasks: BackgroundTasks, user: User = Depends(get_current_user)):
+async def upload_hermes_csv(request: Request, background_tasks: BackgroundTasks, user: User = Depends(get_current_user)):
     filename = request.headers.get('Filename')
     dataset = request.headers.get('Dataset')
     metadata_str = request.headers.get('Metadata')
@@ -283,7 +253,7 @@ async def upload_csv(request: Request, background_tasks: BackgroundTasks, user: 
         file_size += len(chunk)
         parser.data_received(chunk)
     s3.upload_metadata(metadata, s3_path)
-    file_guid = query.save_file_upload_info(engine, dataset, metadata, s3_path, filename, file_size, user.name)
+    file_guid = query.save_file_upload_info(engine, dataset, metadata, s3_path, filename, file_size, user.user_name)
     background_tasks.add_task(batch.submit_and_await_job, engine, s3.get_full_s3_path(s3_path, filename), file_guid)
     return {"file_size": file_size, "s3_path": s3.get_file_path(s3_path, filename)}
 
@@ -326,21 +296,6 @@ async def upload_file_for_phenotype(data_set_id: str, dichotomous: bool, request
         return {"message": f"There was an error uploading the file {filename}"}
 
 
-@router.post("/savebioindexfile/{data_set_id}/{phenotype}/{dichotomous}/{sample_size}")
-async def save_file_for_phenotype(data_set_id: str, phenotype: str, dichotomous: bool, sample_size: int,
-                                  response: fastapi.Response, file_size: int, filename: str, file_path: str,
-                                  cases: int = None, controls: int = None):
-    try:
-        pd_id = query.insert_phenotype_data_set(engine, data_set_id, phenotype,
-                                                f"s3://dig-analysis-data/{file_path}/{filename}", dichotomous,
-                                                sample_size, cases, controls, filename, file_size)
-        return {"message": f"Successfully saved {filename}", "phenotype_data_set_id": pd_id}
-    except Exception as e:
-        logger.exception("There was a saving a bioindex file", e)
-        response.status_code = 400
-        return {"message": f"There was a saving a bioindex file {filename}"}
-
-
 @router.get("/filelist/{data_set_id}")
 async def get_file_list(data_set_id: str):
     try:
@@ -348,17 +303,6 @@ async def get_file_list(data_set_id: str):
     except ValueError:
         raise fastapi.HTTPException(status_code=404, detail=f'Invalid index: {data_set_id}')
     return get_possible_files(ds_uuid)
-
-
-@router.get("/filecontents/{ft}/{file_id}", name="stream_file")
-async def get_text_file(file_id: str, ft: str):
-    file_name, obj = await get_file_obj(file_id, ft)
-
-    # Read the text file content
-    file_content = obj['Body'].read().decode('utf-8')
-
-    # Return a JSON response with file name and content
-    return {'file': file_name, 'file-contents': file_content}
 
 
 async def get_file_obj(file_id, ft):
@@ -477,25 +421,6 @@ async def delete_phenotype(phenotype_data_set_id: str, response: fastapi.Respons
     return {"message": f"Successfully deleted phenotype {phenotype_data_set_id}"}
 
 
-async def multipart_upload_to_s3(file, file_path):
-    upload = s3.initiate_multi_part(file_path, file.filename)
-    part_number = 1
-    parts = []
-    size = 0
-    # read and put 50 mb at a time--is that too small?
-    while contents := await file.read(1024 * 1024 * 50):
-        logger.info(f"Uploading part {part_number} of {file.filename}")
-        size += len(contents)
-        upload_part_response = s3.put_bytes(file_path, file.filename, contents, upload, part_number)
-        parts.append({
-            'PartNumber': part_number,
-            'ETag': upload_part_response['ETag']
-        })
-        part_number = part_number + 1
-    s3.finalize_upload(file_path, file.filename, parts, upload)
-    return size
-
-
 @router.post('/studies', response_class=fastapi.responses.ORJSONResponse)
 async def save_study(req: Study):
     study_id = query.insert_study(engine, req)
@@ -561,7 +486,7 @@ def login(response: Response, creds: UserCredentials):
     user = query.get_user(engine, creds)
     if user:
         log_user_in(response, user)
-        return {'status': 'success'}
+        return {'status': 'success', 'user': user}
     else:
         raise fastapi.HTTPException(status_code=401, detail='Invalid username or password')
 

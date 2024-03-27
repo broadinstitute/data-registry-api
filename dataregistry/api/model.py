@@ -169,12 +169,17 @@ class SavedCredibleSet(BaseModel):
 
 
 class UserCredentials(BaseModel):
-    name: str
+    user_name: str
     password: Union[str, None]
 
 
 class User(BaseModel):
-    name: str
+    user_name: str
+    first_name: Union[str, None]
+    last_name: Union[str, None]
+    email: Union[EmailStr, None]
+    avatar: Union[str, None]
+    is_active: Union[bool, None]
     roles: List[str]
     permissions: Union[List[str], None]
     is_internal: Union[bool, None]

@@ -1,4 +1,4 @@
-from dataregistry.pub_ids import infer_id_type, PubIdType
+from dataregistry.pub_med import infer_id_type, PubIdType, format_authors, get_elocation_id
 
 
 def test_infer_poi():
@@ -12,3 +12,16 @@ def test_infer_pmid():
 
 def test_infer_pmcid():
     assert infer_id_type("PMC1004567") == PubIdType.PMCID
+
+
+def test_single_author_list():
+    assert format_authors([{'LastName': 'Hite', 'Initials': 'D.M.'}]) == "Hite D.M."
+
+
+def test_two_author_list():
+    assert (format_authors([{'LastName': 'Newton', 'Initials': 'I.R.'}, {'LastName': 'Descartes', 'Initials': 'R.T.'}])
+            == "Newton I.R., Descartes R.T.")
+
+
+def test_get_elocation_id():
+    assert get_elocation_id({'ELocationID': [{'@EIdType': 'Type', '#text': 'Blah, blah'}]}) == "Type: Blah, blah"
