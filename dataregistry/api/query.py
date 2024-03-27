@@ -387,18 +387,37 @@ def get_data_set_owner(engine, ds_id):
         return result[0] if result else None
 
 
-def save_file_upload_info(engine, dataset, metadata, s3_path, filename, file_size, uploader):
+def save_file_upload_info(engine, dataset, metadata, s3_path, filename, file_size, uploader) -> str:
     with engine.connect() as conn:
-        conn.execute(text("""INSERT INTO file_uploads(dataset, file_name, file_size, uploaded_at, uploaded_by,
-        metadata, s3_path) VALUES(:dataset, :file_name, :file_size, NOW(), :uploaded_by, :metadata, :s3_path)"""),
-                     {'dataset': dataset, 'file_name': filename, 'file_size': file_size, 'uploaded_by': uploader,
-                      'metadata': json.dumps(metadata), 's3_path': s3_path})
+        new_guid = str(uuid.uuid4())
+        conn.execute(text("""INSERT INTO file_uploads(id, dataset, file_name, file_size, uploaded_at, uploaded_by,
+        metadata, s3_path, qc_status) VALUES(:id, :dataset, :file_name, :file_size, NOW(), :uploaded_by, :metadata,
+         :s3_path, 'SUBMITTED')"""), {'id': new_guid.replace('-', ''), 'dataset': dataset,
+                                      'file_name': filename,
+                                      'file_size': file_size, 'uploaded_by': uploader,
+                                      'metadata': json.dumps(metadata), 's3_path': s3_path})
         conn.commit()
+        return new_guid
 
 
 def fetch_file_uploads(engine):
     with engine.connect() as conn:
         results = conn.execute(
-            text("select id, dataset as dataset_name, file_name, file_size, uploaded_at, uploaded_by, "
-                 "metadata->>'$.phenotype' as phenotype from file_uploads"))
+            text("select id, dataset as dataset_name, file_name, file_size, uploaded_at, uploaded_by, qc_status, "
+                 "qc_log, metadata->>'$.phenotype' as phenotype from file_uploads"))
         return [FileUpload(**row._asdict()) for row in results]
+
+
+def update_file_upload_qc_log(engine, qc_log: str, file_upload_id: str, qc_status: str):
+    with engine.connect() as conn:
+        conn.execute(text("UPDATE file_uploads set qc_log=:qc_log, qc_status = :qc_status where id = :file_upload_id"),
+                     {'qc_log': qc_log, 'qc_status': qc_status,
+                      'file_upload_id': file_upload_id.replace('-', '')})
+        conn.commit()
+
+
+def fetch_file_upload(engine, file_id):
+    with engine.connect() as conn:
+        result = conn.execute(text("select qc_log from file_uploads where id = :file_id"),
+                              {'file_id': file_id}).fetchone()
+        return {'log': result[0]}

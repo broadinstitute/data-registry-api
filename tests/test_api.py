@@ -4,7 +4,7 @@ import re
 import boto3
 import pytest
 from fastapi.testclient import TestClient
-from moto import mock_s3
+from moto import mock_s3, mock_batch
 from starlette.status import HTTP_422_UNPROCESSABLE_ENTITY, HTTP_200_OK, HTTP_404_NOT_FOUND, HTTP_401_UNAUTHORIZED, \
     HTTP_400_BAD_REQUEST
 
@@ -226,8 +226,11 @@ def test_preview_delimited_file(api_client: TestClient):
 
 
 @mock_s3
-def test_upload_hermes_csv(api_client: TestClient):
+@mock_batch
+def test_upload_hermes_csv(mocker, api_client: TestClient):
     set_up_moto_bucket()
+    patch = mocker.patch('dataregistry.api.batch.submit_and_await_job')
+    patch.return_value = None
     with open('tests/test_csv_upload.csv', mode='rb') as f:
         res = api_client.post('api/upload-hermes', headers={AUTHORIZATION: auth_token, 'Filename': 'foo.csv',
                                                             'Dataset': 'unit-test-dataset',

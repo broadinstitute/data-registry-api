@@ -1,0 +1,119 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description:
+  Infrastructure for running Hermes QC against an uploaded file
+Resources:
+  EcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: hermes-qc-repo
+
+  BatchServiceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - batch.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSBatchServiceRole'
+
+  HermesQCComputeEnv:
+    Type: 'AWS::Batch::ComputeEnvironment'
+    Properties:
+      Type: MANAGED
+      ServiceRole: !GetAtt BatchServiceRole.Arn
+      ComputeResources:
+        Type: Fargate
+        MaxvCpus: 128
+        Subnets:
+          - subnet-041ed74e61806c6f0
+        SecurityGroupIds:
+          - sg-28485f53
+
+  HermesQCJobQueue:
+    Type: 'AWS::Batch::JobQueue'
+    Properties:
+      JobQueueName: 'hermes-qc-job-queue'
+      ComputeEnvironmentOrder:
+        - Order: 1
+          ComputeEnvironment: !Ref HermesQCComputeEnv
+      Priority: 1
+      State: ENABLED
+
+  HermesQCJobDefinition:
+    Type: 'AWS::Batch::JobDefinition'
+    Properties:
+      Type: 'container'
+      JobDefinitionName: 'hermes-qc-job'
+      PlatformCapabilities:
+        - 'FARGATE'
+      Timeout:
+        AttemptDurationSeconds: 1200
+      ContainerProperties:
+        Image: !Sub '${AWS::AccountId}.dkr.ecr.us-east-1.amazonaws.com/hermes-qc-repo'
+        Command:
+          - 'python3'
+          - 'hermes_qc.py'
+          - '-s'
+          - 'Ref::s3-path'
+          - '-g'
+          - 'Ref::file-guid'
+        JobRoleArn: !GetAtt HermesQCJobRole.Arn
+        ExecutionRoleArn: !GetAtt HermesQCJobRole.Arn
+        ResourceRequirements:
+          - Type: 'VCPU'
+            Value: '1.0'
+          - Type: 'MEMORY'
+            Value: '8192'
+        NetworkConfiguration:
+          AssignPublicIp: 'ENABLED'
+        FargatePlatformConfiguration:
+          PlatformVersion: 'LATEST'
+
+  HermesQCJobRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: 'Allow'
+            Principal:
+              Service:
+                - 'ecs-tasks.amazonaws.com'
+            Action:
+              - 'sts:AssumeRole'
+      Path: '/'
+      Policies:
+        - PolicyName: 'S3Access'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action:
+                  - 's3:GetObject'
+                  - 's3:PutObject'
+                Resource:
+                  - 'arn:aws:s3:::dig-data-registry-qa'
+                  - 'arn:aws:s3:::dig-data-registry-qa/*'
+                  - 'arn:aws:s3:::hermes-qc/*'
+                  - 'arn:aws:s3:::hermes-qc'
+        - PolicyName: 'ECSTaskExecution'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action:
+                  - 'ecr:GetAuthorizationToken'
+                  - 'ecr:BatchCheckLayerAvailability'
+                  - 'ecr:GetDownloadUrlForLayer'
+                  - 'ecr:BatchGetImage'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: '*'
+
+

@@ -8,7 +8,7 @@ You can start a local mysql via `./docker_db/docker_db.sh start` and the run `al
 You'll likely want/need to specify the following environment variables either in your .env file (don't commit to vcs) or in your cli invocation:
 - `DATA_REGISTRY_DB_CONNECTION` - the connection string to the database, e.g. `export DATA_REGISTRY_DB_CONNECTION=mysql+pymysql://dataregistry:dataregistry@localhost:3307/dataregistry`will work if you're using the docker_db script
 - `DATA_REGISTRY_S3_BUCKET` - the s3 bucket to use for storing the files (use dig-data-registry-qa unless you need prod data)
-- `GOOGLE_OAUTH_CLIENT_ID` - this necessary if you will be testing authentication look this up [here](https://console.cloud.google.com/apis/credentials?project=kpn-data-registry).
+- `GOOGLE_OAUTH_CLIENT_ID` - this is necessary if you will be testing authentication look this up [here](https://console.cloud.google.com/apis/credentials?project=kpn-data-registry).
 - `GOOGLE_OAUTH_CLIENT_SECRET` - same as above
 - `GOOGLE_OAUTH_REDIRECT_URI` - http://local.kpndataregistry.org:3000/login/callback
 
