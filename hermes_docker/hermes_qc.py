@@ -23,17 +23,32 @@ def upload_file_to_s3(file_name, file_guid):
 def run_r_commands(file_path, file_guid):
     r_commands = """
     library('genepi.utils')
+    library(data.table)
     GWAS('{}', c('CHR','BP','OA','EA','EAF','BETA','SE','P','EUR_EAF','SNP'))
+    
     p <- qq_plot('{}', plot_corrected=TRUE)
     png("qq_plot.png", width=600, height=600, units="px")
     p
     dev.off()
-    """.format(file_path, file_path)
+    dt <- fread('{}')
+    setnames(dt, tolower(names(dt)))
+    manhattan_data <- manhattan(dt)
+    png("manhattan_plot.png", width=600, height=600, units="px")
+    manhattan_data
+    dev.off()
+    
+    eaf_plot_data <- eaf_plot(dt)
+    png("eaf_plot.png", width=600, height=600, units="px")
+    eaf_plot_data
+    dev.off()
+    """.format(file_path, file_path, file_path)
     result = subprocess.run(["R", "-e", r_commands], check=True)
     if result.returncode != 0:
         print("Error Output:", result.stderr)
         return
     upload_file_to_s3("qq_plot.png", file_guid)
+    upload_file_to_s3("manhattan_plot.png", file_guid)
+    upload_file_to_s3("eaf_plot.png", file_guid)
 
 
 @click.command()
