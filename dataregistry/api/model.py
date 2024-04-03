@@ -107,6 +107,18 @@ class BioIndexCreationStatus(str, Enum):
     FAILED = "FAILED"
 
 
+class HermesFileStatus(str, Enum):
+    SUBMITTED_TO_QC = "SUBMITTED TO QC"
+    FAILED_QC = "FAILED QC"
+    READY_FOR_REVIEW = "READY FOR REVIEW"
+    REVIEW_APPROVED = "REVIEW APPROVED"
+    REVIEW_REJECTED = "REVIEW REJECTED"
+
+
+class HermesUploadStatus(BaseModel):
+    status: HermesFileStatus
+
+
 class CsvBioIndexRequest(BaseModel):
     column: str
     status: BioIndexCreationStatus

@@ -36,11 +36,6 @@ def run_r_commands(file_path, file_guid):
     png("manhattan_plot.png", width=600, height=600, units="px")
     manhattan_data
     dev.off()
-    
-    eaf_plot_data <- eaf_plot(dt)
-    png("eaf_plot.png", width=600, height=600, units="px")
-    eaf_plot_data
-    dev.off()
     """.format(file_path, file_path, file_path)
     result = subprocess.run(["R", "-e", r_commands], check=True)
     if result.returncode != 0:
@@ -48,7 +43,6 @@ def run_r_commands(file_path, file_guid):
         return
     upload_file_to_s3("qq_plot.png", file_guid)
     upload_file_to_s3("manhattan_plot.png", file_guid)
-    upload_file_to_s3("eaf_plot.png", file_guid)
 
 
 @click.command()
