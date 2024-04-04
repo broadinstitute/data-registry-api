@@ -418,6 +418,6 @@ def update_file_upload_qc_log(engine, qc_log: str, file_upload_id: str, qc_statu
 
 def fetch_file_upload(engine, file_id):
     with engine.connect() as conn:
-        result = conn.execute(text("select qc_log from file_uploads where id = :file_id"),
+        result = conn.execute(text("select qc_log, qc_status from file_uploads where id = :file_id"),
                               {'file_id': file_id}).fetchone()
-        return {'log': result[0]}
+        return {'log': result[0].qc_log, 'status': result[0].qc_status} if result else None
