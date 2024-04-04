@@ -21,6 +21,7 @@ origins = [
     "http://localhost:3000",
     "http://local.kpndataregistry.org:3000",
     "https://kpndataregistry.org",
+    "https://local.kpndataregistry.org:8000",
     "https://kpndataregistry.org:8000",
 ]
 # enable cross-origin resource sharing
