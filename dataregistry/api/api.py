@@ -26,14 +26,15 @@ from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api.google_oauth import get_google_user
 from dataregistry.api.jwt import get_encoded_jwt_data, get_decoded_jwt_data
 from dataregistry.api.model import DataSet, Study, SavedDatasetInfo, SavedDataset, UserCredentials, User, SavedStudy, \
-    CreateBiondexRequest, CsvBioIndexRequest, BioIndexCreationStatus, SavedCsvBioIndexRequest
+    CreateBiondexRequest, CsvBioIndexRequest, BioIndexCreationStatus, SavedCsvBioIndexRequest, HermesFileStatus, \
+    HermesUploadStatus
 from dataregistry.api.validators import HermesValidator
 
 HERMES_VALIDATOR = HermesValidator()
 from dataregistry.pub_med import PubIdType, infer_id_type, format_authors, get_elocation_id
 
 SUPER_USER = "admin"
-VIEW_ALL_ROLES = {SUPER_USER, 'analyst'}
+VIEW_ALL_ROLES = {SUPER_USER, 'analyst', 'reviewer'}
 
 AUTH_COOKIE_NAME = 'dr_auth_token'
 
@@ -243,7 +244,8 @@ async def validate(body: dict = Body(...)):
 
 
 @router.post("/upload-hermes")
-async def upload_hermes_csv(request: Request, background_tasks: BackgroundTasks, user: User = Depends(get_current_user)):
+async def upload_hermes_csv(request: Request, background_tasks: BackgroundTasks,
+                            user: User = Depends(get_current_user)):
     filename = request.headers.get('Filename')
     dataset = request.headers.get('Dataset')
     metadata_str = request.headers.get('Metadata')
@@ -262,13 +264,27 @@ async def upload_hermes_csv(request: Request, background_tasks: BackgroundTasks,
 
 
 @router.get("/upload-hermes/{file_id}")
-async def fetch_file_uploads(file_id: UUID):
-    return query.fetch_file_upload(engine, str(file_id).replace('-', ''))
+async def fetch_single_file_upload(file_id: UUID, user: User = Depends(get_current_user)):
+    if VIEW_ALL_ROLES.intersection(user.roles) or query.get_file_owner(engine, file_id) == user.user_name:
+        return query.fetch_file_upload(engine, str(file_id).replace('-', ''))
+    else:
+        raise fastapi.HTTPException(status_code=401, detail='you aren\'t authorized to view this dataset')
 
 
 @router.get("/upload-hermes")
-async def fetch_file_uploads():
-    return query.fetch_file_uploads(engine)
+async def fetch_all_file_uploads(user: User = Depends(get_current_user)):
+    if VIEW_ALL_ROLES.intersection(user.roles):
+        return query.fetch_file_uploads(engine)
+    else:
+        return query.fetch_file_uploads_for_user(engine, user.user_name)
+
+
+@router.patch("/upload-hermes/{file_id}")
+async def update_single_file_upload(file_id: UUID, status: HermesUploadStatus, user: User = Depends(get_current_user)):
+    if VIEW_ALL_ROLES.intersection(user.roles) or query.get_file_owner(engine, file_id) == user.user_name:
+        query.update_file_qc_status(engine, file_id, status.status)
+    else:
+        raise fastapi.HTTPException(status_code=401, detail='you aren\'t authorized')
 
 
 @router.post("/uploadfile/{data_set_id}/{dichotomous}/{sample_size}")
