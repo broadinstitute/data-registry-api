@@ -21,7 +21,7 @@ def upgrade() -> None:
     query = """
         CREATE TABLE `groups` (
         `id` int NOT NULL AUTO_INCREMENT,
-        `group` varchar(100) NOT NULL,
+        `group_name` varchar(100) NOT NULL,
         PRIMARY KEY (`id`)
         )
         """
