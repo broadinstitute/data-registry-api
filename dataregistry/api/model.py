@@ -217,6 +217,14 @@ class FileUpload(BaseModel):
     file_size: int
     uploaded_at: datetime
     uploaded_by: str
-    phenotype: str
-    qc_status: str
+    phenotype: Union[str, None]
+    metadata: Union[dict, None]
+    qc_status: HermesFileStatus
+    s3_path: Union[str, None]
     qc_log: Union[str, None]
+
+    def dict(self, **kwargs):
+        d = super().dict(**kwargs)
+        d['status'] = d.get('qc_status', None)
+        d['log'] = d.get('qc_log', None)
+        return d

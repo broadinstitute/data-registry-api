@@ -2,13 +2,13 @@ import datetime
 import json
 import re
 import uuid
-from typing import Optional
+from typing import Optional, List
 
 import bcrypt
 from sqlalchemy import text
 
 from dataregistry.api.model import SavedDataset, DataSet, Study, SavedStudy, SavedPhenotypeDataSet, SavedCredibleSet, \
-    BioIndex, CsvBioIndexRequest, SavedCsvBioIndexRequest, User, FileUpload
+    CsvBioIndexRequest, SavedCsvBioIndexRequest, User, FileUpload
 from dataregistry.id_shortener import shorten_uuid
 
 
@@ -400,11 +400,11 @@ def save_file_upload_info(engine, dataset, metadata, s3_path, filename, file_siz
         return new_guid
 
 
-def fetch_file_uploads(engine):
+def fetch_file_uploads(engine) -> List[FileUpload]:
     with engine.connect() as conn:
         results = conn.execute(
             text("select id, dataset as dataset_name, file_name, file_size, uploaded_at, uploaded_by, qc_status, "
-                 "qc_log, metadata->>'$.phenotype' as phenotype from file_uploads"))
+                 "qc_log, metadata->>'$.phenotype' as phenotype, s3_path from file_uploads"))
         return [FileUpload(**row._asdict()) for row in results]
 
 
@@ -416,11 +416,23 @@ def update_file_upload_qc_log(engine, qc_log: str, file_upload_id: str, qc_statu
         conn.commit()
 
 
-def fetch_file_upload(engine, file_id):
+def fetch_file_upload(engine, file_id) -> FileUpload:
     with engine.connect() as conn:
-        result = conn.execute(text("select qc_log, qc_status from file_uploads where id = :file_id"),
-                              {'file_id': file_id}).fetchone()
-        return {'log': result[0], 'status': result[1]}
+        result = conn.execute(
+            text("SELECT id, dataset as dataset_name, file_name, file_size, uploaded_at, uploaded_by, metadata, "
+                 "s3_path, qc_log, metadata->>'$.phenotype' as phenotype, qc_status "
+                 "FROM file_uploads WHERE id = :file_id"),
+            {'file_id': file_id}).first()
+
+        if result is None:
+            return None
+
+        result_dict = result._asdict()
+
+        if result_dict['metadata'] is not None:
+            result_dict['metadata'] = json.loads(result_dict['metadata'])
+
+        return FileUpload(**result_dict)
 
 
 def fetch_file_uploads_for_user(engine, user_name):
@@ -435,7 +447,7 @@ def fetch_file_uploads_for_user(engine, user_name):
 def get_file_owner(engine, file_id):
     with engine.connect() as conn:
         result = conn.execute(text("select uploaded_by from file_uploads where id = :file_id"),
-                              {'file_id': file_id.replace('-', '')}).fetchone()
+                              {'file_id': str(file_id).replace('-', '')}).fetchone()
     return result[0] if result else None
 
 

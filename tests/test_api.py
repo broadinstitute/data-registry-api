@@ -239,6 +239,11 @@ def test_upload_hermes_csv(mocker, api_client: TestClient):
     result_dict = res.json()
     assert "file_size" in result_dict
     assert "s3_path" in result_dict
+    assert "file_id" in result_dict
+    file_id = result_dict.get("file_id")
+    file_details = api_client.get(f'api/upload-hermes/{file_id}', headers={AUTHORIZATION: auth_token})
+    assert file_details.status_code == HTTP_200_OK
+    assert file_details.json()["metadata"]["b"] == 1
 
 
 @mock_s3
