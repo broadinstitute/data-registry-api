@@ -22,7 +22,7 @@ insert into user_roles(user_id, role_id) values (@uploader1_id, @uploader_role_i
 insert into user_roles(user_id, role_id) values (@uploader2_id, @uploader_role_id);
 insert into user_roles(user_id, role_id) values (@reviewer_user_id, @reviewer_role_id);
 
-insert into groups(group_name) value ('hermes');
+insert into `groups`(group_name) values ('hermes');
 SET @hermes_group_id = LAST_INSERT_ID();
 insert into user_groups(group_id, user_id) values (@hermes_group_id, @reviewer_user_id);
 insert into user_groups(group_id, user_id) values (@hermes_group_id, @uploader1_id);
