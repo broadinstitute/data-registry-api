@@ -22,6 +22,7 @@ origins = [
     "http://local.kpndataregistry.org:3000",
     "https://kpndataregistry.org",
     "https://local.kpndataregistry.org:8000",
+    "https://hermes.kpndataregistry.org:8000",
     "https://hermes.local.kpndataregistry.org:8000",
     "http://hermes.local.kpndataregistry.org:3000",
     "https://kpndataregistry.org:8000",
