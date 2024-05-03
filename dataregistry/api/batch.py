@@ -5,7 +5,8 @@ from dataregistry.api import query
 
 
 def submit_and_await_job(engine, s3_path, file_guid):
-    batch_client = boto3.client('batch')
+    from dataregistry.api.s3 import S3_REGION
+    batch_client = boto3.client('batch', region_name=S3_REGION)
 
     response = batch_client.submit_job(
         jobName='hermes-qc-job',
