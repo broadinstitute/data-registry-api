@@ -1,5 +1,5 @@
 # data-registry-api
-![Coverage](https://img.shields.io/badge/coverage-75%25-brightgreen)
+![Coverage](https://img.shields.io/badge/coverage-76%25-brightgreen)
 
 ## Running the server
 ### Running Locally
