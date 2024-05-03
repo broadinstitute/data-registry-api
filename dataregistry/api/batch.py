@@ -15,7 +15,7 @@ def submit_and_await_job(engine, s3_path, file_guid):
         parameters={'s3-path': s3_path, 'file-guid': file_guid}
     )
     job_id = response['jobId']
-    logs_client = boto3.client('logs')
+    logs_client = boto3.client('logs', region_name=S3_REGION)
     while True:
         response = batch_client.describe_jobs(jobs=[job_id])
         job_status = response['jobs'][0]['status']
