@@ -322,12 +322,15 @@ def get_internal_user_info(conn, creds, params) -> Optional[User]:
 
 
 def get_user_info(conn, params) -> Optional[User]:
-    result = conn.execute(text("SELECT u.id, u.user_name, u.first_name, u.last_name, u.email, u.avatar, u.is_active, u.last_login, r.role, p.permission, "
+    result = conn.execute(text("SELECT u.id, u.user_name, u.first_name, u.last_name, u.email, u.avatar, u.is_active, "
+                               "u.last_login, r.role, p.permission, g.group_name as `group`, "
                                "(oauth_provider IS NULL) AS is_internal FROM users u "
                                "LEFT JOIN user_roles ur on ur.user_id = u.id "
                                "LEFT JOIN roles r on ur.role_id = r.id "
                                "LEFT JOIN role_permissions rp ON rp.role_id = r.id "
                                "LEFT JOIN permissions p on p.id = rp.permission_id "
+                               "LEFT JOIN user_groups ug on ug.user_id = u.id "
+                               "LEFT JOIN `groups` g on ug.group_id = g.id "
                                "WHERE u.user_name = :user_name"), params).mappings().all()
     if not result:
         return None
@@ -339,6 +342,7 @@ def process_user_roles_permissions(result):
     user_dict = {}
     roles = set()
     permissions = set()
+    groups = set()
 
     for row in result:
         if not user_dict:
@@ -353,7 +357,8 @@ def process_user_roles_permissions(result):
                 'last_login': row['last_login'],
                 'is_internal': row['is_internal'],
                 'roles': [],
-                'permissions': []
+                'permissions': [],
+                'groups': []
             }
         if row['role'] and row['role'] not in roles:
             roles.add(row['role'])
@@ -361,6 +366,9 @@ def process_user_roles_permissions(result):
         if row['permission'] and row['permission'] not in permissions:
             permissions.add(row['permission'])
             user_dict['permissions'].append(row['permission'])
+        if row['group'] and row['group'] not in groups:
+            groups.add(row['group'])
+            user_dict['groups'].append(row['group'])
 
     return user_dict
 

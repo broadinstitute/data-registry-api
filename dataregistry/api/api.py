@@ -178,8 +178,6 @@ async def api_datasets(dataset_id: UUID, user: User = Depends(get_current_user))
 @router.post("/google-login", response_class=fastapi.responses.ORJSONResponse)
 async def google_login(response: Response, body: dict = Body(...)):
     user_info = get_google_user(body.get('code'))
-    #print out user_info to see what it looks like
-    print(user_info)
     #TODO map google user info to our user info in DB
     user = query.get_user(engine, UserCredentials(user_name=user_info.get('email'), password=None))
     if not user:

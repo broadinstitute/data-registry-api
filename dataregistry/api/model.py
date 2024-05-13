@@ -193,6 +193,7 @@ class User(BaseModel):
     avatar: Union[str, None]
     is_active: Union[bool, None]
     roles: List[str]
+    groups: Union[List[str], None]
     permissions: Union[List[str], None]
     is_internal: Union[bool, None]
     api_token: Union[str, None]
