@@ -5,7 +5,7 @@ import os
 import re
 import subprocess
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 from uuid import UUID
 
 import fastapi
@@ -178,7 +178,6 @@ async def api_datasets(dataset_id: UUID, user: User = Depends(get_current_user))
 @router.post("/google-login", response_class=fastapi.responses.ORJSONResponse)
 async def google_login(response: Response, body: dict = Body(...)):
     user_info = get_google_user(body.get('code'))
-    #TODO map google user info to our user info in DB
     user = query.get_user(engine, UserCredentials(user_name=user_info.get('email'), password=None))
     if not user:
         raise fastapi.HTTPException(status_code=401, detail='Username is not in our system')
@@ -270,11 +269,13 @@ async def fetch_single_file_upload(file_id: UUID, user: User = Depends(get_curre
 
 
 @router.get("/upload-hermes")
-async def fetch_all_file_uploads(user: User = Depends(get_current_user)):
+async def fetch_all_file_uploads(user: User = Depends(get_current_user), statuses: List[str] = Query(None),
+                                 limit: Optional[int] = Query(None), offset: Optional[int] = Query(None),
+                                 phenotype: Optional[str] = Query(None)):
     if VIEW_ALL_ROLES.intersection(user.roles):
-        return query.fetch_file_uploads(engine)
+        return query.fetch_file_uploads(engine, statuses, limit, offset, phenotype)
     else:
-        return query.fetch_file_uploads_for_user(engine, user.user_name)
+        return query.fetch_file_uploads_for_user(engine, user.user_name, statuses, phenotype)
 
 
 @router.patch("/upload-hermes/{file_id}")

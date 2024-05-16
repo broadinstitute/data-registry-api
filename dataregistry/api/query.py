@@ -401,18 +401,37 @@ def save_file_upload_info(engine, dataset, metadata, s3_path, filename, file_siz
         conn.execute(text("""INSERT INTO file_uploads(id, dataset, file_name, file_size, uploaded_at, uploaded_by,
         metadata, s3_path, qc_status) VALUES(:id, :dataset, :file_name, :file_size, NOW(), :uploaded_by, :metadata,
          :s3_path, 'SUBMITTED TO QC')"""), {'id': new_guid.replace('-', ''), 'dataset': dataset,
-                                      'file_name': filename,
-                                      'file_size': file_size, 'uploaded_by': uploader,
-                                      'metadata': json.dumps(metadata), 's3_path': s3_path})
+                                            'file_name': filename,
+                                            'file_size': file_size, 'uploaded_by': uploader,
+                                            'metadata': json.dumps(metadata), 's3_path': s3_path})
         conn.commit()
         return new_guid
 
 
-def fetch_file_uploads(engine) -> List[FileUpload]:
+def fetch_file_uploads(engine, statuses=None, limit=None, offset=None, phenotype=None) -> List[FileUpload]:
     with engine.connect() as conn:
-        results = conn.execute(
-            text("select id, dataset as dataset_name, file_name, file_size, uploaded_at, uploaded_by, qc_status, "
-                 "qc_log, metadata->>'$.phenotype' as phenotype, s3_path from file_uploads"))
+        params = {}
+        if statuses:
+            sql = "select id, dataset as dataset_name, file_name, file_size, uploaded_at, uploaded_by, qc_status, " \
+                "qc_log, metadata->>'$.phenotype' as phenotype, s3_path from file_uploads where qc_status in :statuses "
+            params['statuses'] = statuses
+        else:
+            sql = "select id, dataset as dataset_name, file_name, file_size, uploaded_at, uploaded_by, qc_status, " \
+                "qc_log, metadata->>'$.phenotype' as phenotype, s3_path from file_uploads "
+        if phenotype and statuses:
+            sql += " and metadata->>'$.phenotype' = :phenotype"
+            params['phenotype'] = phenotype
+        elif phenotype:
+            sql += " where metadata->>'$.phenotype' = :phenotype"
+            params['phenotype'] = phenotype
+        if limit:
+            sql += " limit :limit"
+            params['limit'] = limit
+        if offset and limit:
+            sql += " offset :offset"
+            params['offset'] = offset
+
+        results = conn.execute(text(sql), params)
         return [FileUpload(**row._asdict()) for row in results]
 
 
@@ -443,12 +462,25 @@ def fetch_file_upload(engine, file_id) -> FileUpload:
         return FileUpload(**result_dict)
 
 
-def fetch_file_uploads_for_user(engine, user_name):
+def fetch_file_uploads_for_user(engine, user_name, statuses, limit, offset, phenotype):
     with engine.connect() as conn:
-        results = conn.execute(
-            text("select id, dataset as dataset_name, file_name, file_size, uploaded_at, uploaded_by, qc_status, "
-                 "qc_log, metadata->>'$.phenotype' as phenotype from file_uploads where uploaded_by = :user"),
-            {'user': user_name})
+        params = {'user': user_name}
+        sql = "select id, dataset as dataset_name, file_name, file_size, uploaded_at, uploaded_by, qc_status, "\
+              "qc_log, metadata->>'$.phenotype' as phenotype from file_uploads where uploaded_by = :user"
+        if statuses:
+            sql += " and qc_status in :statuses"
+            params['statuses'] = statuses
+        if phenotype:
+            sql += " and metadata->>'$.phenotype' = :phenotype"
+            params['phenotype'] = phenotype
+        if limit:
+            sql += " limit :limit"
+            params['limit'] = limit
+        if offset and limit:
+            sql += " offset :offset"
+            params['offset'] = offset
+
+        results = conn.execute(text(sql), params)
         return [FileUpload(**row._asdict()) for row in results]
 
 
