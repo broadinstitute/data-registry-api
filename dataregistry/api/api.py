@@ -275,7 +275,7 @@ async def fetch_all_file_uploads(user: User = Depends(get_current_user), statuse
     if VIEW_ALL_ROLES.intersection(user.roles):
         return query.fetch_file_uploads(engine, statuses, limit, offset, phenotype)
     else:
-        return query.fetch_file_uploads_for_user(engine, user.user_name, statuses, phenotype)
+        return query.fetch_file_uploads_for_user(engine, user.user_name, statuses, limit, offset, phenotype)
 
 
 @router.patch("/upload-hermes/{file_id}")
