@@ -235,6 +235,11 @@ async def hermes_upload_columns():
     return HERMES_VALIDATOR.column_options()
 
 
+@router.get("/hermes-uploaded-phenotypes")
+async def hermes_uploades_phenotypes():
+    return query.fetch_used_phenotypes(engine)
+
+
 @router.post("/validate-hermes")
 async def validate(body: dict = Body(...)):
     return HERMES_VALIDATOR.validate(body)

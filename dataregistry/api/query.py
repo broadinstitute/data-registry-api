@@ -496,3 +496,9 @@ def update_file_qc_status(engine, file_id, qc_status):
         conn.execute(text("UPDATE file_uploads set qc_status = :qc_status where id = :file_id"),
                      {'qc_status': qc_status, 'file_id': str(file_id).replace('-', '')})
         conn.commit()
+
+
+def fetch_used_phenotypes(engine) -> List[str]:
+    with engine.connect() as conn:
+        result = conn.execute(text("SELECT distinct metadata->>'$.phenotype' as phenotype from file_uploads"))
+        return [row[0] for row in result]
