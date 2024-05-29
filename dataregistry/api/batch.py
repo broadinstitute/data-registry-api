@@ -2,6 +2,7 @@ import time
 
 import boto3
 from dataregistry.api import query
+from dataregistry.api.model import HermesFileStatus
 
 
 def submit_and_await_job(engine, s3_path, file_guid):
@@ -29,7 +30,8 @@ def submit_and_await_job(engine, s3_path, file_guid):
             log_messages = [event['message'] for event in log_events['events']]
             complete_log = '\n'.join(log_messages)
             query.update_file_upload_qc_log(engine, complete_log, file_guid,
-                                            'READY FOR REVIEW' if job_status == 'SUCCEEDED' else 'QC FAILED')
+                                            HermesFileStatus.READY_FOR_REVIEW if job_status == 'SUCCEEDED' else
+                                            HermesFileStatus.FAILED_QC)
             break
         time.sleep(60)
 
