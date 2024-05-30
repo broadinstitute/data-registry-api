@@ -119,6 +119,12 @@ class HermesUploadStatus(BaseModel):
     status: HermesFileStatus
 
 
+class NewUserRequest(BaseModel):
+    user_name: EmailStr
+    password: str
+    user_type: str
+
+
 class CsvBioIndexRequest(BaseModel):
     column: str
     status: BioIndexCreationStatus
@@ -183,6 +189,15 @@ class SavedCredibleSet(BaseModel):
 class UserCredentials(BaseModel):
     user_name: str
     password: Union[str, None]
+
+
+class HermesUser(BaseModel):
+    id: int
+    user_name: str
+    created_at: datetime
+    last_login: Union[datetime, None]
+    is_active: bool
+    role: Union[str, None]
 
 
 class User(BaseModel):

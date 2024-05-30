@@ -2,13 +2,15 @@ import datetime
 import json
 import re
 import uuid
+from functools import lru_cache
 from typing import Optional, List
 
 import bcrypt
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 from dataregistry.api.model import SavedDataset, DataSet, Study, SavedStudy, SavedPhenotypeDataSet, SavedCredibleSet, \
-    CsvBioIndexRequest, SavedCsvBioIndexRequest, User, FileUpload
+    CsvBioIndexRequest, SavedCsvBioIndexRequest, User, FileUpload, NewUserRequest, HermesUser
 from dataregistry.id_shortener import shorten_uuid
 
 
@@ -413,11 +415,11 @@ def fetch_file_uploads(engine, statuses=None, limit=None, offset=None, phenotype
         params = {}
         if statuses:
             sql = "select id, dataset as dataset_name, file_name, file_size, uploaded_at, uploaded_by, qc_status, " \
-                "qc_log, metadata->>'$.phenotype' as phenotype, s3_path from file_uploads where qc_status in :statuses "
+                  "qc_log, metadata->>'$.phenotype' as phenotype, s3_path from file_uploads where qc_status in :statuses "
             params['statuses'] = statuses
         else:
             sql = "select id, dataset as dataset_name, file_name, file_size, uploaded_at, uploaded_by, qc_status, " \
-                "qc_log, metadata->>'$.phenotype' as phenotype, s3_path from file_uploads "
+                  "qc_log, metadata->>'$.phenotype' as phenotype, s3_path from file_uploads "
         if phenotype and statuses:
             sql += " and metadata->>'$.phenotype' = :phenotype"
             params['phenotype'] = phenotype
@@ -465,7 +467,7 @@ def fetch_file_upload(engine, file_id) -> FileUpload:
 def fetch_file_uploads_for_user(engine, user_name, statuses, limit, offset, phenotype):
     with engine.connect() as conn:
         params = {'user': user_name}
-        sql = "select id, dataset as dataset_name, file_name, file_size, uploaded_at, uploaded_by, qc_status, "\
+        sql = "select id, dataset as dataset_name, file_name, file_size, uploaded_at, uploaded_by, qc_status, " \
               "qc_log, metadata->>'$.phenotype' as phenotype from file_uploads where uploaded_by = :user"
         if statuses:
             sql += " and qc_status in :statuses"
@@ -498,7 +500,50 @@ def update_file_qc_status(engine, file_id, qc_status):
         conn.commit()
 
 
-def fetch_used_phenotypes(engine) -> List[str]:
+def fetch_used_phenotypes(engine, statuses) -> List[str]:
     with engine.connect() as conn:
-        result = conn.execute(text("SELECT distinct metadata->>'$.phenotype' as phenotype from file_uploads"))
+        if statuses:
+            result = conn.execute(text("SELECT distinct metadata->>'$.phenotype' as phenotype from file_uploads "
+                                       "where qc_status in :statuses"), {'statuses': statuses})
+        else:
+            result = conn.execute(text("SELECT distinct metadata->>'$.phenotype' as phenotype from file_uploads"))
         return [row[0] for row in result]
+
+
+def add_new_hermes_user(engine, user: NewUserRequest):
+    role_map, group_map = get_role_and_group_maps(engine)
+    with engine.connect() as conn:
+        try:
+            result = conn.execute(text("INSERT INTO users (user_name, email, password, created_at) "
+                                       "values(:user_name, :email, :password, NOW())"),
+                                  {'user_name': user.user_name, 'email': user.user_name,
+                                   'password': bcrypt.hashpw(user.password.encode('utf-8'), bcrypt.gensalt())})
+            new_user_id = result.lastrowid
+            conn.execute(text("INSERT INTO user_groups (user_id, group_id) values (:user_id, :group_id)"),
+                         {'user_id': new_user_id, 'group_id': group_map.get('hermes')})
+            conn.execute(text("INSERT INTO user_roles (user_id, role_id) values (:new_user_id, :role_id)"),
+                         {'new_user_id': new_user_id, 'role_id': role_map.get(user.user_type)})
+            conn.commit()
+        except IntegrityError:
+            raise ValueError("User already exists")
+
+
+@lru_cache(maxsize=None)
+def get_role_and_group_maps(engine):
+    with engine.connect() as conn:
+        roles = conn.execute(text("SELECT role, id as role_id FROM roles")).fetchall()
+        role_map = {role: role_id for role, role_id in roles}
+
+        groups = conn.execute(text("SELECT group_name, id as group_id FROM `groups`")).fetchall()
+        group_map = {group_name: group_id for group_name, group_id in groups}
+
+    return role_map, group_map
+
+
+def get_hermes_users(engine):
+    with engine.connect() as conn:
+        result = conn.execute(text("SELECT u.id, user_name, created_at, last_login, is_active, r.role from users u "
+                                   "join user_groups ug on u.id = ug.user_id join `groups` g on g.id = ug.group_id "
+                                   "join user_roles ur on ur.user_id = u.id join roles r on ur.role_id = r.id "
+                                   "where g.group_name = 'hermes'"))
+        return [HermesUser(**row._asdict()) for row in result]

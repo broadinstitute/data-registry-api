@@ -27,7 +27,7 @@ from dataregistry.api.google_oauth import get_google_user
 from dataregistry.api.jwt import get_encoded_jwt_data, get_decoded_jwt_data
 from dataregistry.api.model import DataSet, Study, SavedDatasetInfo, SavedDataset, UserCredentials, User, SavedStudy, \
     CreateBiondexRequest, CsvBioIndexRequest, BioIndexCreationStatus, SavedCsvBioIndexRequest, HermesFileStatus, \
-    HermesUploadStatus
+    HermesUploadStatus, NewUserRequest
 from dataregistry.api.validators import HermesValidator
 
 HERMES_VALIDATOR = HermesValidator()
@@ -236,13 +236,32 @@ async def hermes_upload_columns():
 
 
 @router.get("/hermes-uploaded-phenotypes")
-async def hermes_uploades_phenotypes():
-    return query.fetch_used_phenotypes(engine)
+async def hermes_uploads_phenotypes(statuses: List[str] = Query(None)):
+    return query.fetch_used_phenotypes(engine, statuses)
 
 
 @router.post("/validate-hermes")
 async def validate(body: dict = Body(...)):
     return HERMES_VALIDATOR.validate(body)
+
+
+@router.get("/hermes-users")
+async def get_hermes_users(user: User = Depends(get_current_user)):
+    if "reviewer" in user.roles:
+        return query.get_hermes_users(engine)
+    else:
+        raise fastapi.HTTPException(status_code=403, detail="You need to be a reviewer")
+
+
+@router.post("/add-hermes-user")
+async def add_hermes_user(request: NewUserRequest, user: User = Depends(get_current_user)):
+    if "reviewer" in user.roles:
+        try:
+            query.add_new_hermes_user(engine, request)
+        except ValueError:
+            raise fastapi.HTTPException(status_code=409, detail="User already exists")
+    else:
+        raise fastapi.HTTPException(status_code=403, detail="You need to be a reviewer")
 
 
 @router.post("/upload-hermes")
