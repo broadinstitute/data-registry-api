@@ -247,7 +247,7 @@ async def validate(body: dict = Body(...)):
 
 @router.get("/hermes-users")
 async def get_hermes_users(user: User = Depends(get_current_user)):
-    if "reviewer" in user.roles:
+    if {"reviewer", SUPER_USER}.intersection(user.roles):
         return query.get_hermes_users(engine)
     else:
         raise fastapi.HTTPException(status_code=403, detail="You need to be a reviewer")
