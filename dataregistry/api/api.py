@@ -247,7 +247,7 @@ async def validate(body: dict = Body(...)):
 
 @router.get("/hermes-users")
 async def get_hermes_users(user: User = Depends(get_current_user)):
-    if {"reviewer", SUPER_USER}.intersection(user.roles):
+    if check_hermes_admin_perms(user):
         return query.get_hermes_users(engine)
     else:
         raise fastapi.HTTPException(status_code=403, detail="You need to be a reviewer")
@@ -255,13 +255,17 @@ async def get_hermes_users(user: User = Depends(get_current_user)):
 
 @router.post("/add-hermes-user")
 async def add_hermes_user(request: NewUserRequest, user: User = Depends(get_current_user)):
-    if "reviewer" in user.roles:
+    if check_hermes_admin_perms(user):
         try:
             query.add_new_hermes_user(engine, request)
         except ValueError:
             raise fastapi.HTTPException(status_code=409, detail="User already exists")
     else:
         raise fastapi.HTTPException(status_code=403, detail="You need to be a reviewer")
+
+
+async def check_hermes_admin_perms(user):
+    return {"reviewer", SUPER_USER}.intersection(user.roles)
 
 
 @router.post("/upload-hermes")
