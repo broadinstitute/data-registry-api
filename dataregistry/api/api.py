@@ -264,7 +264,7 @@ async def add_hermes_user(request: NewUserRequest, user: User = Depends(get_curr
         raise fastapi.HTTPException(status_code=403, detail="You need to be a reviewer")
 
 
-async def check_hermes_admin_perms(user):
+def check_hermes_admin_perms(user):
     return {"reviewer", SUPER_USER}.intersection(user.roles)
 
 
