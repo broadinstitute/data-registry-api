@@ -222,7 +222,7 @@ async def api_publications(pub_id: str):
 async def upload_csv(request: Request):
     filename = request.headers.get('Filename')
     parser = StreamingFormDataParser(request.headers)
-    parser.register("file", S3Target(s3.get_file_path("bioindex/uploads", filename), mode='wb'))
+    parser.register("file", GzipS3Target(s3.get_file_path("bioindex/uploads", filename), mode='wb'))
     file_size = 0
     async for chunk in request.stream():
         file_size += len(chunk)
@@ -277,7 +277,7 @@ async def upload_hermes_csv(request: Request, background_tasks: BackgroundTasks,
     metadata = json.loads(metadata_str) if metadata_str else {}
     parser = StreamingFormDataParser(request.headers)
     s3_path = f"hermes/{dataset}"
-    parser.register("file", S3Target(s3.get_file_path(s3_path, filename), mode='wb'))
+    parser.register("file", GzipS3Target(s3.get_file_path(s3_path, filename), mode='wb'))
     file_size = 0
     async for chunk in request.stream():
         file_size += len(chunk)
