@@ -284,7 +284,8 @@ async def upload_hermes_csv(request: Request, background_tasks: BackgroundTasks,
         parser.data_received(chunk)
     s3.upload_metadata(metadata, s3_path)
     file_guid = query.save_file_upload_info(engine, dataset, metadata, s3_path, filename, file_size, user.user_name)
-    background_tasks.add_task(batch.submit_and_await_job, engine, s3.get_full_s3_path(s3_path, filename), file_guid)
+    background_tasks.add_task(batch.submit_and_await_job, engine, s3.get_full_s3_path(s3_path, filename),
+                              file_guid, json.dumps(metadata["column_map"]))
     return {"file_size": file_size, "s3_path": s3.get_file_path(s3_path, filename), "file_id": file_guid}
 
 

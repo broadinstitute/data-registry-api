@@ -5,7 +5,7 @@ from dataregistry.api import query
 from dataregistry.api.model import HermesFileStatus
 
 
-def submit_and_await_job(engine, s3_path, file_guid):
+def submit_and_await_job(engine, s3_path, file_guid, col_map):
     from dataregistry.api.s3 import S3_REGION
     batch_client = boto3.client('batch', region_name=S3_REGION)
 
@@ -13,7 +13,7 @@ def submit_and_await_job(engine, s3_path, file_guid):
         jobName='hermes-qc-job',
         jobQueue='hermes-qc-job-queue',
         jobDefinition='hermes-qc-job',
-        parameters={'s3-path': s3_path, 'file-guid': file_guid}
+        parameters={'s3-path': s3_path, 'file-guid': file_guid, 'col-map': col_map},
     )
     job_id = response['jobId']
     logs_client = boto3.client('logs', region_name=S3_REGION)
