@@ -35,7 +35,7 @@ class Validator(ABC):
 
 class HermesValidator(Validator):
     required_fields = ['chromosome', 'position', 'reference', 'alt', 'pValue']
-    optional_fields = ['beta', 'oddsRatio', 'stdErr', 'n', 'zScore', 'maf', 'eaf']
+    optional_fields = ['beta', 'oddsRatio', 'stdErr', 'n', 'zScore', 'maf', 'eaf', 'rsid']
 
     def __init__(self):
         super().__init__(HermesValidator.required_fields, HermesValidator.optional_fields)

@@ -11,9 +11,10 @@ ARG GITHUB_PAT
 ENV GITHUB_PAT=${GITHUB_PAT}
 
 RUN R -e "install.packages('devtools')" && R -e "install.packages('data.table')" && R -e "install.packages('furrr')" \
-    && R -e "install.packages('fst')" && R -e "install.packages('stringi')"
+    && R -e "install.packages('R.utils')" && R -e "install.packages('fst')" && R -e "install.packages('stringi')"
 
-RUN R -e "devtools::install_github('nicksunderland/genepi.utils')" > /tmp/install_genepi.utils.log 2>&1
+RUN R -e "install.packages('BiocManager')" && R -e 'BiocManager::install(c("GenomicRanges", "IRanges", "rtracklayer"))'  \
+    && R -e "devtools::install_github('nicksunderland/genepi.utils')"
 
 
 WORKDIR /usr/src/app

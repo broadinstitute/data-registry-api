@@ -63,6 +63,8 @@ Resources:
           - 'Ref::s3-path'
           - '-g'
           - 'Ref::file-guid'
+          - '-c'
+          - 'Ref::col-map'
         JobRoleArn: !GetAtt HermesQCJobRole.Arn
         ExecutionRoleArn: !GetAtt HermesQCJobRole.Arn
         ResourceRequirements:
@@ -98,6 +100,8 @@ Resources:
                   - 's3:GetObject'
                   - 's3:PutObject'
                 Resource:
+                  - 'arn:aws:s3:::dig-data-registry'
+                  - 'arn:aws:s3:::dig-data-registry/*'
                   - 'arn:aws:s3:::dig-data-registry-qa'
                   - 'arn:aws:s3:::dig-data-registry-qa/*'
                   - 'arn:aws:s3:::hermes-qc/*'
