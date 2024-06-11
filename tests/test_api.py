@@ -234,7 +234,8 @@ def test_upload_hermes_csv(mocker, api_client: TestClient):
     with open('tests/test_csv_upload.csv', mode='rb') as f:
         res = api_client.post('api/upload-hermes', headers={AUTHORIZATION: auth_token, 'Filename': 'foo.csv',
                                                             'Dataset': 'unit-test-dataset',
-                                                            'Metadata': json.dumps({'b': 1})},
+                                                            'Metadata': json.dumps({'b': 1,
+                                                                                    'column_map': {"alt": "OA"}})},
                               files={'file': f})
     result_dict = res.json()
     assert "file_size" in result_dict
