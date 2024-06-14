@@ -245,7 +245,13 @@ def test_upload_hermes_csv(mocker, api_client: TestClient):
     file_details = api_client.get(f'api/upload-hermes/{file_id}', headers={AUTHORIZATION: auth_token})
     assert file_details.status_code == HTTP_200_OK
     assert file_details.json()["metadata"]["b"] == 1
-
+    file_uploads = api_client.get('api/upload-hermes/', headers={AUTHORIZATION: auth_token}).json()
+    assert len(file_uploads) == 1
+    assert file_uploads[0]['metadata']['column_map']
+    file_uploads = api_client.get('api/upload-hermes?uploader=dhite', headers={AUTHORIZATION: auth_token}).json()
+    assert len(file_uploads) == 0
+    file_uploads = api_client.get('api/upload-hermes?uploader=test', headers={AUTHORIZATION: auth_token}).json()
+    assert len(file_uploads) == 1
 
 @mock_s3
 def test_upload_csv(api_client: TestClient):

@@ -40,6 +40,7 @@ def before_each_test():
         con.execute(text("TRUNCATE TABLE dataset_phenotypes"))
         con.execute(text("TRUNCATE TABLE credible_sets"))
         con.execute(text("TRUNCATE TABLE users"))
+        con.execute(text("TRUNCATE TABLE file_uploads"))
         con.execute(text("TRUNCATE TABLE roles"))
         con.execute(text("TRUNCATE TABLE user_roles"))
         con.execute(text("INSERT INTO users (id, user_name, oauth_provider, created_at) "
