@@ -2,6 +2,7 @@
 
 # Default to master if no branch is specified
 BRANCH_NAME=${1:-master}
+METHOD=${2:-intake}
 
 # Function to clone and build a repository
 clone_and_build() {
@@ -18,7 +19,7 @@ clone_and_build() {
 
   cd $dir_name
   sbt compile
-  cd intake
-  sbt "run -c ../config.json --no-insert-runs --reprocess"
+  cd $2
+  sbt "run -c ../config.json --no-insert-runs --yes"
 }
-clone_and_build "$BRANCH_NAME"
+clone_and_build "$BRANCH_NAME" "$METHOD"
