@@ -419,7 +419,7 @@ def gen_fetch_ds_sql(params, param_to_where):
             sql += f"WHERE {param_to_where.get(col)} "
         else:
             sql += f"AND {param_to_where.get(col)} "
-    return sql
+    return sql + " order by uploaded_at desc"
 
 
 def fetch_file_uploads(engine, statuses=None, limit=None, offset=None, phenotype=None, uploader=None) -> (
@@ -441,7 +441,7 @@ def get_file_upload_sql_and_params(limit, offset, phenotype, statuses, uploader)
     params = {}
     if statuses:
         params['qc_status'] = statuses
-        param_to_sql['qc_status'] = "qc_status in :statuses"
+        param_to_sql['qc_status'] = "qc_status in :qc_status"
     if phenotype:
         params['phenotype'] = phenotype
         param_to_sql['phenotype'] = "metadata->>'$.phenotype' = :phenotype"

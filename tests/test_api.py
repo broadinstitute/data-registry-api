@@ -8,7 +8,7 @@ from moto import mock_s3, mock_batch
 from starlette.status import HTTP_422_UNPROCESSABLE_ENTITY, HTTP_200_OK, HTTP_404_NOT_FOUND, HTTP_401_UNAUTHORIZED, \
     HTTP_400_BAD_REQUEST
 
-from dataregistry.api.model import DataFormat, User
+from dataregistry.api.model import DataFormat, User, HermesFileStatus
 from dataregistry.api.jwt import get_encoded_jwt_data
 
 AUTHORIZATION = "Authorization"
@@ -234,7 +234,7 @@ def test_upload_hermes_csv(mocker, api_client: TestClient):
     with open('tests/test_csv_upload.csv', mode='rb') as f:
         res = api_client.post('api/upload-hermes', headers={AUTHORIZATION: auth_token, 'Filename': 'foo.csv',
                                                             'Dataset': 'unit-test-dataset',
-                                                            'Metadata': json.dumps({'b': 1,
+                                                            'Metadata': json.dumps({'b': 1, 'phenotype': 'T2D',
                                                                                     'column_map': {"alt": "OA"}})},
                               files={'file': f})
     result_dict = res.json()
@@ -252,6 +252,13 @@ def test_upload_hermes_csv(mocker, api_client: TestClient):
     assert len(file_uploads) == 0
     file_uploads = api_client.get('api/upload-hermes?uploader=test', headers={AUTHORIZATION: auth_token}).json()
     assert len(file_uploads) == 1
+    file_uploads = api_client.get(f"api/upload-hermes?statuses={HermesFileStatus.FAILED_QC}",
+                                  headers={AUTHORIZATION: auth_token}).json()
+    assert len(file_uploads) == 0
+    file_uploads = api_client.get(f"api/upload-hermes?phenotype=T2D", headers={AUTHORIZATION: auth_token}).json()
+    assert len(file_uploads) == 1
+    file_uploads = api_client.get(f"api/upload-hermes?phenotype=T1D", headers={AUTHORIZATION: auth_token}).json()
+    assert len(file_uploads) == 0
 
 @mock_s3
 def test_upload_csv(api_client: TestClient):
