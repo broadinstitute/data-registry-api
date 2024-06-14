@@ -259,6 +259,9 @@ def test_upload_hermes_csv(mocker, api_client: TestClient):
     assert len(file_uploads) == 1
     file_uploads = api_client.get(f"api/upload-hermes?phenotype=T1D", headers={AUTHORIZATION: auth_token}).json()
     assert len(file_uploads) == 0
+    file_uploads = api_client.get(f"api/upload-hermes?phenotype=T2D&limit=10&offset=0",
+                                  headers={AUTHORIZATION: auth_token}).json()
+    assert len(file_uploads) == 1
 
 @mock_s3
 def test_upload_csv(api_client: TestClient):

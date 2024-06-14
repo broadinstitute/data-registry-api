@@ -415,11 +415,17 @@ def gen_fetch_ds_sql(params, param_to_where):
           "qc_log, metadata->>'$.phenotype' as phenotype, metadata, s3_path from file_uploads "
 
     for index, (col, value) in enumerate(params.items(), start=0):
+
         if index == 0:
             sql += f"WHERE {param_to_where.get(col)} "
         else:
-            sql += f"AND {param_to_where.get(col)} "
-    return sql + " order by uploaded_at desc"
+            if col in {"limit", "offset"}:
+                break
+            else:
+                sql += f" AND {param_to_where.get(col)} "
+
+    sql += " order by uploaded_at desc"
+    return f"{sql} {param_to_where.get('limit', '')} {param_to_where.get('offset', '')}".rstrip()
 
 
 def fetch_file_uploads(engine, statuses=None, limit=None, offset=None, phenotype=None, uploader=None) -> (
@@ -445,15 +451,15 @@ def get_file_upload_sql_and_params(limit, offset, phenotype, statuses, uploader)
     if phenotype:
         params['phenotype'] = phenotype
         param_to_sql['phenotype'] = "metadata->>'$.phenotype' = :phenotype"
+    if uploader:
+        params['uploaded_by'] = uploader
+        param_to_sql['uploaded_by'] = "uploaded_by = :uploaded_by"
     if limit:
         params['limit'] = limit
         param_to_sql['limit'] = "limit :limit"
     if offset:
         params['offset'] = offset
         param_to_sql['limit'] = "offset :offset"
-    if uploader:
-        params['uploaded_by'] = uploader
-        param_to_sql['uploaded_by'] = "uploaded_by = :uploaded_by"
     sql = gen_fetch_ds_sql(params, param_to_sql)
     return sql, params
 
