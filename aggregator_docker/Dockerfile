@@ -10,6 +10,6 @@ RUN git clone https://github.com/broadinstitute/dig-aggregator-core.git /app/dig
 COPY entry.sh /app
 RUN chmod +x /app/entry.sh
 ENTRYPOINT ["/app/entry.sh"]
-CMD ["master", "intake"]
+CMD ["master", "intake", "--no-insert-runs --yes"]
 
 
