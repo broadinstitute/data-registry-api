@@ -1,0 +1,144 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description:
+  Batch infrastructure for launching aggregator jobs
+Resources:
+  EcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: aggregator-web-api-repo
+
+  BatchServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - batch.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSBatchServiceRole'
+
+  AggregatorWebComputeEnv:
+    Type: AWS::Batch::ComputeEnvironment
+    Properties:
+      Type: MANAGED
+      ServiceRole: !GetAtt BatchServiceRole.Arn
+      ComputeResources:
+        Type: Fargate
+        MaxvCpus: 128
+        Subnets:
+          - subnet-041ed74e61806c6f0
+        SecurityGroupIds:
+          - sg-28485f53
+
+  AggregatorWebJobQueue:
+    Type: AWS::Batch::JobQueue
+    Properties:
+      JobQueueName: 'aggregator-web-api-queue'
+      ComputeEnvironmentOrder:
+        - Order: 1
+          ComputeEnvironment: !Ref AggregatorWebComputeEnv
+      Priority: 1
+      State: ENABLED
+
+  AggregatorWebJobDefinition:
+    Type: AWS::Batch::JobDefinition
+    Properties:
+      Type: 'container'
+      JobDefinitionName: 'aggregator-web-job'
+      PlatformCapabilities:
+        - 'FARGATE'
+      Timeout:
+        AttemptDurationSeconds: 72000
+      ContainerProperties:
+        Image: !Sub '${AWS::AccountId}.dkr.ecr.us-east-1.amazonaws.com/aggregator-web-api-repo'
+        Command:
+          - 'Ref::branch'
+          - 'Ref::method'
+          - 'Ref::args'
+        JobRoleArn: !GetAtt AggregatorWebJobRole.Arn
+        ExecutionRoleArn: !GetAtt AggregatorWebJobRole.Arn
+        ResourceRequirements:
+          - Type: 'VCPU'
+            Value: '0.5'
+          - Type: 'MEMORY'
+            Value: '2048'
+        NetworkConfiguration:
+          AssignPublicIp: 'ENABLED'
+        FargatePlatformConfiguration:
+          PlatformVersion: 'LATEST'
+
+  AggregatorWebJobRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: 'Allow'
+            Principal:
+              Service:
+                - 'ecs-tasks.amazonaws.com'
+                - 'elasticmapreduce.amazonaws.com'
+            Action:
+              - 'sts:AssumeRole'
+      Path: '/'
+      Policies:
+        - PolicyName: 'S3Access'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action:
+                  - 's3:GetObject'
+                  - 's3:PutObject'
+                  - 's3:ListBucket'
+                Resource:
+                  - 'arn:aws:s3:::dig-analysis-bin'
+                  - 'arn:aws:s3:::dig-analysis-bin/*'
+                  - 'arn:aws:s3:::dig-analysis-data'
+                  - 'arn:aws:s3:::dig-analysis-data/*'
+                  - 'arn:aws:s3:::dig-data-registry'
+                  - 'arn:aws:s3:::dig-data-registry/*'
+                  - 'arn:aws:s3:::dig-data-registry-qa'
+                  - 'arn:aws:s3:::dig-data-registry-qa/*'
+                  - 'arn:aws:s3:::hermes-qc/*'
+                  - 'arn:aws:s3:::hermes-qc'
+        - PolicyName: 'ECSTaskExecution'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action:
+                  - 'ecr:GetAuthorizationToken'
+                  - 'ec2:Describe*'
+                  - 'ecr:BatchCheckLayerAvailability'
+                  - 'ecr:GetDownloadUrlForLayer'
+                  - 'ecr:BatchGetImage'
+                  - 'elasticmapreduce:CreateCluster'
+                  - 'elasticmapreduce:ListClusters'
+                  - 'elasticmapreduce:DescribeCluster'
+                  - 'elasticmapreduce:AddJobFlowSteps'
+                  - 'elasticmapreduce:Describe*'
+                  - 'elasticmapreduce:ListSteps'
+                  - 'elasticmapreduce:RunJobFlow'
+                  - 'elasticmapreduce:TerminateJobFlows'
+                  - 'ec2:AuthorizeSecurityGroupIngress'
+                  - 'iam:PassRole'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: '*'
+        - PolicyName: 'SecretsManagerAccess'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action:
+                  - 'secretsmanager:GetSecretValue'
+                  - 'secretsmanager:DescribeSecret'
+                Resource: '*'
+
+

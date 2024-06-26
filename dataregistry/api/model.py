@@ -6,6 +6,12 @@ from uuid import UUID
 from pydantic import BaseModel, EmailStr, Field, Extra
 
 
+class StartAggregatorRequest(BaseModel):
+    branch: str
+    method: str
+    args: str
+
+
 class DataSourceType(str, Enum):
     api = "api"
     file = "file"
