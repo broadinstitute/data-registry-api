@@ -8,7 +8,7 @@ from pydantic import BaseModel, EmailStr, Field, Extra
 
 class StartAggregatorRequest(BaseModel):
     branch: str
-    stage: str
+    method: str
     args: str
 
 

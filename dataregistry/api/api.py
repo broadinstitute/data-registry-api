@@ -280,7 +280,7 @@ def check_hermes_admin_perms(user):
 async def start_aggregator(req: StartAggregatorRequest, authorization: Optional[str] = Header(None),
                            user: Optional[User] = Depends(get_current_user_quiet)):
     if authorization == AGGREGATOR_API_SECRET or (user and VIEW_ALL_ROLES.intersection(user.roles)):
-        job_id = batch.submit_aggregator_job(req.branch, req.stage, req.args)
+        job_id = batch.submit_aggregator_job(req.branch, req.method, req.args)
         return {"job_id": job_id}
     else:
         raise fastapi.HTTPException(status_code=403, detail="You don't have permission to perform this action")
