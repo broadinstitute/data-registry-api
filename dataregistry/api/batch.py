@@ -3,10 +3,23 @@ import time
 import boto3
 from dataregistry.api import query
 from dataregistry.api.model import HermesFileStatus
+from dataregistry.api.s3 import S3_REGION
+
+
+def submit_aggregator_job(branch, method, extra_args):
+    batch_client = boto3.client('batch', region_name=S3_REGION)
+
+    response = batch_client.submit_job(
+        jobName='aggregator-web',
+        jobQueue='aggregator-web-api-queue',
+        jobDefinition='aggregator-web-job',
+        parameters={'branch': branch, 'method': method, 'args': extra_args},
+    )
+    job_id = response['jobId']
+    return job_id
 
 
 def submit_and_await_job(engine, s3_path, file_guid, col_map):
-    from dataregistry.api.s3 import S3_REGION
     batch_client = boto3.client('batch', region_name=S3_REGION)
 
     response = batch_client.submit_job(
@@ -34,5 +47,3 @@ def submit_and_await_job(engine, s3_path, file_guid, col_map):
                                             HermesFileStatus.FAILED_QC)
             break
         time.sleep(60)
-
-

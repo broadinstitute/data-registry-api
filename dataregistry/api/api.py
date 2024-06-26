@@ -27,7 +27,7 @@ from dataregistry.api.google_oauth import get_google_user
 from dataregistry.api.jwt import get_encoded_jwt_data, get_decoded_jwt_data
 from dataregistry.api.model import DataSet, Study, SavedDatasetInfo, SavedDataset, UserCredentials, User, SavedStudy, \
     CreateBiondexRequest, CsvBioIndexRequest, BioIndexCreationStatus, SavedCsvBioIndexRequest, HermesFileStatus, \
-    HermesUploadStatus, NewUserRequest
+    HermesUploadStatus, NewUserRequest, StartAggregatorRequest
 from dataregistry.api.validators import HermesValidator
 
 HERMES_VALIDATOR = HermesValidator()
@@ -37,6 +37,7 @@ SUPER_USER = "admin"
 VIEW_ALL_ROLES = {SUPER_USER, 'analyst', 'reviewer'}
 
 AUTH_COOKIE_NAME = 'dr_auth_token'
+AGGREGATOR_API_SECRET = os.getenv('AGGREGATOR_API_SECRET')
 
 router = fastapi.APIRouter()
 
@@ -55,6 +56,13 @@ engine = DataRegistryReadWriteDB().get_engine()
 logger.info("Starting API")
 NIH_API_EMAIL = "dhite@broadinstitute.org"
 NIH_API_TOOL_NAME = "data-registry"
+
+
+async def get_current_user_quiet(request: Request, authorization: Optional[str] = Header(None)):
+    try:
+        return await get_current_user(request, authorization)
+    except fastapi.HTTPException:
+        return None
 
 
 async def get_current_user(request: Request, authorization: Optional[str] = Header(None)):
@@ -266,6 +274,16 @@ async def add_hermes_user(request: NewUserRequest, user: User = Depends(get_curr
 
 def check_hermes_admin_perms(user):
     return {"reviewer", SUPER_USER}.intersection(user.roles)
+
+
+@router.post("/start-aggregator")
+async def start_aggregator(req: StartAggregatorRequest, authorization: Optional[str] = Header(None),
+                           user: Optional[User] = Depends(get_current_user_quiet)):
+    if authorization == AGGREGATOR_API_SECRET or (user and VIEW_ALL_ROLES.intersection(user.roles)):
+        job_id = batch.submit_aggregator_job(req.branch, req.stage, req.args)
+        return {"job_id": job_id}
+    else:
+        raise fastapi.HTTPException(status_code=403, detail="You don't have permission to perform this action")
 
 
 @router.post("/upload-hermes")

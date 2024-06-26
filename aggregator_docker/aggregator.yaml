@@ -53,7 +53,7 @@ Resources:
       PlatformCapabilities:
         - 'FARGATE'
       Timeout:
-        AttemptDurationSeconds: 1200
+        AttemptDurationSeconds: 72000
       ContainerProperties:
         Image: !Sub '${AWS::AccountId}.dkr.ecr.us-east-1.amazonaws.com/aggregator-web-api-repo'
         Command:
@@ -64,9 +64,9 @@ Resources:
         ExecutionRoleArn: !GetAtt AggregatorWebJobRole.Arn
         ResourceRequirements:
           - Type: 'VCPU'
-            Value: '1.0'
+            Value: '0.5'
           - Type: 'MEMORY'
-            Value: '8192'
+            Value: '2048'
         NetworkConfiguration:
           AssignPublicIp: 'ENABLED'
         FargatePlatformConfiguration:
@@ -81,7 +81,7 @@ Resources:
           - Effect: 'Allow'
             Principal:
               Service:
-                - 'batch.amazonaws.com'
+                - 'ecs-tasks.amazonaws.com'
                 - 'elasticmapreduce.amazonaws.com'
             Action:
               - 'sts:AssumeRole'
@@ -95,8 +95,18 @@ Resources:
                 Action:
                   - 's3:GetObject'
                   - 's3:PutObject'
+                  - 's3:ListBucket'
                 Resource:
-                  - '*'
+                  - 'arn:aws:s3:::dig-analysis-bin'
+                  - 'arn:aws:s3:::dig-analysis-bin/*'
+                  - 'arn:aws:s3:::dig-analysis-data'
+                  - 'arn:aws:s3:::dig-analysis-data/*'
+                  - 'arn:aws:s3:::dig-data-registry'
+                  - 'arn:aws:s3:::dig-data-registry/*'
+                  - 'arn:aws:s3:::dig-data-registry-qa'
+                  - 'arn:aws:s3:::dig-data-registry-qa/*'
+                  - 'arn:aws:s3:::hermes-qc/*'
+                  - 'arn:aws:s3:::hermes-qc'
         - PolicyName: 'ECSTaskExecution'
           PolicyDocument:
             Version: '2012-10-17'
@@ -104,11 +114,31 @@ Resources:
               - Effect: 'Allow'
                 Action:
                   - 'ecr:GetAuthorizationToken'
+                  - 'ec2:Describe*'
                   - 'ecr:BatchCheckLayerAvailability'
                   - 'ecr:GetDownloadUrlForLayer'
                   - 'ecr:BatchGetImage'
+                  - 'elasticmapreduce:CreateCluster'
+                  - 'elasticmapreduce:ListClusters'
+                  - 'elasticmapreduce:DescribeCluster'
+                  - 'elasticmapreduce:AddJobFlowSteps'
+                  - 'elasticmapreduce:Describe*'
+                  - 'elasticmapreduce:ListSteps'
+                  - 'elasticmapreduce:RunJobFlow'
+                  - 'elasticmapreduce:TerminateJobFlows'
+                  - 'ec2:AuthorizeSecurityGroupIngress'
+                  - 'iam:PassRole'
                   - 'logs:CreateLogStream'
                   - 'logs:PutLogEvents'
+                Resource: '*'
+        - PolicyName: 'SecretsManagerAccess'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action:
+                  - 'secretsmanager:GetSecretValue'
+                  - 'secretsmanager:DescribeSecret'
                 Resource: '*'
 
 
