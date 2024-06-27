@@ -18,24 +18,11 @@ class Validator(ABC):
     def column_options(self) -> dict:
         return {'required': self.required_columns, 'optional': self.optional_columns}
 
-    @staticmethod
-    def infer_columns(data) -> dict:
-        res = {}
-        res.update(data.get("column_map"))
-        if res.get("beta") is None and res.get("oddsRatio") is not None:
-            res["beta"] = 'derived'
-        if res.get("stdErr") is None and res.get("beta") is not None:
-            res["stdErr"] = 'derived'
-        if res.get("zScore") is None and res.get("beta") is not None and res.get("stdErr") is not None:
-            res["zScore"] = 'derived'
-        if res.get("maf") is None and res.get("eaf") is not None:
-            res["maf"] = 'derived'
-        return res
-
 
 class HermesValidator(Validator):
-    required_fields = ['chromosome', 'position', 'reference', 'alt', 'pValue']
-    optional_fields = ['beta', 'oddsRatio', 'stdErr', 'n', 'zScore', 'maf', 'eaf', 'rsid']
+    required_fields = ['chromosome', 'position', 'reference', 'alt', 'pValue', 'N total', 'imputation score']
+    optional_fields = ['beta', 'oddsRatio', 'stdErr', 'n', 'zScore', 'maf', 'eaf', 'rsid', 'variant ID',
+                       'N case/ events']
 
     def __init__(self):
         super().__init__(HermesValidator.required_fields, HermesValidator.optional_fields)
@@ -44,13 +31,11 @@ class HermesValidator(Validator):
         errors = []
         col_map = data.get("column_map")
         errors.extend(self.check_required_columns(list(col_map.keys())))
-        inferred_cols = Validator.infer_columns(data)
-        if inferred_cols.get("beta") is None:
-            errors.append("You must specify beta or oddsRatio")
-        if inferred_cols.get("stdErr") is None:
-            errors.append("You must specify stdErr or beta")
-        if inferred_cols.get("zScore") is None:
-            errors.append("You must specify zScore or beta and stdErr")
-        if inferred_cols.get("maf") is None:
-            errors.append("You must specify maf or eaf")
+        required_metadata = ["cohort", "ancestry", "case_ascertainment", "case_type", "phenotype", "participants",
+                             "cases", "sex_proportion", "age_at_first_documented_study_phenotype",
+                             "analysis_software", "statistical_modlel", "covariates"]
+        for field in required_metadata:
+            if not data.get(field):
+                errors.append(f"You must specify {field}")
+
         return errors
