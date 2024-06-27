@@ -33,7 +33,7 @@ class HermesValidator(Validator):
         errors.extend(self.check_required_columns(list(col_map.keys())))
         required_metadata = ["cohort", "ancestry", "case_ascertainment", "case_type", "phenotype", "participants",
                              "cases", "sex_proportion", "age_at_first_documented_study_phenotype",
-                             "analysis_software", "statistical_modlel", "covariates"]
+                             "analysis_software", "statistical_model", "covariates"]
         for field in required_metadata:
             if not data.get(field):
                 errors.append(f"You must specify {field}")
