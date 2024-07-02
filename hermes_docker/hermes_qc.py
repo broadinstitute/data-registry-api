@@ -37,7 +37,7 @@ def convert_to_genepi_map(col_map):
 
 def run_r_commands(file_path, file_guid, col_map):
     genepi_map = convert_to_genepi_map(col_map)
-    col_mapping = ",".join([f"{k}=\"{v}\"" for k, v in genepi_map.items()])
+    col_mapping = ",".join([f"\"{k}\"=\"{v}\"" for k, v in genepi_map.items()])
     r_commands = """
     library('genepi.utils')
     library(data.table)
