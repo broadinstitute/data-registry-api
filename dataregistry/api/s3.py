@@ -99,3 +99,7 @@ def finalize_upload(directory, name, parts, multipart_upload):
         },
         UploadId=multipart_upload['UploadId'],
     )
+
+
+def move_datasets_for_intake(data_sets):
+    return None

@@ -27,7 +27,7 @@ from dataregistry.api.google_oauth import get_google_user
 from dataregistry.api.jwt import get_encoded_jwt_data, get_decoded_jwt_data
 from dataregistry.api.model import DataSet, Study, SavedDatasetInfo, SavedDataset, UserCredentials, User, SavedStudy, \
     CreateBiondexRequest, CsvBioIndexRequest, BioIndexCreationStatus, SavedCsvBioIndexRequest, HermesFileStatus, \
-    HermesUploadStatus, NewUserRequest, StartAggregatorRequest
+    HermesUploadStatus, NewUserRequest, StartAggregatorRequest, MetaAnalysisRequest
 from dataregistry.api.validators import HermesValidator
 
 HERMES_VALIDATOR = HermesValidator()
@@ -282,6 +282,26 @@ async def start_aggregator(req: StartAggregatorRequest, authorization: Optional[
     if authorization == AGGREGATOR_API_SECRET or (user and VIEW_ALL_ROLES.intersection(user.roles)):
         job_id = batch.submit_aggregator_job(req.branch, req.method, req.args)
         return {"job_id": job_id}
+    else:
+        raise fastapi.HTTPException(status_code=403, detail="You don't have permission to perform this action")
+
+
+@router.get("/hermes-meta-analysis")
+async def get_metanalyses(user: User = Depends(get_current_user)):
+    if check_hermes_admin_perms(user):
+        return query.get_meta_analyses(engine)
+    else:
+        raise fastapi.HTTPException(status_code=403, detail="You need to be a reviewer")
+
+
+@router.post("/hermes-meta-analysis")
+async def start_metanalysis(req: MetaAnalysisRequest, user: Optional[User] = Depends(get_current_user)):
+    if check_hermes_admin_perms(user):
+        ma_id = query.save_meta_analysis(engine, req)
+        return {'meta-analysis-id', ma_id}
+        # s3.move_datasets_for_intake(req.datasets)
+        # job_id = batch.submit_aggregator_job('dh-meta-analysis-testing', req.method, '--no-insert-runs --yes')
+        # return {"job_id": job_id}
     else:
         raise fastapi.HTTPException(status_code=403, detail="You don't have permission to perform this action")
 

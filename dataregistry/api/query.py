@@ -10,7 +10,8 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from dataregistry.api.model import SavedDataset, DataSet, Study, SavedStudy, SavedPhenotypeDataSet, SavedCredibleSet, \
-    CsvBioIndexRequest, SavedCsvBioIndexRequest, User, FileUpload, NewUserRequest, HermesUser
+    CsvBioIndexRequest, SavedCsvBioIndexRequest, User, FileUpload, NewUserRequest, HermesUser, MetaAnalysisRequest, \
+    HermesMetaAnalysisStatus, SavedMetaAnalysisRequest
 from dataregistry.id_shortener import shorten_uuid
 
 
@@ -552,3 +553,54 @@ def get_hermes_users(engine):
                                    "join user_roles ur on ur.user_id = u.id join roles r on ur.role_id = r.id "
                                    "where g.group_name = 'hermes'"))
         return [HermesUser(**row._asdict()) for row in result]
+
+
+def save_meta_analysis(engine, req: MetaAnalysisRequest):
+    with engine.connect() as conn:
+        new_guid = str(uuid.uuid4())
+        insert_main = """
+            INSERT INTO meta_analyses (id, name, phenotype, status, created_at, method, created_by) VALUES (:id, :name, 
+            :phenotype, :status, NOW(), :method, :created_by)
+        """
+        insert_ds = """
+            INSERT INTO meta_analysis_datasets(dataset_id, meta_analysis_id) VALUES (:dataset_id, :meta_analysis_id)
+        """
+        conn.execute(text(insert_main), {'id': new_guid.replace('-', ''), 'name': req.name,
+                                         'phenotype': req.phenotype, 'status': HermesMetaAnalysisStatus.SUBMITTED,
+                                         'method': req.method, 'created_by': req.created_by})
+        for ds in req.datasets:
+            conn.execute(text(insert_ds), {'dataset_id': str(ds).replace('-', ''),
+                                           'meta_analysis_id': new_guid.replace('-', '')})
+        conn.commit()
+        return new_guid
+
+
+def format_uuid(uuid_str):
+    # Properly format a UUID string that is missing dashes
+    return f"{uuid_str[:8]}-{uuid_str[8:12]}-{uuid_str[12:16]}-{uuid_str[16:20]}-{uuid_str[20:]}"
+
+def format_uuid_from_bytes(uuid_bytes):
+    return str(uuid.UUID(bytes=uuid_bytes))
+
+def get_meta_analyses(engine):
+    with engine.connect() as conn:
+        sql = """
+            select ma.id, ma.name, ma.phenotype, ma.status, ma.method, ma.created_at, ma.created_by, 
+            group_concat(fu.dataset) as dataset_names, group_concat(mad.dataset_id) as datasets 
+            from meta_analyses ma join meta_analysis_datasets mad on ma.id = mad.meta_analysis_id 
+            join file_uploads fu on fu.id = mad.dataset_id group by ma.id
+        """
+        result = conn.execute(text(sql)).mappings().all()
+        return [
+            SavedMetaAnalysisRequest(
+                id=row['id'],
+                name=row['name'],
+                phenotype=row['phenotype'],
+                status=row['status'],
+                method=row['method'],
+                created_at=row['created_at'],
+                created_by=row['created_by'],
+                datasets=[uuid.UUID(hex=x) for x in row['datasets'].decode('utf-8').split(',') if x],
+                dataset_names=row['dataset_names'].split(',')
+            ) for row in result
+        ]

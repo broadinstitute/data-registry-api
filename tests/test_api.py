@@ -176,7 +176,6 @@ def test_upload_credible_set(api_client: TestClient):
     assert cs_response.text == "The answer is 47!\n"
 
 
-
 @pytest.mark.parametrize("df", DataFormat.__members__.values())
 @mock_s3
 def test_valid_data_formats_post(api_client: TestClient, df: DataFormat):
@@ -227,6 +226,31 @@ def test_preview_delimited_file(api_client: TestClient):
 
 @mock_s3
 @mock_batch
+def test_start_meta_analysis(mocker, api_client: TestClient):
+    set_up_moto_bucket()
+    patch = mocker.patch('dataregistry.api.batch.submit_and_await_job')
+    patch.return_value = None
+    with open('tests/test_csv_upload.csv', mode='rb') as f:
+        res = api_client.post('api/upload-hermes', headers={AUTHORIZATION: auth_token, 'Filename': 'foo.csv',
+                                                            'Dataset': 'unit-test-dataset',
+                                                            'Metadata': json.dumps({'b': 1, 'phenotype': 'T2D',
+                                                                                    'column_map': {"alt": "OA"}})},
+                              files={'file': f})
+        result_dict = res.json()
+        file_id = result_dict.get("file_id")
+    res = api_client.post('api/hermes-meta-analysis', headers={AUTHORIZATION: auth_token}, json={'method': 'intake',
+                                                                                           'datasets': [file_id],
+                                                                                           'name': 'Test Metadata',
+                                                                                           'phenotype': 'T2D',
+                                                                                           'created_by': 'dhite'})
+    assert "meta-analysis-id" in res.json()
+    res = api_client.get('api/hermes-meta-analysis', headers={AUTHORIZATION: auth_token})
+    ma_results = res.json()
+    assert ma_results[0].get("name") == "Test Metadata"
+    assert ma_results[0].get("dataset_names") == ['unit-test-dataset']
+
+@mock_s3
+@mock_batch
 def test_upload_hermes_csv(mocker, api_client: TestClient):
     set_up_moto_bucket()
     patch = mocker.patch('dataregistry.api.batch.submit_and_await_job')
@@ -262,6 +286,7 @@ def test_upload_hermes_csv(mocker, api_client: TestClient):
     file_uploads = api_client.get(f"api/upload-hermes?phenotype=T2D&limit=10&offset=0",
                                   headers={AUTHORIZATION: auth_token}).json()
     assert len(file_uploads) == 1
+
 
 @mock_s3
 def test_upload_csv(api_client: TestClient):
