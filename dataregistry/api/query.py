@@ -473,6 +473,14 @@ def update_file_upload_qc_log(engine, qc_log: str, file_upload_id: str, qc_statu
         conn.commit()
 
 
+def update_meta_analysis_log(engine, log: str, meta_analysis_id: str, status: str):
+    with engine.connect() as conn:
+        conn.execute(text("UPDATE meta_analyses set log=:log, status = :status where id = :meta_analysis_id"),
+                     {'log': log, 'status': status,
+                      'meta_analysis_id': meta_analysis_id.replace('-', '')})
+        conn.commit()
+
+
 def fetch_file_upload(engine, file_id) -> FileUpload:
     with engine.connect() as conn:
         result = conn.execute(
@@ -575,13 +583,6 @@ def save_meta_analysis(engine, req: MetaAnalysisRequest):
         return new_guid
 
 
-def format_uuid(uuid_str):
-    # Properly format a UUID string that is missing dashes
-    return f"{uuid_str[:8]}-{uuid_str[8:12]}-{uuid_str[12:16]}-{uuid_str[16:20]}-{uuid_str[20:]}"
-
-def format_uuid_from_bytes(uuid_bytes):
-    return str(uuid.UUID(bytes=uuid_bytes))
-
 def get_meta_analyses(engine):
     with engine.connect() as conn:
         sql = """
@@ -604,3 +605,11 @@ def get_meta_analyses(engine):
                 dataset_names=row['dataset_names'].split(',')
             ) for row in result
         ]
+
+
+def get_path_for_ds(engine, ds) -> str:
+    with engine.connect() as conn:
+        result = conn.execute(text("select s3_path from file_uploads where id = :id"),
+                              {'id': str(ds).replace('-', '')}).first()
+
+        return result[0]

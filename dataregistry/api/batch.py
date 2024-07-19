@@ -1,7 +1,7 @@
 import time
 
 import boto3
-from dataregistry.api import query
+
 from dataregistry.api.model import HermesFileStatus
 from dataregistry.api.s3 import S3_REGION
 
@@ -19,15 +19,10 @@ def submit_aggregator_job(branch, method, extra_args):
     return job_id
 
 
-def submit_and_await_job(engine, s3_path, file_guid, col_map):
+def submit_and_await_job(engine, job_config, db_callback, identifier, is_qc=True):
     batch_client = boto3.client('batch', region_name=S3_REGION)
 
-    response = batch_client.submit_job(
-        jobName='hermes-qc-job',
-        jobQueue='hermes-qc-job-queue',
-        jobDefinition='hermes-qc-job',
-        parameters={'s3-path': s3_path, 'file-guid': file_guid, 'col-map': col_map},
-    )
+    response = batch_client.submit_job(**job_config)
     job_id = response['jobId']
     logs_client = boto3.client('logs', region_name=S3_REGION)
     while True:
@@ -42,8 +37,11 @@ def submit_and_await_job(engine, s3_path, file_guid, col_map):
             )
             log_messages = [event['message'] for event in log_events['events']]
             complete_log = '\n'.join(log_messages)
-            query.update_file_upload_qc_log(engine, complete_log, file_guid,
-                                            HermesFileStatus.READY_FOR_REVIEW if job_status == 'SUCCEEDED' else
-                                            HermesFileStatus.FAILED_QC)
+            if is_qc:
+                db_callback(engine, complete_log, identifier,
+                            HermesFileStatus.READY_FOR_REVIEW if job_status == 'SUCCEEDED' else
+                            HermesFileStatus.FAILED_QC)
+            else:
+                db_callback(engine, complete_log, identifier, job_status)
             break
         time.sleep(60)

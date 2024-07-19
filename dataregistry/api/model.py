@@ -17,7 +17,7 @@ class MetaAnalysisRequest(BaseModel):
     datasets: List[UUID]
     name: str
     phenotype: str
-    created_by: str
+    created_by: Union[str, None]
 
 
 class SavedMetaAnalysisRequest(MetaAnalysisRequest):

@@ -27,6 +27,7 @@ def upgrade() -> None:
         `created_at` datetime NOT NULL,
         `method` varchar(100) NOT NULL,
         `created_by` varchar(100) NOT NULL,
+        `log` text NULL,
         PRIMARY KEY (`id`)
         )
         """

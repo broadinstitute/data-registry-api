@@ -38,6 +38,7 @@ VIEW_ALL_ROLES = {SUPER_USER, 'analyst', 'reviewer'}
 
 AUTH_COOKIE_NAME = 'dr_auth_token'
 AGGREGATOR_API_SECRET = os.getenv('AGGREGATOR_API_SECRET')
+AGGREGATOR_BRANCH = os.getenv('AGGREGATOR_BRANCH', 'dh-meta-analysis-testing-qa')
 
 router = fastapi.APIRouter()
 
@@ -295,13 +296,26 @@ async def get_metanalyses(user: User = Depends(get_current_user)):
 
 
 @router.post("/hermes-meta-analysis")
-async def start_metanalysis(req: MetaAnalysisRequest, user: Optional[User] = Depends(get_current_user)):
+async def start_metanalysis(req: MetaAnalysisRequest, background: BackgroundTasks, user: Optional[User] = Depends(get_current_user)):
     if check_hermes_admin_perms(user):
+        req.created_by = user.user_name
         ma_id = query.save_meta_analysis(engine, req)
-        return {'meta-analysis-id', ma_id}
-        # s3.move_datasets_for_intake(req.datasets)
-        # job_id = batch.submit_aggregator_job('dh-meta-analysis-testing', req.method, '--no-insert-runs --yes')
-        # return {"job_id": job_id}
+        paths_to_copy = [query.get_path_for_ds(engine, ds) for ds in req.datasets]
+        s3.clear_variants_raw()
+        for path in paths_to_copy:
+            s3.copy_files_for_meta_analysis(path,
+                                            f"hermes/variants_raw/GWAS/{path.replace('hermes/', '')}/{req.phenotype}")
+        background.add_task(batch.submit_and_await_job, engine,
+                 {
+                     'jobName': 'aggregator-web',
+                     'jobQueue': 'aggregator-web-api-queue',
+                     'jobDefinition': 'aggregator-web-job',
+                     'parameters': {
+                         'branch': AGGREGATOR_BRANCH,
+                         'method': req.method,
+                         'args': '--no-insert-runs --yes --clusters=1',
+                     }}, query.update_meta_analysis_log, ma_id.replace('-', ''), is_qc=False)
+        return {'meta-analysis-id': ma_id}
     else:
         raise fastapi.HTTPException(status_code=403, detail="You don't have permission to perform this action")
 
@@ -322,8 +336,16 @@ async def upload_hermes_csv(request: Request, background_tasks: BackgroundTasks,
         parser.data_received(chunk)
     s3.upload_metadata(metadata, s3_path)
     file_guid = query.save_file_upload_info(engine, dataset, metadata, s3_path, filename, file_size, user.user_name)
-    background_tasks.add_task(batch.submit_and_await_job, engine, s3.get_full_s3_path(s3_path, filename),
-                              file_guid, json.dumps(metadata["column_map"]))
+    background_tasks.add_task(batch.submit_and_await_job, engine,
+                              {
+                                  'jobName': 'hermes-qc-job',
+                                  'jobQueue': 'hermes-qc-job-queue',
+                                  'jobDefinition': 'hermes-qc-job',
+                                  'parameters': {
+                                      's3-path': s3.get_full_s3_path(s3_path, filename),
+                                      'file-guid': file_guid,
+                                      'col-map': json.dumps(metadata["column_map"]),
+                                  }}, query.update_file_upload_qc_log, file_guid, True)
     return {"file_size": file_size, "s3_path": s3.get_file_path(s3_path, filename), "file_id": file_guid}
 
 
