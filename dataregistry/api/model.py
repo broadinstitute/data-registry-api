@@ -12,6 +12,21 @@ class StartAggregatorRequest(BaseModel):
     args: str
 
 
+class MetaAnalysisRequest(BaseModel):
+    method: str
+    datasets: List[UUID]
+    name: str
+    phenotype: str
+    created_by: Union[str, None]
+
+
+class SavedMetaAnalysisRequest(MetaAnalysisRequest):
+    id: UUID
+    created_at: datetime
+    dataset_names: List[str]
+    status: str
+
+
 class DataSourceType(str, Enum):
     api = "api"
     file = "file"
@@ -119,6 +134,12 @@ class HermesFileStatus(str, Enum):
     READY_FOR_REVIEW = "READY FOR REVIEW"
     REVIEW_APPROVED = "REVIEW APPROVED"
     REVIEW_REJECTED = "REVIEW REJECTED"
+
+
+class HermesMetaAnalysisStatus(str, Enum):
+    SUBMITTED = "SUBMITTED"
+    FAILED = "FAILED"
+    READY_FOR_REVIEW = "READY FOR REVIEW"
 
 
 class HermesUploadStatus(BaseModel):
