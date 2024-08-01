@@ -19,11 +19,11 @@ clone_and_build() {
   fi
 
   pushd "$dir_name" || exit 1
-  sbt compile
+  sbt compile || exit 1
 
   if [ -d "$method" ]; then
     pushd "$method" || exit 1
-    sbt "run -c ../config.json $cli_flags"
+    sbt "run -c ../config.json $cli_flags" || exit 1
     popd
   else
     echo "Method directory '$method' does not exist."
