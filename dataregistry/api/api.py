@@ -295,8 +295,17 @@ async def get_metanalyses(user: User = Depends(get_current_user)):
         raise fastapi.HTTPException(status_code=403, detail="You need to be a reviewer")
 
 
+@router.get("/hermes-meta-analysis/{ma_id}")
+async def get_metanalysis(ma_id: UUID, user: User = Depends(get_current_user)):
+    if check_hermes_admin_perms(user):
+        return query.get_meta_analysis(engine, ma_id)
+    else:
+        raise fastapi.HTTPException(status_code=403, detail="You need to be a reviewer")
+
+
 @router.post("/hermes-meta-analysis")
-async def start_metanalysis(req: MetaAnalysisRequest, background: BackgroundTasks, user: Optional[User] = Depends(get_current_user)):
+async def start_metanalysis(req: MetaAnalysisRequest, background: BackgroundTasks,
+                            user: Optional[User] = Depends(get_current_user)):
     if check_hermes_admin_perms(user):
         req.created_by = user.user_name
         ma_id = query.save_meta_analysis(engine, req)
@@ -306,15 +315,15 @@ async def start_metanalysis(req: MetaAnalysisRequest, background: BackgroundTask
             s3.copy_files_for_meta_analysis(path,
                                             f"hermes/variants_raw/GWAS/{path.replace('hermes/', '')}/{req.phenotype}")
         background.add_task(batch.submit_and_await_job, engine,
-                 {
-                     'jobName': 'aggregator-web',
-                     'jobQueue': 'aggregator-web-api-queue',
-                     'jobDefinition': 'aggregator-web-job',
-                     'parameters': {
-                         'branch': AGGREGATOR_BRANCH,
-                         'method': req.method,
-                         'args': '--no-insert-runs --yes --clusters=1',
-                     }}, query.update_meta_analysis_log, ma_id.replace('-', ''), is_qc=False)
+                            {
+                                'jobName': 'aggregator-web',
+                                'jobQueue': 'aggregator-web-api-queue',
+                                'jobDefinition': 'aggregator-web-job',
+                                'parameters': {
+                                    'branch': AGGREGATOR_BRANCH,
+                                    'method': req.method,
+                                    'args': '--no-insert-runs --yes --clusters=1',
+                                }}, query.update_meta_analysis_log, ma_id.replace('-', ''), is_qc=False)
         return {'meta-analysis-id': ma_id}
     else:
         raise fastapi.HTTPException(status_code=403, detail="You don't have permission to perform this action")
