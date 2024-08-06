@@ -306,27 +306,31 @@ async def get_metanalysis(ma_id: UUID, user: User = Depends(get_current_user)):
 @router.post("/hermes-meta-analysis")
 async def start_metanalysis(req: MetaAnalysisRequest, background: BackgroundTasks,
                             user: Optional[User] = Depends(get_current_user)):
-    if check_hermes_admin_perms(user):
-        req.created_by = user.user_name
-        ma_id = query.save_meta_analysis(engine, req)
-        paths_to_copy = [query.get_path_for_ds(engine, ds) for ds in req.datasets]
-        s3.clear_variants_raw()
-        for path in paths_to_copy:
-            s3.copy_files_for_meta_analysis(path,
-                                            f"hermes/variants_raw/GWAS/{path.replace('hermes/', '')}/{req.phenotype}")
-        background.add_task(batch.submit_and_await_job, engine,
-                            {
-                                'jobName': 'aggregator-web',
-                                'jobQueue': 'aggregator-web-api-queue',
-                                'jobDefinition': 'aggregator-web-job',
-                                'parameters': {
-                                    'branch': AGGREGATOR_BRANCH,
-                                    'method': req.method,
-                                    'args': '--no-insert-runs --yes --clusters=1',
-                                }}, query.update_meta_analysis_log, ma_id.replace('-', ''), is_qc=False)
-        return {'meta-analysis-id': ma_id}
-    else:
+    if not check_hermes_admin_perms(user):
         raise fastapi.HTTPException(status_code=403, detail="You don't have permission to perform this action")
+
+    req.created_by = user.user_name
+    ma_id = query.save_meta_analysis(engine, req)
+    query.save_phenotype(engine, req.phenotype)
+    for ds in req.datasets:
+        ds_name, ancestry = query.get_name_ancestry_for_ds(engine, ds)
+        query.save_dataset_name(engine, ds_name, ancestry)
+    paths_to_copy = [query.get_path_for_ds(engine, ds) for ds in req.datasets]
+    s3.clear_variants_raw()
+    for path in paths_to_copy:
+        s3.copy_files_for_meta_analysis(path,
+                                        f"hermes/variants_raw/GWAS/{path.replace('hermes/', '')}/{req.phenotype}")
+    background.add_task(batch.submit_and_await_job, engine,
+                        {
+                            'jobName': 'aggregator-web',
+                            'jobQueue': 'aggregator-web-api-queue',
+                            'jobDefinition': 'aggregator-web-job',
+                            'parameters': {
+                                'branch': AGGREGATOR_BRANCH,
+                                'method': req.method,
+                                'args': '--no-insert-runs --yes --clusters=1',
+                            }}, query.update_meta_analysis_log, ma_id.replace('-', ''), is_qc=False)
+    return {'meta-analysis-id': ma_id}
 
 
 @router.post("/upload-hermes")
