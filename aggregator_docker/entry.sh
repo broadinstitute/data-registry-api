@@ -1,18 +1,18 @@
 #!/bin/bash
 
 BRANCH_NAME=$1
-METHOD=$2
+METHODS=$2  # Expected to be a space-separated list of methods
 CLI_FLAGS=$3
 
+# Function to clone and build a repository
+# Usage: clone_and_build branch_name
 clone_and_build() {
+  local branch_name=$1
   local repo_url="https://github.com/broadinstitute/dig-aggregator-methods"
   local dir_name="dig-aggregator-methods"
-  local branch=$1
-  local method=$2
-  local cli_flags=$3
 
-  echo "Cloning $repo_url on branch $branch..."
-  git clone -b $branch $repo_url $dir_name
+  echo "Cloning $repo_url on branch $branch_name..."
+  git clone -b $branch_name $repo_url $dir_name
   if [ $? -ne 0 ]; then
     echo "Failed to clone repository."
     exit 1
@@ -20,15 +20,24 @@ clone_and_build() {
 
   pushd "$dir_name" || exit 1
   sbt compile || exit 1
-
-  if [ -d "$method" ]; then
-    pushd "$method" || exit 1
-    sbt "run -c ../config.json $cli_flags" || exit 1
-    popd
-  else
-    echo "Method directory '$method' does not exist."
-    exit 1
-  fi
-  popd
 }
-clone_and_build "$BRANCH_NAME" "$METHOD" "$CLI_FLAGS"
+
+
+run_stage() {
+  local method_and_stage=$1
+  local cli_flags=$2
+  local method="${method_and_stage%%:*}"  # Extract method name before ':'
+  local stage="${method_and_stage##*:}"  # Extract stage name after ':', if any
+
+  if [ "$method" != "$stage" ]; then
+    ./run.sh "$method" --stage "$stage" "$cli_flags"
+  else
+    ./run.sh "$method" "$cli_flags"
+  fi
+}
+
+clone_and_build "$BRANCH_NAME"
+IFS=' ' read -ra ADDR <<< "$METHODS"
+for method in "${ADDR[@]}"; do
+  run_stage "$method" "$CLI_FLAGS"
+done

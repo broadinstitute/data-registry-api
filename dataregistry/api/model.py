@@ -25,6 +25,7 @@ class SavedMetaAnalysisRequest(MetaAnalysisRequest):
     created_at: datetime
     dataset_names: List[str]
     status: str
+    log: Union[str, None]
 
 
 class DataSourceType(str, Enum):
