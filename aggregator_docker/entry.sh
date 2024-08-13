@@ -1,8 +1,10 @@
 #!/bin/bash
 
-BRANCH_NAME=$1
-METHODS=$2  # Expected to be a space-separated list of methods
-CLI_FLAGS=$3
+MA_GUID=$1
+BUCKET=$2
+BRANCH_NAME=$3
+METHODS=$4  # Expected to be a space-separated list of methods
+CLI_FLAGS=$5
 
 # Function to clone and build a repository
 # Usage: clone_and_build branch_name
@@ -41,3 +43,5 @@ IFS=' ' read -ra ADDR <<< "$METHODS"
 for method in "${ADDR[@]}"; do
   run_stage "$method" "$CLI_FLAGS"
 done
+
+python3 plotMetaAnalysis.py --guid "$MA_GUID" --bucket "$BUCKET"

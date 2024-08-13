@@ -317,6 +317,9 @@ async def start_metanalysis(req: MetaAnalysisRequest, background: BackgroundTask
         query.save_dataset_name(engine, ds_name, ancestry)
     paths_to_copy = [query.get_path_for_ds(engine, ds) for ds in req.datasets]
     s3.clear_variants_raw()
+    s3.clear_variants_processed()
+    s3.clear_meta_analysis()
+    s3.clear_variants()
     for path in paths_to_copy:
         s3.copy_files_for_meta_analysis(path,
                                         f"hermes/variants_raw/GWAS/{path.replace('hermes/', '')}/{req.phenotype}")
@@ -326,6 +329,7 @@ async def start_metanalysis(req: MetaAnalysisRequest, background: BackgroundTask
                             'jobQueue': 'aggregator-web-api-queue',
                             'jobDefinition': 'aggregator-web-job',
                             'parameters': {
+                                'guid': str(ma_id),
                                 'branch': AGGREGATOR_BRANCH,
                                 'method': req.method,
                                 'args': '--no-insert-runs --yes --clusters=1',

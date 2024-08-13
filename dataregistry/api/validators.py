@@ -20,7 +20,7 @@ class Validator(ABC):
 
 
 class HermesValidator(Validator):
-    required_fields = ['chromosome', 'position', 'reference', 'alt', 'pValue', 'n', 'imputed']
+    required_fields = ['chromosome', 'position', 'reference', 'alt', 'pValue']
     optional_fields = ['beta', 'oddsRatio', 'stdErr', 'zScore', 'maf', 'eaf', 'rsid', 'variant ID',
                        'N case/ events']
 
