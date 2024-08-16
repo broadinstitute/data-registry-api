@@ -329,6 +329,7 @@ async def start_metanalysis(req: MetaAnalysisRequest, background: BackgroundTask
                             'jobQueue': 'aggregator-web-api-queue',
                             'jobDefinition': 'aggregator-web-job',
                             'parameters': {
+                                'bucket': s3.BASE_BUCKET,
                                 'guid': str(ma_id),
                                 'branch': AGGREGATOR_BRANCH,
                                 'method': req.method,
@@ -440,6 +441,10 @@ async def get_file_obj(file_id, ft):
             raise fastapi.HTTPException(status_code=404, detail=f'Invalid file type: {ft}')
     except ValueError:
         raise fastapi.HTTPException(status_code=404, detail=f'Invalid file: {file_id}')
+    return await get_s3_file_name_and_obj(s3_path)
+
+
+async def get_s3_file_name_and_obj(s3_path):
     split = s3_path[5:].split('/')
     bucket = split[0]
     file_name = split[-1]
@@ -447,6 +452,16 @@ async def get_file_obj(file_id, ft):
     obj = s3.get_file_obj(file_path, bucket)
     return file_name, obj
 
+@router.get("/hermes-ma/results/{ma_id}")
+async def stream_ma(ma_id: str):
+    name, obj = await get_s3_file_name_and_obj(f"s3://{s3.BASE_BUCKET}/hermes/ma-results/{ma_id}/combined_data.csv.gz")
+
+    def generator():
+        for chunk in iter(lambda: obj['Body'].read(4096), b''):
+            yield chunk
+
+    return StreamingResponse(generator(), media_type='application/octet-stream',
+                             headers={"Content-Disposition": f"attachment; filename={name}"})
 
 @router.get("/{ft}/{file_id}", name="stream_file")
 async def stream_file(file_id: str, ft: str):

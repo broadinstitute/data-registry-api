@@ -43,5 +43,5 @@ IFS=' ' read -ra ADDR <<< "$METHODS"
 for method in "${ADDR[@]}"; do
   run_stage "$method" "$CLI_FLAGS"
 done
-
+cd /app
 python3 plotMetaAnalysis.py --guid "$MA_GUID" --bucket "$BUCKET"

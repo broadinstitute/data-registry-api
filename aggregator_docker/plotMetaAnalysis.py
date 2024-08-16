@@ -129,27 +129,29 @@ def main():
     ax.hlines(5, 0, xmax, linestyle='dashed', color='gray')
     ax.hlines(8, 0, xmax, linestyle='dashed', color='red')
 
-    with pd.ExcelWriter('combined_data.csv.gz', mode='a', engine='openpyxl', compression='gzip') as writer:
-        for i, part in enumerate(parts, start=1):
-            print(f'Plotting {part} ({i}/{len(parts)})...')
+    for i, part in enumerate(parts, start=1):
+        print(f'Plotting {part} ({i}/{len(parts)})...')
 
-            # Read the part into memory; remove invalid p-value records
-            df = pd.read_json(f'{parts_dir}/{part}', lines=True)
-            df = df[(df['pValue'] > 0) & (df['pValue'] <= 1)]
-            df['chromosome'] = df['chromosome'].astype(str)
+        # Read the part into memory; remove invalid p-value records
+        df = pd.read_json(f'{parts_dir}/{part}', lines=True)
+        df = df[(df['pValue'] > 0) & (df['pValue'] <= 1)]
+        df['chromosome'] = df['chromosome'].astype(str)
 
-            # Create the -log10(p) column
-            df['y'] = df['pValue'].map(lambda p: -math.log10(p))
+        # Create the -log10(p) column
+        df['y'] = df['pValue'].map(lambda p: -math.log10(p))
 
-            # Calculate the x-position
-            df = df.merge(chrom_pos, on='chromosome', how='left')
-            df['x'] = df['x'] + df['position']
+        # Calculate the x-position
+        df = df.merge(chrom_pos, on='chromosome', how='left')
+        df['x'] = df['x'] + df['position']
+        ax.scatter(df['x'], df['y'], s=5, color=df['color'])
 
-            # Save the processed DataFrame to CSV
-            df.to_csv(writer, mode='a', header=not writer.fh.exists(), index=False)
 
-            # Append just the p-value to the qq dataframe
-            p_values = pd.concat([p_values, df['y'].copy()])
+        p_values = pd.concat([p_values, df['y'].copy()])
+
+        if i == 1:
+            df.to_csv('combined_data.csv.gz', mode='w', index=False, compression='gzip')
+        else:
+            df.to_csv('combined_data.csv.gz', mode='a', header=False, index=False, compression='gzip')
 
     # save the manhattan plot
     fig.set_size_inches(15, 8)
@@ -175,6 +177,9 @@ def main():
     # upload the plots to the bioindex
     subprocess.check_call(['aws', 's3', 'cp', 'manhattan.png', f'{outdir}/manhattan.png'])
     subprocess.check_call(['aws', 's3', 'cp', 'qq.png', f'{outdir}/qq.png'])
+    subprocess.check_call(['aws', 's3', 'cp', 'combined_data.csv.gz', f'{outdir}/combined_data.csv.gz'])
+    subprocess.check_call(['aws', 's3', 'cp', 'qq.png', f's3://hermes-qc/images/{args.guid}/qq.png'])
+    subprocess.check_call(['aws', 's3', 'cp', 'manhattan.png', f's3://hermes-qc/images/{args.guid}/manhattan.png'])
 
     # delete part files to make room for other plots
     shutil.rmtree(parts_dir, ignore_errors=True)
