@@ -3,7 +3,7 @@ import json
 import re
 import uuid
 from functools import lru_cache
-from typing import Optional, List
+from typing import Optional, List, Tuple, Any
 
 import bcrypt
 from sqlalchemy import text
@@ -611,3 +611,48 @@ def get_path_for_ds(engine, ds) -> str:
                               {'id': str(ds).replace('-', '')}).first()
 
         return result[0]
+
+
+def get_name_ancestry_for_ds(engine, ds) -> Tuple[str, str]:
+    with engine.connect() as conn:
+        result = conn.execute(text("select dataset, metadata->>'$.ancestry' as ancestry from file_uploads "
+                                   "where id = :id"), {'id': str(ds).replace('-', '')}).first()
+        return result[0], result[1]
+
+
+def save_phenotype(engine, phenotype):
+    with engine.connect() as conn:
+        conn.execute(text("INSERT INTO Phenotypes (name, dichotomous) VALUES (:phenotype, 1) "
+                          "ON DUPLICATE KEY UPDATE name = VALUES(name)"), {'phenotype': phenotype})
+        conn.commit()
+
+
+def save_dataset_name(engine, ds_name, ancestry):
+    with engine.connect() as conn:
+        conn.execute(text("INSERT INTO Datasets (name, ancestry) VALUES (:dataset, :ancestry) "
+                          "ON DUPLICATE KEY UPDATE name = VALUES(name)"),
+                     {'dataset': ds_name, 'ancestry': ancestry})
+        conn.commit()
+
+
+def get_meta_analysis(engine, ma_id: uuid.UUID) -> SavedMetaAnalysisRequest:
+    with engine.connect() as conn:
+        sql = """
+            select ma.id, ma.name, ma.phenotype, ma.status, ma.method, ma.created_at, ma.created_by, 
+            group_concat(fu.dataset) as dataset_names, ma.log, group_concat(mad.dataset_id) as datasets 
+            from meta_analyses ma join meta_analysis_datasets mad on ma.id = mad.meta_analysis_id 
+            join file_uploads fu on fu.id = mad.dataset_id where ma.id = :id group by ma.id
+        """
+        result = conn.execute(text(sql), {'id': str(ma_id).replace('-', '')}).mappings().first()
+        return SavedMetaAnalysisRequest(
+            id=result['id'],
+            name=result['name'],
+            phenotype=result['phenotype'],
+            status=result['status'],
+            method=result['method'],
+            created_at=result['created_at'],
+            created_by=result['created_by'],
+            log=result['log'],
+            datasets=[uuid.UUID(hex=x) for x in result['datasets'].decode('utf-8').split(',') if x],
+            dataset_names=result['dataset_names'].split(',')
+        )

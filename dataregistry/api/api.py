@@ -295,29 +295,47 @@ async def get_metanalyses(user: User = Depends(get_current_user)):
         raise fastapi.HTTPException(status_code=403, detail="You need to be a reviewer")
 
 
-@router.post("/hermes-meta-analysis")
-async def start_metanalysis(req: MetaAnalysisRequest, background: BackgroundTasks, user: Optional[User] = Depends(get_current_user)):
+@router.get("/hermes-meta-analysis/{ma_id}")
+async def get_metanalysis(ma_id: UUID, user: User = Depends(get_current_user)):
     if check_hermes_admin_perms(user):
-        req.created_by = user.user_name
-        ma_id = query.save_meta_analysis(engine, req)
-        paths_to_copy = [query.get_path_for_ds(engine, ds) for ds in req.datasets]
-        s3.clear_variants_raw()
-        for path in paths_to_copy:
-            s3.copy_files_for_meta_analysis(path,
-                                            f"hermes/variants_raw/GWAS/{path.replace('hermes/', '')}/{req.phenotype}")
-        background.add_task(batch.submit_and_await_job, engine,
-                 {
-                     'jobName': 'aggregator-web',
-                     'jobQueue': 'aggregator-web-api-queue',
-                     'jobDefinition': 'aggregator-web-job',
-                     'parameters': {
-                         'branch': AGGREGATOR_BRANCH,
-                         'method': req.method,
-                         'args': '--no-insert-runs --yes --clusters=1',
-                     }}, query.update_meta_analysis_log, ma_id.replace('-', ''), is_qc=False)
-        return {'meta-analysis-id': ma_id}
+        return query.get_meta_analysis(engine, ma_id)
     else:
+        raise fastapi.HTTPException(status_code=403, detail="You need to be a reviewer")
+
+
+@router.post("/hermes-meta-analysis")
+async def start_metanalysis(req: MetaAnalysisRequest, background: BackgroundTasks,
+                            user: Optional[User] = Depends(get_current_user)):
+    if not check_hermes_admin_perms(user):
         raise fastapi.HTTPException(status_code=403, detail="You don't have permission to perform this action")
+
+    req.created_by = user.user_name
+    ma_id = query.save_meta_analysis(engine, req)
+    query.save_phenotype(engine, req.phenotype)
+    for ds in req.datasets:
+        ds_name, ancestry = query.get_name_ancestry_for_ds(engine, ds)
+        query.save_dataset_name(engine, ds_name, ancestry)
+    paths_to_copy = [query.get_path_for_ds(engine, ds) for ds in req.datasets]
+    s3.clear_variants_raw()
+    s3.clear_variants_processed()
+    s3.clear_meta_analysis()
+    s3.clear_variants()
+    for path in paths_to_copy:
+        s3.copy_files_for_meta_analysis(path,
+                                        f"hermes/variants_raw/GWAS/{path.replace('hermes/', '')}/{req.phenotype}")
+    background.add_task(batch.submit_and_await_job, engine,
+                        {
+                            'jobName': 'aggregator-web',
+                            'jobQueue': 'aggregator-web-api-queue',
+                            'jobDefinition': 'aggregator-web-job',
+                            'parameters': {
+                                'bucket': s3.BASE_BUCKET,
+                                'guid': str(ma_id),
+                                'branch': AGGREGATOR_BRANCH,
+                                'method': req.method,
+                                'args': '--no-insert-runs --yes --clusters=1',
+                            }}, query.update_meta_analysis_log, ma_id.replace('-', ''), is_qc=False)
+    return {'meta-analysis-id': ma_id}
 
 
 @router.post("/upload-hermes")
@@ -423,6 +441,10 @@ async def get_file_obj(file_id, ft):
             raise fastapi.HTTPException(status_code=404, detail=f'Invalid file type: {ft}')
     except ValueError:
         raise fastapi.HTTPException(status_code=404, detail=f'Invalid file: {file_id}')
+    return await get_s3_file_name_and_obj(s3_path)
+
+
+async def get_s3_file_name_and_obj(s3_path):
     split = s3_path[5:].split('/')
     bucket = split[0]
     file_name = split[-1]
@@ -430,6 +452,16 @@ async def get_file_obj(file_id, ft):
     obj = s3.get_file_obj(file_path, bucket)
     return file_name, obj
 
+@router.get("/hermes-ma/results/{ma_id}")
+async def stream_ma(ma_id: str):
+    name, obj = await get_s3_file_name_and_obj(f"s3://{s3.BASE_BUCKET}/hermes/ma-results/{ma_id}/combined_data.csv.gz")
+
+    def generator():
+        for chunk in iter(lambda: obj['Body'].read(4096), b''):
+            yield chunk
+
+    return StreamingResponse(generator(), media_type='application/octet-stream',
+                             headers={"Content-Disposition": f"attachment; filename={name}"})
 
 @router.get("/{ft}/{file_id}", name="stream_file")
 async def stream_file(file_id: str, ft: str):

@@ -12,9 +12,25 @@ def create_record_directory(record_name):
 
 
 def clear_variants_raw():
+    clear_dir('hermes/variants_raw')
+
+
+def clear_variants():
+    clear_dir('hermes/variants')
+
+
+def clear_variants_processed():
+    clear_dir('hermes/variants_processed')
+
+
+def clear_meta_analysis():
+    clear_dir('hermes/out/metaanalysis')
+
+
+def clear_dir(prefix: str):
     s3 = boto3.client('s3')
     paginator = s3.get_paginator('list_objects_v2')
-    page_iterator = paginator.paginate(Bucket=BASE_BUCKET, Prefix='hermes/variants_raw')
+    page_iterator = paginator.paginate(Bucket=BASE_BUCKET, Prefix=prefix)
 
     for page in page_iterator:
         if "Contents" in page:
