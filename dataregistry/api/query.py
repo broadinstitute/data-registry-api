@@ -416,14 +416,12 @@ def gen_fetch_ds_sql(params, param_to_where):
           "qc_log, metadata->>'$.phenotype' as phenotype, metadata, s3_path from file_uploads "
 
     for index, (col, value) in enumerate(params.items(), start=0):
-
+        if col in {"limit", "offset"}:
+            break
         if index == 0:
             sql += f"WHERE {param_to_where.get(col)} "
         else:
-            if col in {"limit", "offset"}:
-                break
-            else:
-                sql += f" AND {param_to_where.get(col)} "
+            sql += f" AND {param_to_where.get(col)} "
 
     sql += " order by uploaded_at desc"
     return f"{sql} {param_to_where.get('limit', '')} {param_to_where.get('offset', '')}".rstrip()
