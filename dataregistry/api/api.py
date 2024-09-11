@@ -24,6 +24,7 @@ from streaming_form_data.targets import S3Target
 from dataregistry.api import query, s3, file_utils, ecs, bioidx, batch
 from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api.google_oauth import get_google_user
+from dataregistry.api.hermes_file_validation import validate_file
 from dataregistry.api.jwt import get_encoded_jwt_data, get_decoded_jwt_data
 from dataregistry.api.model import DataSet, Study, SavedDatasetInfo, SavedDataset, UserCredentials, User, SavedStudy, \
     CreateBiondexRequest, CsvBioIndexRequest, BioIndexCreationStatus, SavedCsvBioIndexRequest, HermesFileStatus, \
@@ -347,11 +348,15 @@ async def upload_hermes_csv(request: Request, background_tasks: BackgroundTasks,
     metadata = json.loads(metadata_str) if metadata_str else {}
     parser = StreamingFormDataParser(request.headers)
     s3_path = f"hermes/{dataset}"
-    parser.register("file", GzipS3Target(s3.get_file_path(s3_path, filename), mode='wb'))
+    path = s3.get_file_path(s3_path, filename)
+    parser.register("file", GzipS3Target(path, mode='wb'))
     file_size = 0
     async for chunk in request.stream():
         file_size += len(chunk)
         parser.data_received(chunk)
+    validation_errors = await validate_file(path, metadata.get('column_map'))
+    if len(validation_errors) > 0:
+        return {"errors": validation_errors}
     s3.upload_metadata(metadata, s3_path)
     file_guid = query.save_file_upload_info(engine, dataset, metadata, s3_path, filename, file_size, user.user_name)
     background_tasks.add_task(batch.submit_and_await_job, engine,
@@ -364,7 +369,7 @@ async def upload_hermes_csv(request: Request, background_tasks: BackgroundTasks,
                                       'file-guid': file_guid,
                                       'col-map': json.dumps(metadata["column_map"]),
                                   }}, query.update_file_upload_qc_log, file_guid, True)
-    return {"file_size": file_size, "s3_path": s3.get_file_path(s3_path, filename), "file_id": file_guid}
+    return {"file_size": file_size, "s3_path": path, "file_id": file_guid}
 
 
 @router.get("/upload-hermes/{file_id}")

@@ -1,6 +1,6 @@
 import gzip
 import io
-from typing import Union, Tuple
+from typing import Tuple
 
 import pandas as pd
 import numpy as np
