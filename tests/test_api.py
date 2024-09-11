@@ -221,7 +221,7 @@ def test_preview_delimited_file(api_client: TestClient):
     with open('tests/test_csv_upload.csv', mode='rb') as f:
         res = api_client.post('api/preview-delimited-file', headers={AUTHORIZATION: auth_token},
                               files={'file': f})
-        assert res.json() == {'columns': ['p-value', 'z-score', 'maf', 'chromosome', 'position', 'reference']}
+        assert res.json() == {'columns': ["ID","CHR","BP","OA","EA","EAF","BETA","SE","P","EUR_EAF","SNP"]}
 
 
 @mock_s3
@@ -234,7 +234,8 @@ def test_start_meta_analysis(mocker, api_client: TestClient):
         res = api_client.post('api/upload-hermes', headers={AUTHORIZATION: auth_token, 'Filename': 'foo.csv',
                                                             'Dataset': 'unit-test-dataset',
                                                             'Metadata': json.dumps({'b': 1, 'phenotype': 'T2D',
-                                                                                    'column_map': {"alt": "OA"}})},
+                                                                                    'column_map': {"chromosome": "CHR",
+                                                                                                   "position": "BP", "eaf": "EAF", "beta": "BETA", "se": "SE", "pValue": "P"}})},
                               files={'file': f})
         result_dict = res.json()
         file_id = result_dict.get("file_id")
@@ -259,7 +260,8 @@ def test_upload_hermes_csv(mocker, api_client: TestClient):
         res = api_client.post('api/upload-hermes', headers={AUTHORIZATION: auth_token, 'Filename': 'foo.csv',
                                                             'Dataset': 'unit-test-dataset',
                                                             'Metadata': json.dumps({'b': 1, 'phenotype': 'T2D',
-                                                                                    'column_map': {"alt": "OA"}})},
+                                                                                    'column_map': {"chromosome": "CHR",
+                                                                                                   "position": "BP", "eaf": "EAF", "beta": "BETA", "se": "SE", "pValue": "P"}})},
                               files={'file': f})
     result_dict = res.json()
     assert "file_size" in result_dict
