@@ -17,7 +17,7 @@ from botocore.exceptions import ClientError
 from fastapi import Depends, Body, Header, Query, UploadFile
 from starlette.background import BackgroundTasks
 from starlette.requests import Request
-from starlette.responses import StreamingResponse, Response
+from starlette.responses import StreamingResponse, Response, RedirectResponse
 from streaming_form_data import StreamingFormDataParser
 from streaming_form_data.targets import S3Target
 
@@ -470,14 +470,21 @@ async def stream_ma(ma_id: str):
 
 @router.get("/{ft}/{file_id}", name="stream_file")
 async def stream_file(file_id: str, ft: str):
-    file_name, obj = await get_file_obj(file_id, ft)
+    no_dash_id = query.shortened_file_id_lookup(file_id, ft, engine)
+    try:
+        if ft == "cs":
+            s3_path = query.get_credible_set_file(engine, no_dash_id)
+        elif ft == "d":
+            s3_path = query.get_phenotype_file(engine, no_dash_id)
+        else:
+            raise fastapi.HTTPException(status_code=404, detail=f'Invalid file type: {ft}')
+    except ValueError:
+        raise fastapi.HTTPException(status_code=404, detail=f'Invalid file: {file_id}')
+    split = s3_path[5:].split('/')
+    bucket = split[0]
+    path = '/'.join(split[1:])
+    return RedirectResponse(s3.get_signed_url(bucket, path))
 
-    def generator():
-        for chunk in iter(lambda: obj['Body'].read(4096), b''):
-            yield chunk
-
-    return StreamingResponse(generator(), media_type='application/octet-stream',
-                             headers={"Content-Disposition": f"attachment; filename={file_name}"})
 
 
 def get_possible_files(ds_uuid):

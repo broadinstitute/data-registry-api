@@ -124,15 +124,6 @@ def test_uploaded_file_is_not_public(api_client: TestClient):
 
 
 @mock_s3
-def test_uploaded_file_is_public(api_client: TestClient):
-    new_record = add_ds_with_file(api_client, public=True)
-    response = api_client.get(
-        f"/api/d/{new_record['phenotypes'][0]['short_id']}",
-        headers={AUTHORIZATION: auth_token})
-    assert response.status_code == HTTP_200_OK
-
-
-@mock_s3
 def test_list_files(api_client: TestClient):
     new_record = add_ds_with_file(api_client, public=True)
     response = api_client.get(f"/api/filelist/{new_record['dataset']['id']}", headers={AUTHORIZATION: auth_token})
@@ -172,8 +163,6 @@ def test_upload_credible_set(api_client: TestClient):
     json = saved_dataset.json()
     credible_sets = json['credible_sets']
     assert len(credible_sets) == 1
-    cs_response = api_client.get(f"api/cs/{credible_sets[0]['short_id']}")
-    assert cs_response.text == "The answer is 47!\n"
 
 
 @pytest.mark.parametrize("df", DataFormat.__members__.values())
@@ -309,11 +298,6 @@ def test_delete_phenotype(api_client: TestClient):
     assert response.status_code == HTTP_200_OK
 
 
-@mock_s3
-def test_stream_file(api_client: TestClient):
-    ds_info = add_ds_with_file(api_client, public=True)
-    response = api_client.get(f"api/d/{ds_info['phenotypes'][0]['short_id']}")
-    assert response.text == 'The answer is 47!\n'
 
 
 def test_api_publications(mocker, api_client: TestClient):
