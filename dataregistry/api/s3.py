@@ -76,6 +76,9 @@ def initiate_multi_part(directory: str, filename: str):
     s3_client = boto3.client('s3', region_name=S3_REGION)
     return s3_client.create_multipart_upload(Bucket=BASE_BUCKET, Key=f"{directory}/{filename}")
 
+def get_signed_url(bucket, path):
+    s3_client = boto3.client('s3', region_name=S3_REGION)
+    return s3_client.generate_presigned_url('get_object', Params={'Bucket': bucket, 'Key': path}, ExpiresIn=7200)
 
 def put_bytes(directory, file_name, contents, upload, part_number):
     s3_client = boto3.resource('s3', region_name=S3_REGION)
