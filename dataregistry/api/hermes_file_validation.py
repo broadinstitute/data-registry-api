@@ -13,7 +13,7 @@ def validate_chromosome(chromosome):
     except ValueError:
         return False
 
-def validate_position(position):
+def validate_int_and_positive(position):
     if not position:
         return False
     try:
@@ -49,6 +49,11 @@ def validate_numeric(val):
     except ValueError:
         return False
 
+def validate_allele(val):
+    if not val:
+        return False
+    return set(val).issubset({'A', 'C', 'T', 'G', 'D', 'I'})
+
 VALIDATORS = [
     {
         "name": "chromosome",
@@ -58,7 +63,7 @@ VALIDATORS = [
     {
         "name": "position",
         "error": "Base position data should be positive integers. No missing values are allowed. Please recode or remove missing values as appropriate.",
-        "validator": validate_position
+        "validator": validate_int_and_positive
     },
     {
         "name": "pValue",
@@ -77,9 +82,44 @@ VALIDATORS = [
         "validator": validate_numeric
     },
     {
-        "name": "se",
+        "name": "stdErr",
         "error": "Standard error (for beta) data should be numeric and positive. No missing values are allowed. Please recode or remove missing values as appropriate.",
         "validator": validate_numeric_and_positive
+    },
+    {
+        "name": "oddsRatio",
+        "error": "Odds ratio data should be numeric and positive. No missing values are allowed. Please recode or remove missing values as appropriate.",
+        "validator": validate_numeric_and_positive
+    },
+    {
+        "name": "oddsRationUB",
+        "error": "Odds ratio upper bound data should be numeric and positive. No missing values are allowed. Please recode or remove missing values as appropriate.",
+        "validator": validate_numeric_and_positive
+    },
+    {
+        "name": "oddsRationLB",
+        "error": "Odds ratio lower bound data should be numeric and positive. No missing values are allowed. Please recode or remove missing values as appropriate.",
+        "validator": validate_numeric_and_positive
+    },
+    {
+        "name": "N total",
+        "error": "N total data should be positive integers. No missing values are allowed. Please recode, add the total sample size, or remove missing values as appropriate.",
+        "validator": validate_int_and_positive
+    },
+    {
+        "name": "N cases",
+        "error": "N cases data should be positive integers. No missing values are allowed. Please recode, add the number of cases, or remove missing values as appropriate.",
+        "validator": validate_int_and_positive
+    },
+    {
+        "name": "alt",
+        "error": "Allele information should be coded as one (or more in the case or INDELS) of ACTG, or as either D or I (INDELS). Please recode or remove missing values as appropriate.",
+        "validator": validate_allele
+    },
+    {
+        "name": "reference",
+        "error": "Allele information should be coded as one (or more in the case or INDELS) of ACTG, or as either D or I (INDELS). Please recode or remove missing values as appropriate.",
+        "validator": validate_allele
     }
 ]
 
@@ -95,16 +135,20 @@ def split_s3_path(s3_path):
 
 def validate_row(row, schema, errors, active_validators):
     to_remove = []
+
     for val in active_validators:
         if val['error'] in errors:
             continue
         if schema.get(val['name']) is None:
-            col_name = schema.get(val['alt_name'])
+            col_name = schema.get(val.get('alt_name', None))
         else:
             col_name = schema.get(val['name'])
+        if not col_name: #optional column
+            continue
         if not val['validator'](row.get(col_name)):
             errors.add(val['error'])
             to_remove.append(val)
+
     for val in to_remove:
         active_validators.remove(val)
     return len(active_validators) == 0
@@ -114,18 +158,19 @@ async def validate_file(s3_path: str, schema: dict) -> list:
     bucket, key = split_s3_path(s3_path)
     obj = s3_client.get_object(Bucket=bucket, Key=key)
     errors = set()
+    row_count = 0
     active_validators = VALIDATORS.copy()
     if key.endswith('.gz'):
         gzipfile = gzip.GzipFile(fileobj=obj['Body'], mode='rb')
         text_file = TextIOWrapper(gzipfile, encoding='utf-8')  # Decoding bytes to text
-        reader = csv.DictReader(text_file)
+        reader = csv.DictReader(text_file, delimiter='\t' if '.tsv' in key else ',')
         for row in reader:
             if validate_row(row, schema, errors, active_validators):
                 break
         text_file.close()
     else:
         text_file = TextIOWrapper(obj['Body'], encoding='utf-8')
-        reader = csv.DictReader(text_file)
+        reader = csv.DictReader(text_file, delimiter='\t' if '.tsv' in key else ',')
         for row in reader:
             if validate_row(row, schema, errors, active_validators):
                 break
