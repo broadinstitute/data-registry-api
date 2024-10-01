@@ -8,5 +8,5 @@
   -v "$(pwd)/out":/acme.sh  \
   --net=host \
   neilpang/acme.sh  --renew -d api.kpndataregistry.org --dns --yes-I-know-dns-manual-mode-enough-go-ahead-please
-`` First, it will tell you to add txt dns record under the `_acme-challenge` subdomain.  You should see that subdomain already present in square space. Just update it with the new vaulue.  Then run the command again and it should outputs the cert and key file to the out directory.  You can then scp the files to the data registry api server and put them in the `/home/ec2-user/ssl` directory.
- - Finally make note of the new expiration and set a calendar reminder to do this again in 90 days.  You can check the expiration of a cert with `openssl x509 -noout -dates -in /path/to/cert.pem`
+`` First, it will tell you to add txt dns record under the `_acme-challenge` subdomain.  You should see that subdomain already present in square space. Just update it with the new value.  Then run the command again, and it should output the cert and key files to the out directory.  You can then scp the files to the data registry api server and put them in the `/home/ec2-user/ssl` directory.
+ - Finally, make note of the new expiration and set a calendar reminder to do this again in 90 days.  You can check the expiration of a cert with `openssl x509 -noout -dates -in /path/to/cert.pem`
