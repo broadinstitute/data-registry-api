@@ -1,0 +1,89 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Canary for checking the health of data registry API
+Resources:
+  DRCanaryRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - synthetics.amazonaws.com
+                - lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: DRCanaryPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetBucketLocation
+                  - s3:ListAllMyBuckets
+                Resource: arn:aws:s3:::*
+              - Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricData
+                  - ec2:CreateNetworkInterface
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DeleteNetworkInterface
+                Resource: '*'
+
+  DrCanary:
+    Type: AWS::Synthetics::Canary
+    Properties:
+      ExecutionRoleArn: !GetAtt DRCanaryRole.Arn
+      Name: dr-canary
+      Code:
+        Handler: 'dr-canary.handler'
+        Script: |
+          let synthetics = require('Synthetics');
+          
+          exports.handler = async () => {
+            let requestOptions = {
+              hostname: 'api.kpndataregistry.org',
+              method: 'GET',
+              path: '/docs',
+              port: 443,
+              protocol: 'https:',
+            };
+          
+            await synthetics.executeHttpStep('Check HTTP Status', requestOptions);
+          };
+      RuntimeVersion: syn-nodejs-puppeteer-9.0
+      Schedule:
+        Expression: 'rate(30 minutes)'
+      RunConfig:
+        TimeoutInSeconds: 30
+      ArtifactS3Location: s3://dr-monitoring-artifacts/canary-results
+
+  DrAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: CanaryFailureAlarm
+      MetricName: Failed
+      Namespace: CloudWatchSynthetics
+      Statistic: Sum
+      Period: 1800
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      AlarmActions:
+        - Ref: DRSNSAlertTopic
+
+  DRSNSAlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      Subscription:
+        - Endpoint: huge_infrastructure-aaaalzj2tdlvagz2gw7fbcjswi@broadinstitute.org.slack.com
+          Protocol: email
+
