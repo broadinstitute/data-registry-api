@@ -46,10 +46,10 @@ Resources:
       Code:
         Handler: 'dr-canary.handler'
         Script: |
-          let synthetics = require('Synthetics');
+          const synthetics = require('Synthetics');
           
           exports.handler = async () => {
-            let requestOptions = {
+            const requestOptions = {
               hostname: 'api.kpndataregistry.org',
               method: 'GET',
               path: '/docs',
@@ -77,8 +77,13 @@ Resources:
       EvaluationPeriods: 1
       Threshold: 1
       ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: 'notBreaching'
+      Dimensions:
+        - Name: CanaryName
+          Value: dr-canary
       AlarmActions:
         - Ref: DRSNSAlertTopic
+
 
   DRSNSAlertTopic:
     Type: AWS::SNS::Topic
