@@ -1,3 +1,4 @@
+import io
 import json
 import re
 
@@ -219,6 +220,17 @@ def test_start_meta_analysis(mocker, api_client: TestClient):
     set_up_moto_bucket()
     patch = mocker.patch('dataregistry.api.batch.submit_and_await_job')
     patch.return_value = None
+    mocker.patch('boto3.client').return_value.generate_presigned_url.return_value = 'http://mocked-presigned-url'
+
+    mock_aiohttp_put = mocker.patch('aiohttp.ClientSession.put')
+    mock_aiohttp_put.return_value.__aenter__.return_value.status = 200
+    with open('tests/test_csv_upload.csv', mode='rb') as f:
+        file_bytes = f.read()
+
+    mock_s3_get_object = mocker.patch('boto3.client').return_value.get_object
+    mock_s3_get_object.return_value = {
+        'Body': io.BytesIO(file_bytes)
+    }
     with open('tests/test_csv_upload.csv', mode='rb') as f:
         res = api_client.post('api/upload-hermes', headers={AUTHORIZATION: auth_token, 'Filename': 'foo.csv',
                                                             'Dataset': 'unit-test-dataset',
@@ -245,6 +257,17 @@ def test_upload_hermes_csv(mocker, api_client: TestClient):
     set_up_moto_bucket()
     patch = mocker.patch('dataregistry.api.batch.submit_and_await_job')
     patch.return_value = None
+    mocker.patch('boto3.client').return_value.generate_presigned_url.return_value = 'http://mocked-presigned-url'
+
+    mock_aiohttp_put = mocker.patch('aiohttp.ClientSession.put')
+    mock_aiohttp_put.return_value.__aenter__.return_value.status = 200
+    with open('tests/test_csv_upload.csv', mode='rb') as f:
+        file_bytes = f.read()
+
+    mock_s3_get_object = mocker.patch('boto3.client').return_value.get_object
+    mock_s3_get_object.return_value = {
+        'Body': io.BytesIO(file_bytes)
+    }
     with open('tests/test_csv_upload.csv', mode='rb') as f:
         res = api_client.post('api/upload-hermes', headers={AUTHORIZATION: auth_token, 'Filename': 'foo.csv',
                                                             'Dataset': 'unit-test-dataset',

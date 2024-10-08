@@ -340,11 +340,6 @@ async def start_metanalysis(req: MetaAnalysisRequest, background: BackgroundTask
     return {'meta-analysis-id': ma_id}
 
 
-import boto3
-from botocore.exceptions import ClientError
-
-s3_client = boto3.client('s3')
-
 @router.post("/upload-hermes")
 async def upload_hermes_csv(request: Request, background_tasks: BackgroundTasks,
                             user: User = Depends(get_current_user)):
@@ -356,7 +351,7 @@ async def upload_hermes_csv(request: Request, background_tasks: BackgroundTasks,
     s3_path = f"hermes/{dataset}/{filename}"
 
     try:
-        presigned_url = s3_client.generate_presigned_url(
+        presigned_url = s3.generate_presigned_url(
             'put_object',
             Params={'Bucket': s3.BASE_BUCKET, 'Key': s3_path},
             ExpiresIn=3600
