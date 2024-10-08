@@ -158,7 +158,6 @@ async def validate_file(s3_path: str, schema: dict) -> list:
     bucket, key = split_s3_path(s3_path)
     obj = s3_client.get_object(Bucket=bucket, Key=key)
     errors = set()
-    row_count = 0
     active_validators = VALIDATORS.copy()
     if key.endswith('.gz'):
         gzipfile = gzip.GzipFile(fileobj=obj['Body'], mode='rb')

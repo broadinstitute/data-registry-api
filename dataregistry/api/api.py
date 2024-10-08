@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Optional, List
 from uuid import UUID
 
+import aiohttp
 import fastapi
 import requests
 import smart_open
@@ -339,6 +340,11 @@ async def start_metanalysis(req: MetaAnalysisRequest, background: BackgroundTask
     return {'meta-analysis-id': ma_id}
 
 
+import boto3
+from botocore.exceptions import ClientError
+
+s3_client = boto3.client('s3')
+
 @router.post("/upload-hermes")
 async def upload_hermes_csv(request: Request, background_tasks: BackgroundTasks,
                             user: User = Depends(get_current_user)):
@@ -346,30 +352,46 @@ async def upload_hermes_csv(request: Request, background_tasks: BackgroundTasks,
     dataset = request.headers.get('Dataset')
     metadata_str = request.headers.get('Metadata')
     metadata = json.loads(metadata_str) if metadata_str else {}
-    parser = StreamingFormDataParser(request.headers)
-    s3_path = f"hermes/{dataset}"
-    path = s3.get_file_path(s3_path, filename)
-    parser.register("file", GzipS3Target(path, mode='wb'))
+
+    s3_path = f"hermes/{dataset}/{filename}"
+
+    try:
+        presigned_url = s3_client.generate_presigned_url(
+            'put_object',
+            Params={'Bucket': s3.BASE_BUCKET, 'Key': s3_path},
+            ExpiresIn=3600
+        )
+    except ClientError as e:
+        return {"error": str(e)}
+
     file_size = 0
-    async for chunk in request.stream():
-        file_size += len(chunk)
-        parser.data_received(chunk)
-    validation_errors = await validate_file(path, metadata.get('column_map'))
-    if len(validation_errors) > 0:
+    async with aiohttp.ClientSession() as session:
+        async with session.put(presigned_url, data=request.stream()) as response:
+            if response.status != 200:
+                return {"error": f"Failed to upload file: {response.status}"}
+            async for chunk in request.stream():
+                file_size += len(chunk)
+
+    validation_errors = await validate_file(s3_path, metadata.get('column_map'))
+    if validation_errors:
         return {"errors": validation_errors}
-    s3.upload_metadata(metadata, s3_path)
+
+    # Upload metadata and save file upload info to database
+    s3.upload_metadata(metadata, f"hermes/{dataset}")
     file_guid = query.save_file_upload_info(engine, dataset, metadata, s3_path, filename, file_size, user.user_name)
-    background_tasks.add_task(batch.submit_and_await_job, engine,
-                              {
-                                  'jobName': 'hermes-qc-job',
-                                  'jobQueue': 'hermes-qc-job-queue',
-                                  'jobDefinition': 'hermes-qc-job',
-                                  'parameters': {
-                                      's3-path': s3.get_full_s3_path(s3_path, filename),
-                                      'file-guid': file_guid,
-                                      'col-map': json.dumps(metadata["column_map"]),
-                                  }}, query.update_file_upload_qc_log, file_guid, True)
-    return {"file_size": file_size, "s3_path": path, "file_id": file_guid}
+
+    # Submit the batch job for further processing
+    background_tasks.add_task(batch.submit_and_await_job, engine, {
+        'jobName': 'hermes-qc-job',
+        'jobQueue': 'hermes-qc-job-queue',
+        'jobDefinition': 'hermes-qc-job',
+        'parameters': {
+            's3-path': f"s3://{s3.BASE_BUCKET}/{s3_path}",
+            'file-guid': file_guid,
+            'col-map': json.dumps(metadata["column_map"]),
+        }}, query.update_file_upload_qc_log, file_guid, True)
+
+    return {"file_size": file_size, "s3_path": s3_path, "file_id": file_guid}
 
 
 @router.get("/upload-hermes/{file_id}")
