@@ -149,6 +149,6 @@ def finalize_upload(directory, name, parts, multipart_upload):
     )
 
 
-def generate_presigned_url(param, Params, ExpiresIn):
+def generate_presigned_url(param, params, expires_in):
     s3_client = boto3.client('s3', region_name=S3_REGION)
-    return s3_client.generate_presigned_url(param, Params=Params, ExpiresIn=ExpiresIn)
+    return s3_client.generate_presigned_url(param, Params=params, ExpiresIn=expires_in)
