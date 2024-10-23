@@ -353,8 +353,8 @@ async def upload_hermes_csv(request: Request, background_tasks: BackgroundTasks,
     try:
         presigned_url = s3.generate_presigned_url(
             'put_object',
-            Params={'Bucket': s3.BASE_BUCKET, 'Key': s3_path},
-            ExpiresIn=3600
+            params={'Bucket': s3.BASE_BUCKET, 'Key': s3_path},
+            expiresIn=3600
         )
     except ClientError as e:
         return {"error": str(e)}
