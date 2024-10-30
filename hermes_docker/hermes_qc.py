@@ -13,11 +13,11 @@ def download_file_from_s3(s3_path):
     return remote_file_name
 
 
-def upload_file_to_s3(file_name, file_guid):
+def upload_file_to_s3(file_name, file_guid, extra_args={'ContentType': 'image/png'}):
     s3 = boto3.client('s3')
     bucket = "hermes-qc"
     key = f"images/{file_guid}/" + file_name
-    s3.upload_file(file_name, bucket, key, ExtraArgs={'ContentType': 'image/png'})
+    s3.upload_file(file_name, bucket, key, ExtraArgs=extra_args)
 
 
 def convert_to_genepi_map(col_map):
@@ -42,10 +42,17 @@ def run_r_commands(file_path, file_guid, col_map):
     ref_mapping = "-r_chr \"#CHROM\" -r_bp POS -r_ea REF -r_oa ALT -r_eaf AF -r_id ID -o out"
     r_script_command = (f"Rscript heRmes/scripts/gwas_qc.R -r HRC.r1-1.GRCh37.wgs.mac5.sites.tab.gz -g {file_path} "
                         f"{col_mapping} {ref_mapping} -o .")
-    print(r_script_command)
     try:
+        print("Running command:", r_script_command)
         result = subprocess.run(r_script_command, shell=True, check=True, capture_output=True, text=True)
-        print("Standard Output:", result.stdout)
+        print("Figure Output:", result.stdout)
+        result = subprocess.run(
+        [
+            "Rscript",
+            "-e",
+            "rmarkdown::render('heRmes/scripts/gwas_qc.Rmd', params = list(fig_dir = '/usr/src/app'), output_dir = '/usr/src/app')"
+        ], check=True, capture_output=True, text=True)
+        print("HTML Output:", result.stdout)
     except subprocess.CalledProcessError as e:
         print("Command failed with return code:", e.returncode)
         print("Error Output:", e.stderr)
@@ -60,6 +67,7 @@ def run_r_commands(file_path, file_guid, col_map):
         return
 
     upload_file_to_s3("eaf_plot.png", file_guid)
+    upload_file_to_s3("gwas_qc.html", file_guid, extra_args={'ContentType': 'text/html'})
     # upload_file_to_s3("manhattan_plot.png", file_guid)
 
 
