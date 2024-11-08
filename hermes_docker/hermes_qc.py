@@ -29,11 +29,12 @@ def convert_to_genepi_map(col_map):
         'pValue': 'p',
         'beta': 'beta',
         'rsid': 'rsid',
-        'stdErr': 'se',
+        'se': 'se',
+        'N total': 'n',
         'eaf': 'eaf',
         'zScore': 'info',
     }
-    return {mapping[k]: v for k, v in col_map.items() if k in mapping and k in col_map}
+    return {mapping[k]: v for k, v in col_map.items() if k in mapping}
 
 
 def run_r_commands(file_path, file_guid, col_map):
