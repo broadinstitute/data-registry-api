@@ -8,8 +8,9 @@ from datetime import datetime
 from typing import Optional, List
 from uuid import UUID
 
-import aiohttp
+import asyncio
 import fastapi
+import httpx
 import requests
 import smart_open
 import sqlalchemy
@@ -340,8 +341,23 @@ async def start_metanalysis(req: MetaAnalysisRequest, background: BackgroundTask
     return {'meta-analysis-id': ma_id}
 
 
-@router.post("/upload-hermes")
-async def upload_hermes_csv(request: Request, background_tasks: BackgroundTasks,
+@router.get("/get-hermes-pre-signed-url")
+async def get_hermes_pre_signed_url(request: Request):
+    filename = request.headers.get('Filename')
+    dataset = request.headers.get('Dataset')
+    s3_path = f"hermes/{dataset}/{filename}"
+    try:
+        presigned_url = s3.generate_presigned_url(
+            'put_object',
+            params={'Bucket': s3.BASE_BUCKET, 'Key': s3_path},
+            expires_in=7200
+        )
+    except ClientError as e:
+        raise fastapi.HTTPException(status_code=500, detail="Failed to generate presigned URL") from e
+    return {"presigned_url": presigned_url, "s3_path": s3_path}
+
+@router.get("/validate-hermes")
+async def validate_hermes_csv(request: Request, background_tasks: BackgroundTasks,
                             user: User = Depends(get_current_user)):
     filename = request.headers.get('Filename')
     dataset = request.headers.get('Dataset')
@@ -350,24 +366,7 @@ async def upload_hermes_csv(request: Request, background_tasks: BackgroundTasks,
 
     s3_path = f"hermes/{dataset}/{filename}"
 
-    try:
-        presigned_url = s3.generate_presigned_url(
-            'put_object',
-            params={'Bucket': s3.BASE_BUCKET, 'Key': s3_path},
-            expires_in=3600
-        )
-    except ClientError as e:
-        return {"error": str(e)}
-
-    file_size = 0
-    async with aiohttp.ClientSession() as session:
-        async with session.put(presigned_url, data=request.stream()) as response:
-            if response.status != 200:
-                return {"error": f"Failed to upload file: {response.status}"}
-            async for chunk in request.stream():
-                file_size += len(chunk)
-
-    validation_errors = await validate_file(s3_path, metadata.get('column_map'))
+    validation_errors, file_size = await validate_file(f"s3://{s3.BASE_BUCKET}/{s3_path}", metadata.get('column_map'))
     if validation_errors:
         return {"errors": validation_errors}
 
