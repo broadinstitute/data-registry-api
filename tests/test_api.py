@@ -229,17 +229,20 @@ def test_start_meta_analysis(mocker, api_client: TestClient):
 
     mock_s3_get_object = mocker.patch('boto3.client').return_value.get_object
     mock_s3_get_object.return_value = {
-        'Body': io.BytesIO(file_bytes)
+        'Body': io.BytesIO(file_bytes),
+        'ContentLength': len(file_bytes)
     }
-    with open('tests/test_csv_upload.csv', mode='rb') as f:
-        res = api_client.post('api/upload-hermes', headers={AUTHORIZATION: auth_token, 'Filename': 'foo.csv',
-                                                            'Dataset': 'unit-test-dataset',
-                                                            'Metadata': json.dumps({'b': 1, 'phenotype': 'T2D',
-                                                                                    'column_map': {"chromosome": "CHR",
-                                                                                                   "position": "BP", "eaf": "EAF", "beta": "BETA", "se": "SE", "pValue": "P"}})},
-                              files={'file': f})
-        result_dict = res.json()
-        file_id = result_dict.get("file_id")
+    res = api_client.get('api/validate-hermes', headers={AUTHORIZATION: auth_token, 'Filename': 'foo.csv',
+                                                         'Dataset': 'unit-test-dataset',
+                                                         'Metadata': json.dumps({'b': 1, 'phenotype': 'T2D',
+                                                                                 'column_map': {"chromosome": "CHR",
+                                                                                                "position": "BP",
+                                                                                                "eaf": "EAF",
+                                                                                                "beta": "BETA",
+                                                                                                "se": "SE",
+                                                                                                "pValue": "P"}})})
+    result_dict = res.json()
+    file_id = result_dict.get("file_id")
     res = api_client.post('api/hermes-meta-analysis', headers={AUTHORIZATION: auth_token}, json={'method': 'intake',
                                                                                            'datasets': [file_id],
                                                                                            'name': 'Test Metadata',
@@ -266,15 +269,18 @@ def test_upload_hermes_csv(mocker, api_client: TestClient):
 
     mock_s3_get_object = mocker.patch('boto3.client').return_value.get_object
     mock_s3_get_object.return_value = {
-        'Body': io.BytesIO(file_bytes)
+        'Body': io.BytesIO(file_bytes),
+        'ContentLength': len(file_bytes)
     }
-    with open('tests/test_csv_upload.csv', mode='rb') as f:
-        res = api_client.post('api/upload-hermes', headers={AUTHORIZATION: auth_token, 'Filename': 'foo.csv',
-                                                            'Dataset': 'unit-test-dataset',
-                                                            'Metadata': json.dumps({'b': 1, 'phenotype': 'T2D',
-                                                                                    'column_map': {"chromosome": "CHR",
-                                                                                                   "position": "BP", "eaf": "EAF", "beta": "BETA", "se": "SE", "pValue": "P"}})},
-                              files={'file': f})
+    res = api_client.get('api/validate-hermes', headers={AUTHORIZATION: auth_token, 'Filename': 'foo.csv',
+                                                         'Dataset': 'unit-test-dataset',
+                                                         'Metadata': json.dumps({'b': 1, 'phenotype': 'T2D',
+                                                                                 'column_map': {"chromosome": "CHR",
+                                                                                                "position": "BP",
+                                                                                                "eaf": "EAF",
+                                                                                                "beta": "BETA",
+                                                                                                "se": "SE",
+                                                                                                "pValue": "P"}})})
     result_dict = res.json()
     assert "file_size" in result_dict
     assert "s3_path" in result_dict

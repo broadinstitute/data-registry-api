@@ -20,8 +20,8 @@ class Validator(ABC):
 
 
 class HermesValidator(Validator):
-    required_fields = ['chromosome', 'position', 'reference', 'alt', 'pValue', 'N total']
-    optional_fields = ['maf', 'eaf', 'N cases', 'se', 'beta', 'oddsRatio', 'oddsRatioUB', 'oddsRatioLB']
+    required_fields = ['chromosome', 'position', 'reference', 'alt', 'pValue', 'N total', 'se']
+    optional_fields = ['maf', 'eaf', 'N cases', 'beta', 'oddsRatio', 'oddsRatioUB', 'oddsRatioLB']
 
     def __init__(self):
         super().__init__(HermesValidator.required_fields, HermesValidator.optional_fields)
