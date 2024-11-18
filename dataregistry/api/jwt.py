@@ -1,7 +1,7 @@
 import os
 from datetime import datetime, timedelta
 
-from jose import jwt, JWTError
+import jwt
 
 from dataregistry.api.config import get_sensitive_config
 from dataregistry.api.model import User
