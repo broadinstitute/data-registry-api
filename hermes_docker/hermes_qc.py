@@ -59,13 +59,13 @@ def run_r_commands(file_path, file_guid, col_map):
         print("Error Output:", e.stderr)
         print("Standard Output:", e.stdout)
         print("Command that failed:", e.cmd)
-        return
+        exit(e.returncode)
 
     if result.returncode != 0:
         print("Command completed with non-zero return code:", result.returncode)
         print("Error Output:", result.stderr)
         print("Standard Output:", result.stdout)
-        return
+        exit(result.returncode)
 
     upload_file_to_s3("eaf_plot.png", file_guid)
     upload_file_to_s3("gwas_qc.html", file_guid, extra_args={'ContentType': 'text/html'})
