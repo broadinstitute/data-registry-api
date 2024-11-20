@@ -398,15 +398,16 @@ def get_data_set_owner(engine, ds_id):
         return result[0] if result else None
 
 
-def save_file_upload_info(engine, dataset, metadata, s3_path, filename, file_size, uploader) -> str:
+def save_file_upload_info(engine, dataset, metadata, s3_path, filename, file_size, uploader, qc_script_options) -> str:
     with engine.connect() as conn:
         new_guid = str(uuid.uuid4())
         conn.execute(text("""INSERT INTO file_uploads(id, dataset, file_name, file_size, uploaded_at, uploaded_by,
-        metadata, s3_path, qc_status) VALUES(:id, :dataset, :file_name, :file_size, NOW(), :uploaded_by, :metadata,
-         :s3_path, 'SUBMITTED TO QC')"""), {'id': new_guid.replace('-', ''), 'dataset': dataset,
+        metadata, s3_path, qc_script_options, qc_status) VALUES(:id, :dataset, :file_name, :file_size, NOW(), :uploaded_by, :metadata,
+         :s3_path, :qc_script_options, 'SUBMITTED TO QC')"""), {'id': new_guid.replace('-', ''), 'dataset': dataset,
                                             'file_name': filename,
                                             'file_size': file_size, 'uploaded_by': uploader,
-                                            'metadata': json.dumps(metadata), 's3_path': s3_path})
+                                            'metadata': json.dumps(metadata), 's3_path': s3_path,
+                                            'qc_script_options': json.dumps(qc_script_options)})
         conn.commit()
         return new_guid
 

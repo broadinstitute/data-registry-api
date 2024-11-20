@@ -253,6 +253,12 @@ class BioIndex(BaseModel):
     schema_desc: str
     url: str
 
+class QCHermesFileRequest(BaseModel):
+    file_name: str
+    dataset: str
+    metadata: dict
+    script_options: dict
+
 
 class FileUpload(BaseModel):
     id: UUID
