@@ -45,8 +45,8 @@ def run_r_commands(file_path, file_guid, col_map):
                         f"{col_mapping} {ref_mapping} -o .")
     try:
         print("Running command:", r_script_command)
-        result = subprocess.run(r_script_command, shell=True, check=True, capture_output=True, text=True)
-        print("Figure Output:", result.stdout)
+        result = subprocess.run(r_script_command, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        print("QC Script Output:", result.stdout)
         result = subprocess.run(
         [
             "Rscript",

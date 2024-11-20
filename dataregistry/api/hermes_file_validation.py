@@ -153,12 +153,15 @@ def validate_row(row, schema, errors, active_validators):
         active_validators.remove(val)
     return len(active_validators) == 0
 
-async def validate_file(s3_path: str, schema: dict) -> tuple:
+async def validate_file(s3_path: str, schema: dict, validate: bool=False) -> tuple:
     s3_client = boto3.client('s3')
     bucket, key = split_s3_path(s3_path)
     obj = s3_client.get_object(Bucket=bucket, Key=key)
     file_size = obj["ContentLength"]
     errors = set()
+    if not validate:
+        return list(errors), file_size
+
     active_validators = VALIDATORS.copy()
     if key.endswith('.gz'):
         gzipfile = gzip.GzipFile(fileobj=obj['Body'], mode='rb')
