@@ -411,6 +411,16 @@ def save_file_upload_info(engine, dataset, metadata, s3_path, filename, file_siz
         conn.commit()
         return new_guid
 
+def update_file_qc_options(engine, file_id: str, qc_script_options: dict):
+    with engine.connect() as conn:
+        conn.execute(text("""UPDATE file_uploads 
+                           SET qc_script_options = :qc_script_options,
+                               qc_status = 'SUBMITTED TO QC'
+                           WHERE id = :file_id"""),
+                    {'qc_script_options': json.dumps(qc_script_options),
+                     'file_id': str(file_id).replace('-', '')})
+        conn.commit()
+
 
 def gen_fetch_ds_sql(params, param_to_where):
     sql = "select id, dataset as dataset_name, file_name, file_size, uploaded_at, uploaded_by, qc_status, " \
@@ -484,7 +494,7 @@ def fetch_file_upload(engine, file_id) -> FileUpload:
     with engine.connect() as conn:
         result = conn.execute(
             text("SELECT id, dataset as dataset_name, file_name, file_size, uploaded_at, uploaded_by, metadata, "
-                 "s3_path, qc_log, metadata->>'$.phenotype' as phenotype, qc_status "
+                 "s3_path, qc_log, metadata->>'$.phenotype' as phenotype, qc_status, qc_script_options "
                  "FROM file_uploads WHERE id = :file_id"),
             {'file_id': file_id}).first()
 
@@ -495,6 +505,9 @@ def fetch_file_upload(engine, file_id) -> FileUpload:
 
         if result_dict['metadata'] is not None:
             result_dict['metadata'] = json.loads(result_dict['metadata'])
+
+        if result_dict['qc_script_options'] is not None:
+            result_dict['qc_script_options'] = json.loads(result_dict['qc_script_options'])
 
         return FileUpload(**result_dict)
 

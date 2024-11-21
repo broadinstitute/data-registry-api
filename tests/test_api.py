@@ -232,15 +232,16 @@ def test_start_meta_analysis(mocker, api_client: TestClient):
         'Body': io.BytesIO(file_bytes),
         'ContentLength': len(file_bytes)
     }
-    res = api_client.get('api/validate-hermes', headers={AUTHORIZATION: auth_token, 'Filename': 'foo.csv',
-                                                         'Dataset': 'unit-test-dataset',
-                                                         'Metadata': json.dumps({'b': 1, 'phenotype': 'T2D',
+    res = api_client.post('api/validate-hermes', headers={AUTHORIZATION: auth_token}, json={'file_name': 'foo.csv',
+                                                         'dataset': 'unit-test-dataset',
+                                                         'metadata': {'b': 1, 'phenotype': 'T2D',
                                                                                  'column_map': {"chromosome": "CHR",
                                                                                                 "position": "BP",
                                                                                                 "eaf": "EAF",
                                                                                                 "beta": "BETA",
                                                                                                 "se": "SE",
-                                                                                                "pValue": "P"}})})
+                                                                                                "pValue": "P"}},
+                                                        'qc_script_options': {'fd': 0.2, 'noind': True}})
     result_dict = res.json()
     file_id = result_dict.get("file_id")
     res = api_client.post('api/hermes-meta-analysis', headers={AUTHORIZATION: auth_token}, json={'method': 'intake',
@@ -272,15 +273,16 @@ def test_upload_hermes_csv(mocker, api_client: TestClient):
         'Body': io.BytesIO(file_bytes),
         'ContentLength': len(file_bytes)
     }
-    res = api_client.get('api/validate-hermes', headers={AUTHORIZATION: auth_token, 'Filename': 'foo.csv',
-                                                         'Dataset': 'unit-test-dataset',
-                                                         'Metadata': json.dumps({'b': 1, 'phenotype': 'T2D',
+    res = api_client.post('api/validate-hermes', headers={AUTHORIZATION: auth_token}, json={'file_name': 'foo.csv',
+                                                         'dataset': 'unit-test-dataset',
+                                                         'metadata': {'b': 1, 'phenotype': 'T2D',
                                                                                  'column_map': {"chromosome": "CHR",
                                                                                                 "position": "BP",
                                                                                                 "eaf": "EAF",
                                                                                                 "beta": "BETA",
                                                                                                 "se": "SE",
-                                                                                                "pValue": "P"}})})
+                                                                                                "pValue": "P"}},
+                                                        'qc_script_options': {'fd': 0.2, 'noind': True}})
     result_dict = res.json()
     assert "file_size" in result_dict
     assert "s3_path" in result_dict
