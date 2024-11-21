@@ -30,7 +30,8 @@ from dataregistry.api.hermes_file_validation import validate_file
 from dataregistry.api.jwt import get_encoded_jwt_data, get_decoded_jwt_data
 from dataregistry.api.model import DataSet, Study, SavedDatasetInfo, SavedDataset, UserCredentials, User, SavedStudy, \
     CreateBiondexRequest, CsvBioIndexRequest, BioIndexCreationStatus, SavedCsvBioIndexRequest, HermesFileStatus, \
-    HermesUploadStatus, NewUserRequest, StartAggregatorRequest, MetaAnalysisRequest
+    HermesUploadStatus, NewUserRequest, StartAggregatorRequest, MetaAnalysisRequest, QCHermesFileRequest, \
+    QCScriptOptions
 from dataregistry.api.validators import HermesValidator
 
 HERMES_VALIDATOR = HermesValidator()
@@ -252,10 +253,6 @@ async def hermes_uploads_phenotypes(statuses: List[str] = Query(None)):
     return query.fetch_used_phenotypes(engine, statuses)
 
 
-@router.post("/validate-hermes")
-async def validate(body: dict = Body(...)):
-    return HERMES_VALIDATOR.validate(body)
-
 
 @router.get("/hermes-users")
 async def get_hermes_users(user: User = Depends(get_current_user)):
@@ -356,23 +353,46 @@ async def get_hermes_pre_signed_url(request: Request):
         raise fastapi.HTTPException(status_code=500, detail="Failed to generate presigned URL") from e
     return {"presigned_url": presigned_url, "s3_path": s3_path}
 
-@router.get("/validate-hermes")
-async def validate_hermes_csv(request: Request, background_tasks: BackgroundTasks,
-                            user: User = Depends(get_current_user)):
-    filename = request.headers.get('Filename')
-    dataset = request.headers.get('Dataset')
-    metadata_str = request.headers.get('Metadata')
-    metadata = json.loads(metadata_str) if metadata_str else {}
 
+@router.patch("/hermes-rerun-qc/{file_id}")
+async def rerun_hermes_qc(request: QCScriptOptions, file_id, background_tasks: BackgroundTasks, user: User = Depends(get_current_user)):
+    no_dashes_ids = str(file_id).replace('-', '')
+    file_upload = query.fetch_file_upload(engine, no_dashes_ids)
+
+    script_options = {k: v for k, v in request.dict().items() if v is not None}
+
+    query.update_file_qc_options(engine, no_dashes_ids, script_options)
+    s3_path = f"hermes/{file_upload.dataset_name}/{file_upload.file_name}"
+    background_tasks.add_task(batch.submit_and_await_job, engine, {
+        'jobName': 'hermes-qc-job',
+        'jobQueue': 'hermes-qc-job-queue',
+        'jobDefinition': 'hermes-qc-job',
+        'parameters': {
+            's3-path': f"s3://{s3.BASE_BUCKET}/{s3_path}",
+            'file-guid': file_id,
+            'col-map': json.dumps(file_upload.metadata["column_map"]),
+            'script-options': json.dumps(script_options)
+        }}, query.update_file_upload_qc_log, file_id, True)
+
+
+@router.post("/validate-hermes")
+async def validate_hermes_csv(request: QCHermesFileRequest, background_tasks: BackgroundTasks,
+                            user: User = Depends(get_current_user)):
+
+
+    dataset = request.dataset
+    filename = request.file_name
     s3_path = f"hermes/{dataset}/{filename}"
 
+    metadata = request.metadata
     validation_errors, file_size = await validate_file(f"s3://{s3.BASE_BUCKET}/{s3_path}", metadata.get('column_map'))
     if validation_errors:
         return {"errors": validation_errors}
 
     # Upload metadata and save file upload info to database
     s3.upload_metadata(metadata, f"hermes/{dataset}")
-    file_guid = query.save_file_upload_info(engine, dataset, metadata, s3_path, filename, file_size, user.user_name)
+    file_guid = query.save_file_upload_info(engine, dataset, metadata, s3_path, filename, file_size, user.user_name,
+                                            request.qc_script_options.dict())
 
     # Submit the batch job for further processing
     background_tasks.add_task(batch.submit_and_await_job, engine, {
@@ -383,6 +403,7 @@ async def validate_hermes_csv(request: Request, background_tasks: BackgroundTask
             's3-path': f"s3://{s3.BASE_BUCKET}/{s3_path}",
             'file-guid': file_guid,
             'col-map': json.dumps(metadata["column_map"]),
+            'script-options': json.dumps(request.qc_script_options.dict())
         }}, query.update_file_upload_qc_log, file_guid, True)
 
     return {"file_size": file_size, "s3_path": s3_path, "file_id": file_guid}

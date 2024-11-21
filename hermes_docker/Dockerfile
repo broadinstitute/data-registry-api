@@ -17,10 +17,11 @@ RUN R -e "install.packages(c('devtools', 'data.table', 'furrr', 'R.utils', 'fst'
 WORKDIR /usr/src/app
 RUN R -e "devtools::install_github('nicksunderland/genepi.utils')"  \
 RUN R -e "devtools::install_github('mglev1n/ldscr')"
-RUN apt-get install -y git && \
-    git clone --depth 1 -b main https://github.com/nicksunderland/heRmes.git && \
+RUN apt-get install -y git
+ARG COMMIT_HASH=latest
+RUN git clone https://github.com/nicksunderland/heRmes.git && \
     cd heRmes && \
-    git pull origin main
+    git checkout ${COMMIT_HASH}
 
 
 COPY requirements.txt hermes_qc.py ./

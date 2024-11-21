@@ -37,12 +37,13 @@ def convert_to_genepi_map(col_map):
     return {mapping[k]: v for k, v in col_map.items() if k in mapping}
 
 
-def run_r_commands(file_path, file_guid, col_map):
+def run_r_commands(file_path, file_guid, col_map, script_options):
     genepi_map = convert_to_genepi_map(col_map)
+    script_option_str = " ".join(["-noind" if k == "noind" else f"-{k} {v}" for k, v in script_options.items()])
     col_mapping = " ".join([f"-{k} {v}" for k, v in genepi_map.items()])
     ref_mapping = "-r_chr \"#CHROM\" -r_bp POS -r_ea REF -r_oa ALT -r_eaf AF -r_id ID -o out"
     r_script_command = (f"Rscript heRmes/scripts/gwas_qc.R -r HRC.r1-1.GRCh37.wgs.mac5.sites.tab.gz -g {file_path} "
-                        f"{col_mapping} {ref_mapping} -o .")
+                        f"{col_mapping} {ref_mapping} {script_option_str} -o .")
     try:
         print("Running command:", r_script_command)
         result = subprocess.run(r_script_command, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -76,10 +77,11 @@ def run_r_commands(file_path, file_guid, col_map):
 @click.option('--s3_path', '-s', type=str, required=True)
 @click.option('--file_guid', '-g', type=str, required=True)
 @click.option('--column_map', '-c', type=str, required=True)
-def main(s3_path, file_guid, column_map):
+@click.option('--script_options', '-o', type=str, required=True)
+def main(s3_path, file_guid, column_map, script_options):
     download_file_from_s3("s3://dig-data-registry-qa/hermes/nick-reference/HRC.r1-1.GRCh37.wgs.mac5.sites.tab.gz")
     local_file = download_file_from_s3(s3_path)
-    run_r_commands(local_file, file_guid, json.loads(column_map))
+    run_r_commands(local_file, file_guid, json.loads(column_map), json.loads(script_options))
 
 
 if __name__ == "__main__":

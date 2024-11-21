@@ -253,6 +253,17 @@ class BioIndex(BaseModel):
     schema_desc: str
     url: str
 
+class QCScriptOptions(BaseModel):
+    fd: float
+    adj: Union[str, None]
+    noind: Union[bool, None]
+    it: Union[float, None]
+
+class QCHermesFileRequest(BaseModel):
+    file_name: str
+    dataset: str
+    metadata: dict
+    qc_script_options: QCScriptOptions
 
 class FileUpload(BaseModel):
     id: UUID
@@ -266,6 +277,7 @@ class FileUpload(BaseModel):
     qc_status: HermesFileStatus
     s3_path: Union[str, None]
     qc_log: Union[str, None]
+    qc_script_options: Union[dict, None]
 
     def dict(self, **kwargs):
         d = super().dict(**kwargs)
