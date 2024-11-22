@@ -389,10 +389,10 @@ async def validate_hermes_csv(request: QCHermesFileRequest, background_tasks: Ba
     if validation_errors:
         return {"errors": validation_errors}
 
-    # Upload metadata and save file upload info to database
+    script_options = {k: v for k, v in request.dict().items() if v is not None}
     s3.upload_metadata(metadata, f"hermes/{dataset}")
     file_guid = query.save_file_upload_info(engine, dataset, metadata, s3_path, filename, file_size, user.user_name,
-                                            request.qc_script_options.dict())
+                                            script_options)
 
     # Submit the batch job for further processing
     background_tasks.add_task(batch.submit_and_await_job, engine, {
@@ -403,7 +403,7 @@ async def validate_hermes_csv(request: QCHermesFileRequest, background_tasks: Ba
             's3-path': f"s3://{s3.BASE_BUCKET}/{s3_path}",
             'file-guid': file_guid,
             'col-map': json.dumps(metadata["column_map"]),
-            'script-options': json.dumps(request.qc_script_options.dict())
+            'script-options': json.dumps(script_options)
         }}, query.update_file_upload_qc_log, file_guid, True)
 
     return {"file_size": file_size, "s3_path": s3_path, "file_id": file_guid}
