@@ -389,7 +389,7 @@ async def validate_hermes_csv(request: QCHermesFileRequest, background_tasks: Ba
     if validation_errors:
         return {"errors": validation_errors}
 
-    script_options = {k: v for k, v in request.dict().items() if v is not None}
+    script_options = {k: v for k, v in request.qc_script_options.dict().items() if v is not None}
     s3.upload_metadata(metadata, f"hermes/{dataset}")
     file_guid = query.save_file_upload_info(engine, dataset, metadata, s3_path, filename, file_size, user.user_name,
                                             script_options)
