@@ -356,6 +356,9 @@ async def get_hermes_pre_signed_url(request: Request):
 
 @router.patch("/hermes-rerun-qc/{file_id}")
 async def rerun_hermes_qc(request: QCScriptOptions, file_id, background_tasks: BackgroundTasks, user: User = Depends(get_current_user)):
+    if not VIEW_ALL_ROLES.intersection(user.roles) and not query.get_file_owner(engine, file_id) == user.user_name:
+        raise fastapi.HTTPException(status_code=401, detail='you aren\'t authorized')
+
     no_dashes_ids = str(file_id).replace('-', '')
     file_upload = query.fetch_file_upload(engine, no_dashes_ids)
 
