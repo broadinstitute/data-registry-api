@@ -522,6 +522,16 @@ async def stream_file(file_id: str, ft: str):
     path = '/'.join(split[1:])
     return RedirectResponse(s3.get_signed_url(bucket, path))
 
+@router.get("/hermes/download/{file_id}")
+async def download_hermes_file(file_id: UUID, user: User = Depends(get_current_user)):
+    if VIEW_ALL_ROLES.intersection(user.roles) or query.get_file_owner(engine, file_id) == user.user_name:
+        upload = query.fetch_file_upload(engine, str(file_id).replace('-', ''))
+    else:
+       raise fastapi.HTTPException(status_code=401, detail='you aren\'t authorized to view this dataset')
+
+    s3_path = upload.s3_path
+    return RedirectResponse(s3.get_signed_url(s3.BASE_BUCKET, s3_path))
+
 
 
 def get_possible_files(ds_uuid):
