@@ -21,7 +21,7 @@ Override the db via an environment variable if you are using a local db:
 `export DATA_REGISTRY_DB_CONNECTION=mysql+pymysql://dataregistry:dataregistry@localhost:3307/dataregistry`
 
 To run the server:
-`python3.8 -m dataregistry.main serve`
+`python3 -m dataregistry.main serve`
 
 FastAPI will automatically generate a swagger/open page at http://localhost:5000/docs which you can use to test/explore all the API endpoints.
 
