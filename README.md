@@ -3,7 +3,7 @@
 
 ## Running the server
 ### Running Locally
-You will need python 3.8 or above installed and docker if you wish to use local docker db server.
+You should have python 3.9 or above installed and docker if you wish to use local docker db server.
 You can start a local mysql via `./docker_db/docker_db.sh start` and the run `alembic upgrade head` to create the db tables.
 You'll likely want/need to specify the following environment variables either in your .env file (don't commit to vcs) or in your cli invocation:
 - `DATA_REGISTRY_DB_CONNECTION` - the connection string to the database, e.g. `export DATA_REGISTRY_DB_CONNECTION=mysql+pymysql://dataregistry:dataregistry@localhost:3307/dataregistry`will work if you're using the docker_db script
