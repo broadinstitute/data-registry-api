@@ -27,7 +27,7 @@ from dataregistry.api import query, s3, file_utils, ecs, bioidx, batch
 from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api.google_oauth import get_google_user
 from dataregistry.api.hermes_file_validation import validate_file
-from dataregistry.api.jwt import get_encoded_jwt_data, get_decoded_jwt_data
+from dataregistry.api.jwt_utils import get_encoded_jwt_data, get_decoded_jwt_data
 from dataregistry.api.model import DataSet, Study, SavedDatasetInfo, SavedDataset, UserCredentials, User, SavedStudy, \
     CreateBiondexRequest, CsvBioIndexRequest, BioIndexCreationStatus, SavedCsvBioIndexRequest, HermesFileStatus, \
     HermesUploadStatus, NewUserRequest, StartAggregatorRequest, MetaAnalysisRequest, QCHermesFileRequest, \

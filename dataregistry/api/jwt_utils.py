@@ -2,7 +2,6 @@ import os
 from datetime import datetime, timedelta
 
 import jwt
-
 from dataregistry.api.config import get_sensitive_config
 from dataregistry.api.model import User
 
@@ -20,5 +19,11 @@ def get_encoded_jwt_data(user: User, expires_delta: timedelta = timedelta(days=1
 def get_decoded_jwt_data(cookie_data: str) -> dict:
     try:
         return jwt.decode(cookie_data, SECRET_KEY, algorithms=[ALGORITHM])
-    except JWTError:
-        return None
+    except jwt.exceptions.ExpiredSignatureError:
+        raise ValueError("JWT token has expired")
+    except jwt.exceptions.InvalidTokenError as e:
+        raise ValueError(f"Invalid JWT token: {str(e)}")
+    except jwt.exceptions.InvalidSignatureError:
+        raise ValueError("Invalid JWT signature")
+    except Exception as e:
+        raise ValueError(f"Error decoding JWT token: {str(e)}")

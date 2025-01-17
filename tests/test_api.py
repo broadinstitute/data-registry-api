@@ -10,7 +10,7 @@ from starlette.status import HTTP_422_UNPROCESSABLE_ENTITY, HTTP_200_OK, HTTP_40
     HTTP_400_BAD_REQUEST
 
 from dataregistry.api.model import DataFormat, User, HermesFileStatus
-from dataregistry.api.jwt import get_encoded_jwt_data
+from dataregistry.api.jwt_utils import get_encoded_jwt_data
 
 AUTHORIZATION = "Authorization"
 
