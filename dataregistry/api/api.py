@@ -8,9 +8,7 @@ from datetime import datetime
 from typing import Optional, List
 from uuid import UUID
 
-import asyncio
 import fastapi
-import httpx
 import requests
 import smart_open
 import sqlalchemy
@@ -32,6 +30,7 @@ from dataregistry.api.model import DataSet, Study, SavedDatasetInfo, SavedDatase
     CreateBiondexRequest, CsvBioIndexRequest, BioIndexCreationStatus, SavedCsvBioIndexRequest, HermesFileStatus, \
     HermesUploadStatus, NewUserRequest, StartAggregatorRequest, MetaAnalysisRequest, QCHermesFileRequest, \
     QCScriptOptions
+from dataregistry.api.phenotypes import get_phenotypes
 from dataregistry.api.validators import HermesValidator
 
 HERMES_VALIDATOR = HermesValidator()
@@ -311,18 +310,21 @@ async def start_metanalysis(req: MetaAnalysisRequest, background: BackgroundTask
 
     req.created_by = user.user_name
     ma_id = query.save_meta_analysis(engine, req)
-    query.save_phenotype(engine, req.phenotype)
+    query.save_phenotype(engine, req.phenotype, get_phenotypes()[req.phenotype]['dichotomous'])
+    last_ancestry = None
     for ds in req.datasets:
         ds_name, ancestry = query.get_name_ancestry_for_ds(engine, ds)
         query.save_dataset_name(engine, ds_name, ancestry)
+        last_ancestry = ancestry
     paths_to_copy = [query.get_path_for_ds(engine, ds) for ds in req.datasets]
     s3.clear_variants_raw()
     s3.clear_variants_processed()
     s3.clear_meta_analysis()
     s3.clear_variants()
     for path in paths_to_copy:
-        s3.copy_files_for_meta_analysis(path,
-                                        f"hermes/variants_raw/GWAS/{path.replace('hermes/', '')}/{req.phenotype}")
+        path_parts = path.split('/')
+        s3.copy_files_for_meta_analysis(f"hermes/{path_parts[1]}/",
+                                        f"hermes/variants_raw/GWAS/{path_parts[1]}/{req.phenotype}")
     background.add_task(batch.submit_and_await_job, engine,
                         {
                             'jobName': 'aggregator-web',
@@ -330,6 +332,8 @@ async def start_metanalysis(req: MetaAnalysisRequest, background: BackgroundTask
                             'jobDefinition': 'aggregator-web-job',
                             'parameters': {
                                 'bucket': s3.BASE_BUCKET,
+                                'phenotype': req.phenotype,
+                                'ancestry': last_ancestry,
                                 'guid': str(ma_id),
                                 'branch': AGGREGATOR_BRANCH,
                                 'method': req.method,

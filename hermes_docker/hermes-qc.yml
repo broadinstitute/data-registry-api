@@ -71,9 +71,9 @@ Resources:
         ExecutionRoleArn: !GetAtt HermesQCJobRole.Arn
         ResourceRequirements:
           - Type: 'VCPU'
-            Value: '2.0'
+            Value: '8'
           - Type: 'MEMORY'
-            Value: '16384'
+            Value: '61440'
         NetworkConfiguration:
           AssignPublicIp: 'ENABLED'
         FargatePlatformConfiguration:

@@ -634,10 +634,11 @@ def get_name_ancestry_for_ds(engine, ds) -> Tuple[str, str]:
         return result[0], result[1]
 
 
-def save_phenotype(engine, phenotype):
+def save_phenotype(engine, phenotype, dichotomous):
     with engine.connect() as conn:
-        conn.execute(text("INSERT INTO Phenotypes (name, dichotomous) VALUES (:phenotype, 1) "
-                          "ON DUPLICATE KEY UPDATE name = VALUES(name)"), {'phenotype': phenotype})
+        conn.execute(text("INSERT INTO Phenotypes (name, dichotomous) VALUES (:phenotype, :dichotomous) "
+                          "ON DUPLICATE KEY UPDATE name = VALUES(name)"), {'phenotype': phenotype,
+                                                                           'dichotomous': dichotomous})
         conn.commit()
 
 

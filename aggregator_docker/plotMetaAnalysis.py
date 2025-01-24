@@ -65,8 +65,8 @@ def build_chromosome_map():
 
 
 
-def get_input_output(guid: str, bucket: str):
-    return f's3://{bucket}/hermes/out/metaanalysis/bottom-line/ancestry-specific/AD/ancestry=EU/', \
+def get_input_output(guid: str, bucket: str, phenotype: str, ancestry: str):
+    return f's3://{bucket}/hermes/out/metaanalysis/bottom-line/ancestry-specific/{phenotype}/ancestry={ancestry}/', \
             f's3://{bucket}/hermes/ma-results/{guid}'
 
 
@@ -88,12 +88,14 @@ def main():
     opts = argparse.ArgumentParser()
     opts.add_argument('--guid', type=str, required=True)
     opts.add_argument('--bucket', type=str, required=True)
+    opts.add_argument('--ancestry', type=str, required=True)
+    opts.add_argument('--phenotype', type=str, required=True)
 
     # parse command line arguments
     args = opts.parse_args()
 
     # source glob to read from and outdir to write to
-    srcfile, outdir = get_input_output(args.guid, args.bucket)
+    srcfile, outdir = get_input_output(args.guid, args.bucket, args.phenotype, args.ancestry)
 
     # NOTE: There is currently a bug in pandas where read_json doesn't properly
     #       reduce memory usage needed with chunksize. Once this is fixed, this

@@ -46,7 +46,7 @@ def copy_files_for_meta_analysis(source_prefix, destination_prefix):
         for obj in page.get('Contents', []):
             source_key = obj['Key']
             rest_of_path = source_key[len(source_prefix):]
-            destination_key = f"{destination_prefix}{rest_of_path}"
+            destination_key = f"{destination_prefix}/{rest_of_path}"
             copy_source = {
                 'Bucket': BASE_BUCKET,
                 'Key': source_key

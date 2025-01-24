@@ -24,8 +24,8 @@ def convert_to_genepi_map(col_map):
     mapping = {
         'chromosome': 'chr',
         'position': 'bp',
-        'reference': 'ea',
-        'alt': 'oa',
+        'non-effect allele': 'oa',
+        'effect allele': 'ea',
         'pValue': 'p',
         'beta': 'beta',
         'rsid': 'rsid',

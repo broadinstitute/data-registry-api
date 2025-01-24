@@ -1,4 +1,4 @@
---password used is password
+#password used is password
 insert into users(user_name, password, created_at)  values ('reviewer', '$2b$12$egUzuU2ajc422dCG6Qoow.6xVrm5bix/04hShnnwjYpmRgEDAUqeu', NOW());
 set @reviewer_user_id = LAST_INSERT_ID();
 insert into users(user_name, password, created_at)  values ('uploader1', '$2b$12$egUzuU2ajc422dCG6Qoow.6xVrm5bix/04hShnnwjYpmRgEDAUqeu', NOW());

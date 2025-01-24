@@ -59,6 +59,8 @@ Resources:
         Command:
           - 'Ref::guid'
           - 'Ref::bucket'
+          - 'Ref::ancestry'
+          - 'Ref::phenotype'
           - 'Ref::branch'
           - 'Ref::method'
           - 'Ref::args'
