@@ -41,7 +41,7 @@ def run_r_commands(file_path, file_guid, col_map, script_options):
     genepi_map = convert_to_genepi_map(col_map)
     script_option_str = " ".join(["-noind" if k == "noind" else f"-{k} {v}" for k, v in script_options.items()])
     col_mapping = " ".join([f"-{k} {v}" for k, v in genepi_map.items()])
-    ref_mapping = "-r_chr \"#CHROM\" -r_bp POS -r_ea REF -r_oa ALT -r_eaf AF -r_id ID -o out"
+    ref_mapping = "-r_chr \"#CHROM\" -r_bp POS -r_ea ALT -r_oa REF -r_eaf AF -r_id ID -o out"
     r_script_command = (f"Rscript heRmes/scripts/gwas_qc.R -r HRC.r1-1.GRCh37.wgs.mac5.sites.tab.gz -g {file_path} "
                         f"{col_mapping} {ref_mapping} {script_option_str} -o .")
     try:
