@@ -53,24 +53,24 @@ Resources:
       PlatformCapabilities:
         - 'FARGATE'
       Timeout:
-        AttemptDurationSeconds: 72000
+        AttemptDurationSeconds: 14400
       ContainerProperties:
         Image: !Sub '${AWS::AccountId}.dkr.ecr.us-east-1.amazonaws.com/aggregator-web-api-repo'
         Command:
           - 'Ref::guid'
           - 'Ref::bucket'
-          - 'Ref::ancestry'
-          - 'Ref::phenotype'
           - 'Ref::branch'
           - 'Ref::method'
           - 'Ref::args'
+          - 'Ref::ancestry'
+          - 'Ref::phenotype'
         JobRoleArn: !GetAtt AggregatorWebJobRole.Arn
         ExecutionRoleArn: !GetAtt AggregatorWebJobRole.Arn
         ResourceRequirements:
           - Type: 'VCPU'
-            Value: '0.5'
+            Value: '2.0'
           - Type: 'MEMORY'
-            Value: '2048'
+            Value: '16384'
         NetworkConfiguration:
           AssignPublicIp: 'ENABLED'
         FargatePlatformConfiguration:

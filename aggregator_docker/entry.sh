@@ -5,6 +5,8 @@ BUCKET=$2
 BRANCH_NAME=$3
 METHODS=$4  # Expected to be a space-separated list of methods
 CLI_FLAGS=$5
+ANCESTRY=$6
+PHENOTYPE=$7
 
 # Function to clone and build a repository
 # Usage: clone_and_build branch_name
@@ -44,4 +46,4 @@ for method in "${ADDR[@]}"; do
   run_stage "$method" "$CLI_FLAGS"
 done
 cd /app
-python3 plotMetaAnalysis.py --guid "$MA_GUID" --bucket "$BUCKET"
+python3 plotMetaAnalysis.py --guid "$MA_GUID" --bucket "$BUCKET" --ancestry "$ANCESTRY" --phenotype "$PHENOTYPE"
