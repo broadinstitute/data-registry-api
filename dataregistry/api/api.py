@@ -302,6 +302,13 @@ async def get_metanalysis(ma_id: UUID, user: User = Depends(get_current_user)):
         raise fastapi.HTTPException(status_code=403, detail="You need to be a reviewer")
 
 
+@router.delete("/hermes-delete-dataset/{ds_id}", status_code=204)
+async def delete_dataset(ds_id: UUID, user: User = Depends(get_current_user)):
+    if not check_hermes_admin_perms(user):
+        raise fastapi.HTTPException(status_code=403, detail="You don't have permission to perform this action")
+    query.delete_hermes_dataset(engine, ds_id)
+
+
 @router.post("/hermes-meta-analysis")
 async def start_metanalysis(req: MetaAnalysisRequest, background: BackgroundTasks,
                             user: Optional[User] = Depends(get_current_user)):

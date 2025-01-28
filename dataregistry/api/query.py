@@ -438,8 +438,8 @@ def gen_fetch_ds_sql(params, param_to_where):
     return f"{sql} {param_to_where.get('limit', '')} {param_to_where.get('offset', '')}".rstrip()
 
 
-def fetch_file_uploads(engine, statuses=None, limit=None, offset=None, phenotype=None, uploader=None) -> (
-        List)[FileUpload]:
+def fetch_file_uploads(engine, statuses=None, limit=None, offset=None, phenotype=None,
+                       uploader=None) -> List[FileUpload]:
     with engine.connect() as conn:
         sql, params = get_file_upload_sql_and_params(limit, offset, phenotype, statuses, uploader)
         results = conn.execute(text(sql), params)
@@ -647,6 +647,15 @@ def save_dataset_name(engine, ds_name, ancestry):
         conn.execute(text("INSERT INTO Datasets (name, ancestry) VALUES (:dataset, :ancestry) "
                           "ON DUPLICATE KEY UPDATE name = VALUES(name)"),
                      {'dataset': ds_name, 'ancestry': ancestry})
+        conn.commit()
+
+def delete_hermes_dataset(engine, ds_id):
+    no_hyphens = str(ds_id).replace('-', '')
+    with engine.connect() as conn:
+        conn.execute(text("DELETE FROM meta_analysis_datasets WHERE dataset_id = :ds_id"), {'ds_id': no_hyphens})
+        conn.execute(text("DELETE FROM meta_analyses WHERE id NOT IN (SELECT DISTINCT meta_analysis_id "
+                          "FROM meta_analysis_datasets)"), {})
+        conn.execute(text("DELETE FROM file_uploads WHERE id = :ds_id"), {'ds_id': no_hyphens})
         conn.commit()
 
 
