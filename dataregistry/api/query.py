@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 
 from dataregistry.api.model import SavedDataset, DataSet, Study, SavedStudy, SavedPhenotypeDataSet, SavedCredibleSet, \
     CsvBioIndexRequest, SavedCsvBioIndexRequest, User, FileUpload, NewUserRequest, HermesUser, MetaAnalysisRequest, \
-    HermesMetaAnalysisStatus, SavedMetaAnalysisRequest
+    HermesMetaAnalysisStatus, SavedMetaAnalysisRequest, HermesPhenotype
 from dataregistry.id_shortener import shorten_uuid
 
 
@@ -680,3 +680,9 @@ def get_meta_analysis(engine, ma_id: uuid.UUID) -> SavedMetaAnalysisRequest:
             datasets=[uuid.UUID(hex=x) for x in result['datasets'].decode('utf-8').split(',') if x],
             dataset_names=result['dataset_names'].split(',')
         )
+
+
+def get_hermes_phenotypes(engine) -> List[HermesPhenotype]:
+    with engine.connect() as conn:
+        result = conn.execute(text("SELECT name, description, dichotomous FROM hermes_phenotype")).mappings().all()
+        return [HermesPhenotype(**row) for row in result]

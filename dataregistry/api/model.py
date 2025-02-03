@@ -265,6 +265,11 @@ class QCHermesFileRequest(BaseModel):
     metadata: dict
     qc_script_options: QCScriptOptions
 
+class HermesPhenotype(BaseModel):
+    name: str
+    description: str
+    dichotomous: bool
+
 class FileUpload(BaseModel):
     id: UUID
     dataset_name: str
