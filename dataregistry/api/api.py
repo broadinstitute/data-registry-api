@@ -29,7 +29,7 @@ from dataregistry.api.jwt_utils import get_encoded_jwt_data, get_decoded_jwt_dat
 from dataregistry.api.model import DataSet, Study, SavedDatasetInfo, SavedDataset, UserCredentials, User, SavedStudy, \
     CreateBiondexRequest, CsvBioIndexRequest, BioIndexCreationStatus, SavedCsvBioIndexRequest, HermesFileStatus, \
     HermesUploadStatus, NewUserRequest, StartAggregatorRequest, MetaAnalysisRequest, QCHermesFileRequest, \
-    QCScriptOptions
+    QCScriptOptions, HermesPhenotype
 from dataregistry.api.phenotypes import get_phenotypes
 from dataregistry.api.validators import HermesValidator
 
@@ -348,6 +348,10 @@ async def start_metanalysis(req: MetaAnalysisRequest, background: BackgroundTask
                             }}, query.update_meta_analysis_log, ma_id.replace('-', ''), is_qc=False)
     return {'meta-analysis-id': ma_id}
 
+
+@router.get("/hermes-phenotypes")
+async def get_hermes_phenotypes() -> dict:
+    return {"data": query.get_hermes_phenotypes(engine)}
 
 @router.get("/get-hermes-pre-signed-url")
 async def get_hermes_pre_signed_url(request: Request):
