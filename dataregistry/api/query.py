@@ -397,6 +397,12 @@ def get_data_set_owner(engine, ds_id):
                               {'ds_id': ds_id.replace('-', '')}).fetchone()
         return result[0] if result else None
 
+def retrieve_meta_data_mapping(engine, user: str) -> [dict]:
+    with engine.connect() as conn:
+        results = conn.execute(text("""select dataset, metadata from file_uploads where uploaded_by = :user_name
+            """), {'user_name': user})
+
+        return {row.dataset: json.loads(row.metadata) for row in results}
 
 def save_file_upload_info(engine, dataset, metadata, s3_path, filename, file_size, uploader, qc_script_options) -> str:
     with engine.connect() as conn:

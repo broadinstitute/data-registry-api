@@ -393,6 +393,10 @@ async def rerun_hermes_qc(request: QCScriptOptions, file_id, background_tasks: B
         }}, query.update_file_upload_qc_log, file_id, True)
 
 
+@router.get("/hermes-past-metadata")
+async def get_hermes_past_metadata(user: User = Depends(get_current_user)):
+    return query.retrieve_meta_data_mapping(engine, user.user_name)
+
 @router.post("/validate-hermes")
 async def validate_hermes_csv(request: QCHermesFileRequest, background_tasks: BackgroundTasks,
                             user: User = Depends(get_current_user)):

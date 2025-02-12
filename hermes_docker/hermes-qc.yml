@@ -53,7 +53,7 @@ Resources:
       PlatformCapabilities:
         - 'FARGATE'
       Timeout:
-        AttemptDurationSeconds: 1200
+        AttemptDurationSeconds: 3600
       ContainerProperties:
         Image: !Sub '${AWS::AccountId}.dkr.ecr.us-east-1.amazonaws.com/hermes-qc-repo'
         Command:
@@ -71,9 +71,9 @@ Resources:
         ExecutionRoleArn: !GetAtt HermesQCJobRole.Arn
         ResourceRequirements:
           - Type: 'VCPU'
-            Value: '8'
+            Value: '16'
           - Type: 'MEMORY'
-            Value: '61440'
+            Value: '122880'
         NetworkConfiguration:
           AssignPublicIp: 'ENABLED'
         FargatePlatformConfiguration:
