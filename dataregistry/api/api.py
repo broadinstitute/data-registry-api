@@ -194,7 +194,9 @@ async def google_login(response: Response, body: dict = Body(...)):
     if not user:
         raise fastapi.HTTPException(status_code=401, detail='Username is not in our system')
     else:
-        log_user_in(response, user)
+        token = get_encoded_jwt_data(user)
+        user.api_token = token
+        log_user_in(response, user, token)
         return {'status': 'success', 'user': user}
 
 
@@ -693,20 +695,20 @@ def is_logged_in(user: User = Depends(get_current_user)):
         raise fastapi.HTTPException(status_code=401, detail='Not logged in')
 
 
-def log_user_in(response: Response, user: User):
+def log_user_in(response: Response, user: User, token: str):
     query.log_user_in(engine, user)
     response.set_cookie(key=AUTH_COOKIE_NAME, httponly=True,
-                        value=get_encoded_jwt_data(user),
+                        value=token,
                         domain='.kpndataregistry.org', samesite='strict',
                         secure=os.getenv('USE_HTTPS') == 'true')
-
 
 @router.post('/login')
 def login(response: Response, creds: UserCredentials):
     user = query.get_user(engine, creds)
     if user:
-        user.api_token = get_encoded_jwt_data(user)
-        log_user_in(response, user)
+        token = get_encoded_jwt_data(user)
+        user.api_token = token
+        log_user_in(response, user, token)
         return {'status': 'success', 'user': user}
     else:
         raise fastapi.HTTPException(status_code=401, detail='Invalid username or password')
