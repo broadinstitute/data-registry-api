@@ -705,6 +705,7 @@ def log_user_in(response: Response, user: User):
 def login(response: Response, creds: UserCredentials):
     user = query.get_user(engine, creds)
     if user:
+        user.api_token = get_encoded_jwt_data(user)
         log_user_in(response, user)
         return {'status': 'success', 'user': user}
     else:
