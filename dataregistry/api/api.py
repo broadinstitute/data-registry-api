@@ -442,7 +442,7 @@ async def fetch_single_file_upload(file_id: UUID, user: User = Depends(get_curre
             with smart_open.open(f"s3://{s3.BASE_BUCKET}/{file_upload.s3_path}", 'rb') as f:
                 if file_upload.s3_path.endswith('.gz'):
                     import gzip
-                    f = gzip.GzipFile(fileobj=f)
+                    f = gzip.GzipFile(fileobj=f, mode='rb')
 
                 header_line = f.readline().decode('utf-8').strip()
                 delimiter = ',' if '.csv' in file_upload.file_name.lower() else '\t'
