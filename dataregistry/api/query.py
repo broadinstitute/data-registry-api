@@ -531,6 +531,12 @@ def update_file_qc_status(engine, file_id, qc_status):
                      {'qc_status': qc_status, 'file_id': str(file_id).replace('-', '')})
         conn.commit()
 
+def update_file_metadata(engine, file_id, metadata):
+    with engine.connect() as conn:
+        conn.execute(text("UPDATE file_uploads set metadata = :metadata where id = :file_id"),
+                     {'metadata': json.dumps(metadata), 'file_id': str(file_id).replace('-', '')})
+        conn.commit()
+
 
 def fetch_used_phenotypes(engine, statuses) -> List[str]:
     with engine.connect() as conn:
