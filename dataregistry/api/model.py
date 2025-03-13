@@ -131,6 +131,7 @@ class BioIndexCreationStatus(str, Enum):
 
 class HermesFileStatus(str, Enum):
     SUBMITTED_TO_QC = "SUBMITTED TO QC"
+    SUBMISSION_TO_QC_FAILED = "FAILED TO SUBMIT TO QC"
     FAILED_QC = "FAILED QC"
     READY_FOR_REVIEW = "READY FOR REVIEW"
     REVIEW_APPROVED = "REVIEW APPROVED"

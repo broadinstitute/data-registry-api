@@ -54,7 +54,6 @@ formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(messag
 ch.setFormatter(formatter)
 
 logger.addHandler(ch)
-# connect to database
 engine = DataRegistryReadWriteDB().get_engine()
 
 logger.info("Starting API")
@@ -436,7 +435,24 @@ async def validate_hermes_csv(request: QCHermesFileRequest, background_tasks: Ba
 @router.get("/upload-hermes/{file_id}")
 async def fetch_single_file_upload(file_id: UUID, user: User = Depends(get_current_user)):
     if VIEW_ALL_ROLES.intersection(user.roles) or query.get_file_owner(engine, file_id) == user.user_name:
-        return query.fetch_file_upload(engine, str(file_id).replace('-', ''))
+        file_upload = query.fetch_file_upload(engine, str(file_id).replace('-', ''))
+
+        # Read headers from the file in S3
+        try:
+            with smart_open.open(f"s3://{s3.BASE_BUCKET}/{file_upload.s3_path}", 'rb') as f:
+                if file_upload.s3_path.endswith('.gz'):
+                    import gzip
+                    f = gzip.GzipFile(fileobj=f)
+
+                header_line = f.readline().decode('utf-8').strip()
+                delimiter = ',' if '.csv' in file_upload.file_name.lower() else '\t'
+                headers = header_line.split(delimiter)
+                response_dict = file_upload.dict()
+                response_dict['all_columns'] = headers
+                return response_dict
+        except Exception as e:
+            logger.exception(f"Error reading headers from file: {e}")
+            return file_upload
     else:
         raise fastapi.HTTPException(status_code=401, detail='you aren\'t authorized to view this dataset')
 
@@ -458,6 +474,31 @@ async def update_single_file_upload(file_id: UUID, status: HermesUploadStatus, u
     else:
         raise fastapi.HTTPException(status_code=401, detail='you aren\'t authorized')
 
+
+@router.patch("/upload-hermes-metadata/{file_id}")
+async def update_single_file_metadata(file_id: UUID, metadata: dict, background_tasks: BackgroundTasks, user: User = Depends(get_current_user)):
+    if VIEW_ALL_ROLES.intersection(user.roles) or query.get_file_owner(engine, file_id) == user.user_name:
+        no_dashes_id = str(file_id).replace('-', '')
+        query.update_file_metadata(engine, no_dashes_id, metadata)
+        file_upload = query.fetch_file_upload(engine, no_dashes_id)
+        try:
+            background_tasks.add_task(batch.submit_and_await_job, engine, {
+            'jobName': 'hermes-qc-job',
+            'jobQueue': 'hermes-qc-job-queue',
+            'jobDefinition': 'hermes-qc-job',
+            'parameters': {
+                's3-path': f"s3://{s3.BASE_BUCKET}/{file_upload.s3_path}",
+                'file-guid': str(file_id),
+                'col-map': json.dumps(metadata["column_map"]),
+                'script-options': json.dumps(file_upload.qc_script_options)
+            }}, query.update_file_upload_qc_log, str(file_id), True)
+            query.update_file_qc_status(engine, no_dashes_id, HermesFileStatus.SUBMITTED_TO_QC)
+        except Exception as e:
+            logger.exception(f"Error submitting QC job: {e}")
+            query.update_file_qc_status(engine, str(file_id).replace('-', ''), HermesFileStatus.SUBMISSION_TO_QC_FAILED)
+            raise fastapi.HTTPException(status_code=500, detail=f"Error submitting QC job: {str(e)}")
+    else:
+        raise fastapi.HTTPException(status_code=401, detail='you aren\'t authorized')
 
 @router.post("/uploadfile/{data_set_id}/{dichotomous}/{sample_size}")
 async def upload_file_for_phenotype(data_set_id: str, dichotomous: bool, request: Request,
