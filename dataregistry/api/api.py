@@ -155,6 +155,11 @@ def find_dupe_cols(header, is_csv, panda_header):
 @router.post("/preview-delimited-file")
 async def preview_files(file: UploadFile):
     contents = await file.read(100)
+    print("Content type:", file.content_type)
+    print("Filename:", file.filename)
+    print("First 4 bytes:", contents[:4])
+    print("First 4 bytes in hex:", contents[:4].hex())
+    print("Individual byte values:", [hex(b) for b in contents[:4]])
     await file.seek(0)
 
     if contents.startswith(b'\x1f\x8b'):
@@ -437,19 +442,19 @@ async def fetch_single_file_upload(file_id: UUID, user: User = Depends(get_curre
     if VIEW_ALL_ROLES.intersection(user.roles) or query.get_file_owner(engine, file_id) == user.user_name:
         file_upload = query.fetch_file_upload(engine, str(file_id).replace('-', ''))
 
-        # Read headers from the file in S3
         try:
-            with smart_open.open(f"s3://{s3.BASE_BUCKET}/{file_upload.s3_path}", 'rb') as f:
-                if file_upload.s3_path.endswith('.gz'):
-                    import gzip
-                    f = gzip.GzipFile(fileobj=f, mode='rb')
+            sample_content = s3.get_file_sample(file_upload.s3_path)
 
-                header_line = f.readline().decode('utf-8').strip()
-                delimiter = ',' if '.csv' in file_upload.file_name.lower() else '\t'
-                headers = header_line.split(delimiter)
-                response_dict = file_upload.dict()
-                response_dict['all_columns'] = headers
-                return response_dict
+            if sample_content.startswith(b'\x1f\x8b'):
+                lines = await file_utils.convert_compressed_bytes_to_list(sample_content)
+            else:
+                lines = await file_utils.convert_text_bytes_to_list(sample_content)
+
+            df = await file_utils.parse_file(io.StringIO('\n'.join(lines)), file_upload.file_name)
+
+            response_dict = file_upload.dict()
+            response_dict['all_columns'] = [column for column in df.columns]
+            return response_dict
         except Exception as e:
             logger.exception(f"Error reading headers from file: {e}")
             return file_upload

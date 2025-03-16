@@ -34,18 +34,6 @@ async def decompress_gzip(stream: bytes) -> bytes:
         return gz.read()
 
 
-async def sample_file(lines: list) -> Tuple[io.StringIO, str]:
-    sample = ''
-    sample_size = min(10, len(lines))
-    for line in lines[:sample_size]:
-        line_content = line if isinstance(line, str) else line.decode('utf-8')
-        if line_content == '\r':
-            break
-        sample += line_content + '\n'
-    file_name = lines[1].decode('utf-8').split(';')[2].split('=')[1].strip().replace("\"", "")
-    return io.StringIO(sample), file_name
-
-
 async def get_text_sample(file: UploadFile) -> list:
     text_bytes = b""
     while True:
@@ -54,6 +42,10 @@ async def get_text_sample(file: UploadFile) -> list:
             break
         text_bytes += chunk
 
+    return await convert_text_bytes_to_list(text_bytes)
+
+
+async def convert_text_bytes_to_list(text_bytes):
     lines = []
     text_stream = io.StringIO(text_bytes.decode('utf-8'))
     try:
@@ -63,7 +55,6 @@ async def get_text_sample(file: UploadFile) -> list:
             line = text_stream.readline()
     except EOFError:
         pass
-
     return lines[:-1]
 
 
@@ -75,6 +66,10 @@ async def get_compressed_sample(file: UploadFile) -> list:
             break
         compressed_bytes += chunk
 
+    return await convert_compressed_bytes_to_list(compressed_bytes)
+
+
+async def convert_compressed_bytes_to_list(compressed_bytes):
     lines = []
     with gzip.open(io.BytesIO(compressed_bytes), 'rt') as f:
         try:

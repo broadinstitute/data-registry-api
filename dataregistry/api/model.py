@@ -279,6 +279,7 @@ class FileUpload(BaseModel):
     uploaded_at: datetime
     uploaded_by: str
     phenotype: Union[str, None]
+    ancestry: Union[str, None]
     metadata: Union[dict, None]
     qc_status: HermesFileStatus
     s3_path: Union[str, None]

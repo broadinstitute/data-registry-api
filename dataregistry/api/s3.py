@@ -53,6 +53,11 @@ def copy_files_for_meta_analysis(source_prefix, destination_prefix):
             }
             s3_client.copy(copy_source, BASE_BUCKET, destination_key)
 
+def get_file_sample(file_path, sample_size=2048):
+    s3_client = boto3.client('s3', region_name=S3_REGION)
+    response = s3_client.get_object(Bucket=BASE_BUCKET, Key=file_path, Range=f"bytes=0-{sample_size-1}")
+    return response['Body'].read()
+
 
 def create_dataset_directory(record_name, bucket_name):
     _create_directory(f'{record_name}/{bucket_name}/')

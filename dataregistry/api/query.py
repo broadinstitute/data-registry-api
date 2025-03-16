@@ -430,7 +430,7 @@ def update_file_qc_options(engine, file_id: str, qc_script_options: dict):
 
 def gen_fetch_ds_sql(params, param_to_where):
     sql = "select id, dataset as dataset_name, file_name, file_size, uploaded_at, uploaded_by, qc_status, " \
-          "qc_log, metadata->>'$.phenotype' as phenotype, metadata, s3_path from file_uploads "
+          "qc_log, metadata->>'$.phenotype' as phenotype, metadata->>'$.ancestry' as ancestry, metadata, s3_path from file_uploads "
 
     for index, (col, value) in enumerate(params.items(), start=0):
         if col in {"limit", "offset"}:
