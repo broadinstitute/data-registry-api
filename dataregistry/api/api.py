@@ -155,11 +155,6 @@ def find_dupe_cols(header, is_csv, panda_header):
 @router.post("/preview-delimited-file")
 async def preview_files(file: UploadFile):
     contents = await file.read(100)
-    print("Content type:", file.content_type)
-    print("Filename:", file.filename)
-    print("First 4 bytes:", contents[:4])
-    print("First 4 bytes in hex:", contents[:4].hex())
-    print("Individual byte values:", [hex(b) for b in contents[:4]])
     await file.seek(0)
 
     if contents.startswith(b'\x1f\x8b'):
