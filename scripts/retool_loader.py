@@ -76,28 +76,44 @@ def save_phenotypes(phenotypes, prod_run=False):
     for p in phenotypes:
         save_phenotype(p.name, p.description, p.dichotomous, p.group, prod_run)
 
+def get_existing_phenotypes(conn, dataset_name, prod_run=False):
+    table_name = "Datasets" if prod_run else "DatasetsLoader"
+    result = conn.execute(text(f"""
+        SELECT phenotypes 
+        FROM {table_name} 
+        WHERE name = :dataset_name
+    """), {'dataset_name': dataset_name})
+    row = result.fetchone()
+    if row and row[0]:
+        return set(row[0].split(','))
+    return set()
+
 def save_datasets(datasets, prod_run=False):
     table_name = "Datasets" if prod_run else "DatasetsLoader"
     with engine.connect() as conn:
         for name, data in datasets.items():
             print(f"Saving {name}")
             params = data.copy()
-            params['phenotypes'] = ','.join(data['phenotypes'])
+
+            existing_phenotypes = get_existing_phenotypes(conn, name, prod_run)
+            new_phenotypes = set(data['phenotypes'])
+            if new_phenotypes == existing_phenotypes:
+                print(f"Skipping {name} as no new phenotypes")
+                continue
+
+            merged_phenotypes = existing_phenotypes.union(new_phenotypes)
+            added_phenotypes = new_phenotypes - existing_phenotypes
+            print(f"Updating {name} with new phenotypes: {added_phenotypes}")
+
+
+            params['phenotypes'] = ','.join(sorted(merged_phenotypes))
             params['ancestry_name'] = ancestries.get(data['ancestry'], None)
             params['PMID'] = int(data['PMID']) if data['PMID'].isdigit() and int(data['PMID']) > 0 else None
             conn.execute(text(f"""
-                INSERT INTO {table_name} (name, description, phenotypes, ancestry, ancestry_name, tech, subjects, pmid, community, new, added, updated) 
-                VALUES (:dataset, :description, :phenotypes, :ancestry, :ancestry_name, :tech, :subjects, :PMID, :community, :new, NOW(), NOW())
+                INSERT INTO {table_name} (name, description, phenotypes, ancestry, ancestry_name, tech, subjects, pmid, community, added, updated) 
+                VALUES (:dataset, :description, :phenotypes, :ancestry, :ancestry_name, :tech, :subjects, :PMID, :community, NOW(), NOW())
                 ON DUPLICATE KEY UPDATE 
-                    description=:description,
-                    phenotypes=:phenotypes,
-                    ancestry=:ancestry,
-                    ancestry_name=:ancestry_name,
-                    tech=:tech,
-                    subjects=:subjects,
-                    pmid=:PMID,
-                    community=:community,
-                    `new`=:new,
+                    phenotypes=:phenotypes
                     updated=NOW()
                     """), params)
             conn.commit()
