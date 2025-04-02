@@ -110,10 +110,10 @@ def save_datasets(datasets, prod_run=False):
             params['ancestry_name'] = ancestries.get(data['ancestry'], None)
             params['PMID'] = int(data['PMID']) if data['PMID'].isdigit() and int(data['PMID']) > 0 else None
             conn.execute(text(f"""
-                INSERT INTO {table_name} (name, description, phenotypes, ancestry, ancestry_name, tech, subjects, pmid, community, added, updated) 
-                VALUES (:dataset, :description, :phenotypes, :ancestry, :ancestry_name, :tech, :subjects, :PMID, :community, NOW(), NOW())
+                INSERT INTO {table_name} (name, description, phenotypes, ancestry, ancestry_name, tech, subjects, pmid, community, new, added, updated) 
+                VALUES (:dataset, :description, :phenotypes, :ancestry, :ancestry_name, :tech, :subjects, :PMID, :community, 1, NOW(), NOW())
                 ON DUPLICATE KEY UPDATE 
-                    phenotypes=:phenotypes
+                    phenotypes=:phenotypes,
                     updated=NOW()
                     """), params)
             conn.commit()
