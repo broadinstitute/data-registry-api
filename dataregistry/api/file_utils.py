@@ -1,3 +1,4 @@
+import csv
 import gzip
 import io
 from typing import Tuple
@@ -15,6 +16,21 @@ def infer_data_type(val):
     else:
         return 'TEXT'
 
+def convert_json_to_csv(json):
+    flat_data = {}
+    for key, value in json.items():
+        if isinstance(value, dict):
+            for nested_key, nested_value in value.items():
+                flat_data[f"{key}_{nested_key}"] = nested_value
+        else:
+            flat_data[key] = value
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(flat_data.keys())
+    writer.writerow(flat_data.values())
+    output.seek(0)
+    return output
 
 async def parse_file(file_content, file_name) -> pd.DataFrame:
     if '.csv' in file_name:

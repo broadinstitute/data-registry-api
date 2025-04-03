@@ -3,7 +3,7 @@ import json
 import re
 import uuid
 from functools import lru_cache
-from typing import Optional, List, Tuple, Any
+from typing import Optional, List, Tuple, Any, Union
 
 import bcrypt
 from sqlalchemy import text
@@ -496,7 +496,7 @@ def update_meta_analysis_log(engine, log: str, meta_analysis_id: str, status: st
         conn.commit()
 
 
-def fetch_file_upload(engine, file_id) -> FileUpload:
+def fetch_file_upload(engine, file_id) -> Union[FileUpload, None]:
     with engine.connect() as conn:
         result = conn.execute(
             text("SELECT id, dataset as dataset_name, file_name, file_size, uploaded_at, uploaded_by, metadata, "

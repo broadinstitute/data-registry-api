@@ -728,6 +728,24 @@ def check_perms(ds_id: str, user: User, msg: str):
             raise fastapi.HTTPException(status_code=401, detail=msg)
 
 
+
+@router.get('/hermes/metadata/{ds_id}')
+def get_hermes_metadata(ds_id, user: User = Depends(get_current_user)):
+    if VIEW_ALL_ROLES.intersection(user.roles):
+        dataset = query.fetch_file_upload(engine, str(ds_id).replace('-', ''))
+        try:
+
+            csv = file_utils.convert_json_to_csv(dataset.metadata)
+            return StreamingResponse(
+                iter([csv.getvalue()]),
+                media_type="text/csv",
+                headers={"Content-Disposition": f"attachment; filename={dataset.dataset_name}_metadata.csv"}
+            )
+        except Exception as e:
+            raise fastapi.HTTPException(status_code=400, detail=f"JSON conversion error: {str(e)}")
+    else:
+        raise fastapi.HTTPException(status_code=403, detail="You need to be a reviewer")
+
 @router.get('/is-logged-in')
 def is_logged_in(user: User = Depends(get_current_user)):
     if user:
