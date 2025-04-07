@@ -53,7 +53,7 @@ Resources:
       PlatformCapabilities:
         - 'FARGATE'
       Timeout:
-        AttemptDurationSeconds: 14400
+        AttemptDurationSeconds: 36000
       ContainerProperties:
         Image: !Sub '${AWS::AccountId}.dkr.ecr.us-east-1.amazonaws.com/aggregator-web-api-repo'
         Command:
