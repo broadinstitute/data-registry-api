@@ -4,7 +4,7 @@ import pandas as pd
 import os
 import boto3
 from urllib.parse import urlparse
-from liftover import get_lifter
+from pyliftover import LiftOver
 import tempfile
 import time
 
@@ -41,6 +41,24 @@ def upload_to_s3(local_path, s3_path):
     s3_client.upload_file(local_path, bucket, key)
     print("Upload complete")
 
+def batch_convert_coordinates(converter, chroms, positions):
+    new_positions = []
+    failed_count = 0
+
+    for chrom, pos in zip(chroms, positions):
+        try:
+            result = converter.convert_coordinate(chrom, pos)
+            if result and len(result) > 0:
+                new_positions.append(int(result[0][1]))
+            else:
+                new_positions.append(None)
+                failed_count += 1
+        except Exception as e:
+            new_positions.append(None)
+            failed_count += 1
+
+    return new_positions, failed_count
+
 def main():
     start_time = time.time()
     args = parse_args()
@@ -50,7 +68,7 @@ def main():
     file_to_convert, original_file = download_from_s3(args.input, temp_dir)
 
     print("Initializing liftover converter...")
-    converter = get_lifter('hg38', 'hg19', one_based=True)
+    converter = LiftOver('hg38', 'hg19')
     print("Converter initialized")
 
     total_processed = 0
@@ -67,28 +85,14 @@ def main():
         print(f"Processing chunk {chunk_idx+1} with {len(chunk)} rows")
 
         chunk[args.chr_col] = chunk[args.chr_col].astype(str)
+        chunk[args.pos_col] = chunk[args.pos_col].astype("Int64")
         hg38_column = f"{args.pos_col}_hg38"
         chunk.loc[:, hg38_column] = chunk[args.pos_col].copy()
-        chunk.loc[:, args.pos_col] = None
 
-        chunk_failed = 0
-
-        for idx, row in chunk.iterrows():
-            try:
-                chr_value = row[args.chr_col]
-                pos_value = int(row[hg38_column])
-
-                new_pos = converter[chr_value][pos_value]
-
-                if new_pos:
-                    chunk.at[idx, args.pos_col] = new_pos[0][1]
-                else:
-                    chunk_failed += 1
-            except Exception as e:
-                print(f"Error processing row {idx}: {e}")
-                chunk_failed += 1
-
-
+        chroms = chunk[args.chr_col].tolist()
+        positions = chunk[hg38_column].tolist()
+        new_positions, chunk_failed = batch_convert_coordinates(converter, chroms, positions)
+        chunk.loc[:, args.pos_col] = pd.Series(new_positions, dtype="Int64")
 
         total_failed += chunk_failed
         total_processed += len(chunk)
