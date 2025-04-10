@@ -41,7 +41,7 @@ Resources:
       JobQueueName: 'liftover-job-queue'
       ComputeEnvironmentOrder:
         - Order: 1
-          ComputeEnvironment: "LiftoverComputeEnv"
+          ComputeEnvironment: !Ref LiftoverComputeEnv
       Priority: 1
       State: ENABLED
 
