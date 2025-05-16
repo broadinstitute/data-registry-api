@@ -412,22 +412,36 @@ async def validate_hermes_csv(request: QCHermesFileRequest, background_tasks: Ba
     if validation_errors:
         return {"errors": validation_errors}
 
+    hg38 = metadata.get('referenceGenome') == 'Hg38'
+
     script_options = {k: v for k, v in request.qc_script_options.dict().items() if v is not None}
     s3.upload_metadata(metadata, f"hermes/{dataset}")
     file_guid = query.save_file_upload_info(engine, dataset, metadata, s3_path, filename, file_size, user.user_name,
-                                            script_options)
+                                            script_options,
+                                            HermesFileStatus.SUBMITTED_TO_LIFTOVER if hg38 else HermesFileStatus.SUBMITTED_TO_QC)
 
-    # Submit the batch job for further processing
-    background_tasks.add_task(batch.submit_and_await_job, engine, {
-        'jobName': 'hermes-qc-job',
-        'jobQueue': 'hermes-qc-job-queue',
-        'jobDefinition': 'hermes-qc-job',
-        'parameters': {
-            's3-path': f"s3://{s3.BASE_BUCKET}/{s3_path}",
-            'file-guid': file_guid,
-            'col-map': json.dumps(metadata["column_map"]),
-            'script-options': json.dumps(script_options)
-        }}, query.update_file_upload_qc_log, file_guid, True)
+    if hg38:
+        background_tasks.add_task(batch.submit_and_await_job, engine, {
+            'jobName': 'liftover-job',
+            'jobQueue': 'liftover-job-queue',
+            'jobDefinition': 'liftover-job',
+            'parameters': {
+                's3-path': f"s3://{s3.BASE_BUCKET}/{s3_path}",
+                'chromosome-col': metadata["column_map"]['chromosome'],
+                'position-col': metadata["column_map"]['position']
+            }}, query.update_file_upload_qc_log, file_guid, True)
+        # can we do something here?
+    else:
+        background_tasks.add_task(batch.submit_and_await_job, engine, {
+            'jobName': 'hermes-qc-job',
+            'jobQueue': 'hermes-qc-job-queue',
+            'jobDefinition': 'hermes-qc-job',
+            'parameters': {
+                's3-path': f"s3://{s3.BASE_BUCKET}/{s3_path}",
+                'file-guid': file_guid,
+                'col-map': json.dumps(metadata["column_map"]),
+                'script-options': json.dumps(script_options)
+            }}, query.update_file_upload_qc_log, file_guid, True)
 
     return {"file_size": file_size, "s3_path": s3_path, "file_id": file_guid}
 
