@@ -162,6 +162,7 @@ async def preview_files(file: UploadFile):
     else:
         sample_lines = await file_utils.get_text_sample(file)
 
+    await check_column_counts(sample_lines)
     df = await file_utils.parse_file(io.StringIO('\n'.join(sample_lines)), file.filename)
     dupes = find_dupe_cols(sample_lines[0], ".csv" in file.filename, df.columns)
     if len(dupes) > 0:
@@ -446,7 +447,6 @@ async def fetch_single_file_upload(file_id: UUID, user: User = Depends(get_curre
                 lines = await file_utils.convert_text_bytes_to_list(sample_content)
 
             df = await file_utils.parse_file(io.StringIO('\n'.join(lines)), file_upload.file_name)
-
             response_dict = file_upload.dict()
             response_dict['all_columns'] = [column for column in df.columns]
             return response_dict
@@ -455,6 +455,22 @@ async def fetch_single_file_upload(file_id: UUID, user: User = Depends(get_curre
             return file_upload
     else:
         raise fastapi.HTTPException(status_code=401, detail='you aren\'t authorized to view this dataset')
+
+
+async def check_column_counts(lines):
+    delim = '\t'
+    header_count = len(lines[0].split(delim))
+    for i, line in enumerate(lines[1:], start=2):
+        col_count = len(line.strip().split(delim))
+        if col_count != header_count:
+            raise fastapi.HTTPException(
+                status_code=400,
+                detail=(
+                    f"Column mismatch on line {i}: "
+                    f"expected {header_count} columns, found {col_count}"
+                )
+            )
+
 
 
 @router.get("/upload-hermes")
