@@ -97,13 +97,13 @@ def save_datasets(datasets, prod_run=False):
 
             existing_phenotypes = get_existing_phenotypes(conn, name, prod_run)
             new_phenotypes = set(data['phenotypes'])
-            if new_phenotypes == existing_phenotypes:
-                print(f"Skipping {name} as no new phenotypes")
-                continue
+            # if new_phenotypes == existing_phenotypes:
+            #     print(f"Skipping {name} as no new phenotypes")
+            #     continue
 
             merged_phenotypes = existing_phenotypes.union(new_phenotypes)
             added_phenotypes = new_phenotypes - existing_phenotypes
-            print(f"Updating {name} with new phenotypes: {added_phenotypes}")
+            # print(f"Updating {name} with new phenotypes: {added_phenotypes}")
 
 
             params['phenotypes'] = ','.join(sorted(merged_phenotypes))
@@ -111,9 +111,10 @@ def save_datasets(datasets, prod_run=False):
             params['PMID'] = int(data['PMID']) if data['PMID'].isdigit() and int(data['PMID']) > 0 else None
             conn.execute(text(f"""
                 INSERT INTO {table_name} (name, description, phenotypes, ancestry, ancestry_name, tech, subjects, pmid, community, new, added, updated) 
-                VALUES (:dataset, :description, :phenotypes, :ancestry, :ancestry_name, :tech, :subjects, :PMID, :community, 1, NOW(), NOW())
+                VALUES (:dataset, :description, :phenotypes, :ancestry, :ancestry_name, :tech, :total_subjects, :PMID, :community, 1, NOW(), NOW())
                 ON DUPLICATE KEY UPDATE 
                     phenotypes=:phenotypes,
+                    subjects=:total_subjects,
                     updated=NOW()
                     """), params)
             conn.commit()
