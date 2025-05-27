@@ -32,6 +32,7 @@ from dataregistry.api.model import DataSet, Study, SavedDatasetInfo, SavedDatase
     QCScriptOptions, HermesPhenotype
 from dataregistry.api.phenotypes import get_phenotypes
 from dataregistry.api.validators import HermesValidator
+from dataregistry.api.vector_search import get_vector_search
 
 HERMES_VALIDATOR = HermesValidator()
 from dataregistry.pub_med import PubIdType, infer_id_type, format_authors, get_elocation_id
@@ -585,6 +586,30 @@ async def stream_ma(ma_id: str):
 
     return StreamingResponse(generator(), media_type='application/octet-stream',
                              headers={"Content-Disposition": f"attachment; filename={name}"})
+
+
+@router.get('/search/phenotypes', response_class=fastapi.responses.ORJSONResponse)
+async def search_phenotypes(
+        q: str = Query(..., description="Search query text"),
+        group: Optional[str] = Query(None, description="Filter by phenotype group"),
+):
+    try:
+        vector_search = get_vector_search()
+        results = vector_search.search(
+            query=q,
+            top_k=10,
+            similarity_threshold=0.1,
+            group_filter=group
+        )
+    except Exception as e:
+        logger.error(f"Vector search error: {str(e)}")
+        raise fastapi.HTTPException(status_code=500, detail=f'Search failed: {str(e)}')
+
+    logger.info(f"Search completed. Found {len(results)} results.")
+    return {
+        "data": results,
+        "total_results": len(results)
+    }
 
 @router.get("/{ft}/{file_id}", name="stream_file")
 async def stream_file(file_id: str, ft: str):

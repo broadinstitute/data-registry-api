@@ -1,0 +1,200 @@
+"""
+Vector search functionality using ChromaDB for semantic phenotype search.
+"""
+
+import os
+import logging
+from typing import List, Dict, Any, Optional
+import chromadb
+
+logger = logging.getLogger(__name__)
+
+class PhenotypeVectorSearch:
+    def __init__(self, db_path: str = "./chroma_db"):
+        self.db_path = db_path
+        self.client = None
+        self.collection = None
+        self._initialize()
+    
+    def _initialize(self):
+        """Initialize ChromaDB client and collection."""
+        try:
+            # Use the same embedding function as used during database creation
+            from chromadb.utils import embedding_functions
+            sentence_transformer_ef = embedding_functions.SentenceTransformerEmbeddingFunction(
+                model_name="all-mpnet-base-v2"  # Match the model used in build script
+            )
+            
+            self.client = chromadb.PersistentClient(path=self.db_path)
+            self.collection = self.client.get_collection(
+                name="phenotypes",
+                embedding_function=sentence_transformer_ef
+            )
+            logger.info("Vector search initialized successfully with all-mpnet-base-v2")
+        except Exception as e:
+            logger.error(f"Failed to initialize vector search: {e}")
+            raise
+    
+    def search(
+        self, 
+        query: str, 
+        top_k: int = 10, 
+        similarity_threshold: float = 0.15,
+        group_filter: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Search for phenotypes using exact name matching first, then semantic similarity.
+        
+        Args:
+            query: Search query text
+            top_k: Maximum number of results to return
+            similarity_threshold: Minimum similarity score (0.0 to 1.0)
+            group_filter: Optional filter by phenotype group
+            
+        Returns:
+            List of matching phenotypes with similarity scores
+        """
+        if not self.collection:
+            raise RuntimeError("Vector search not initialized")
+        
+
+        # Step 1: Try exact name matching first
+        exact_matches = self._search_exact_name(query, group_filter)
+        
+        if exact_matches:
+            logger.info(f"Found exact name match for '{query}'")
+            # If we found exact matches, search using their descriptions for better semantic results
+            combined_results = []
+            remaining_slots = top_k
+            
+            for match in exact_matches:
+                if remaining_slots <= 0:
+                    break
+                # Add the exact match with high score
+                combined_results.append({
+                    "id": match["id"],
+                    "name": match["name"],
+                    "description": match["description"],
+                    "group": match["group"],
+                    "score": 1.0  # Perfect match for exact name
+                })
+                remaining_slots -= 1
+                
+                # Now search using the description to find related phenotypes
+                if remaining_slots > 0:
+                    semantic_results = self._search_semantic(
+                        match["description"], 
+                        remaining_slots, 
+                        similarity_threshold,
+                        group_filter,
+                        exclude_ids=[match["id"]]  # Don't include the exact match again
+                    )
+                    combined_results.extend(semantic_results)
+                    remaining_slots -= len(semantic_results)
+            
+            return combined_results[:top_k]
+        else:
+            # Step 2: Fall back to semantic search
+            return self._search_semantic(query, top_k, similarity_threshold, group_filter)
+    
+    def _search_exact_name(self, query: str, group_filter: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Search for exact name matches."""
+        where_clause = {"name": query}
+        if group_filter:
+            where_clause["group"] = group_filter
+            
+        try:
+            results = self.collection.get(
+                where=where_clause,
+                include=["metadatas"]
+            )
+            
+            exact_matches = []
+            for i, metadata in enumerate(results['metadatas']):
+                exact_matches.append({
+                    "id": results['ids'][i],
+                    "name": metadata["name"],
+                    "description": metadata["description"],
+                    "group": metadata["group"]
+                })
+            
+            return exact_matches
+        except Exception as e:
+            logger.error(f"Exact name search error: {str(e)}")
+            return []
+    
+    def _search_semantic(
+        self, 
+        query: str, 
+        top_k: int, 
+        similarity_threshold: float, 
+        group_filter: Optional[str] = None,
+        exclude_ids: Optional[List[str]] = None
+    ) -> List[Dict[str, Any]]:
+        """Perform semantic similarity search."""
+        where_clause = None
+        if group_filter:
+            where_clause = {"group": group_filter}
+        
+        try:
+            results = self.collection.query(
+                query_texts=[query],
+                n_results=top_k * 2,  # Get more results to filter out excluded IDs
+                where=where_clause,
+                include=["metadatas", "distances"]
+            )
+        except Exception as e:
+            logger.error(f"ChromaDB query error: {str(e)}")
+            raise
+        
+        hits = results['ids'][0]
+        metadatas = results['metadatas'][0]
+        distances = results['distances'][0]
+        
+        exclude_ids = exclude_ids or []
+        filtered_results = []
+        
+        for i, hit_id in enumerate(hits):
+            if hit_id in exclude_ids:
+                continue
+                
+            similarity = 1 - distances[i]
+            if similarity >= similarity_threshold and len(filtered_results) < top_k:
+                filtered_results.append({
+                    "id": hit_id,
+                    "name": metadatas[i]["name"],
+                    "description": metadatas[i]["description"],
+                    "group": metadatas[i]["group"],
+                    "score": round(similarity, 4)
+                })
+        
+        logger.info(f"Semantic search for '{query}' returned {len(filtered_results)} results")
+        return filtered_results
+    
+    def get_available_groups(self) -> List[str]:
+        """Get list of available phenotype groups."""
+        if not self.collection:
+            raise RuntimeError("Vector search not initialized")
+        
+        # Get all metadata and extract unique groups
+        results = self.collection.get(include=["metadatas"])
+        groups = set()
+        for metadata in results['metadatas']:
+            if 'group' in metadata:
+                groups.add(metadata['group'])
+        
+        return sorted(list(groups))
+
+# Global instance
+vector_search = None
+
+def get_vector_search() -> PhenotypeVectorSearch:
+    """Get or create the global vector search instance."""
+    global vector_search
+    if vector_search is None:
+        # Use absolute path to ensure we find the DB regardless of working directory
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        default_db_path = os.path.join(project_root, 'chroma_db')
+        db_path = os.getenv('VECTOR_DB_PATH', default_db_path)
+        vector_search = PhenotypeVectorSearch(db_path)
+    return vector_search
