@@ -68,8 +68,7 @@ class PhenotypeVectorSearch:
     def search(
         self, 
         query: str, 
-        top_k: int = 10, 
-        similarity_threshold: float = 0.15,
+        similarity_threshold: float = 0.25,
         group_filter: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
@@ -77,7 +76,6 @@ class PhenotypeVectorSearch:
         
         Args:
             query: Search query text
-            top_k: Maximum number of results to return
             similarity_threshold: Minimum similarity score (0.0 to 1.0)
             group_filter: Optional filter by phenotype group
             
@@ -95,11 +93,8 @@ class PhenotypeVectorSearch:
             logger.info(f"Found exact name match for '{query}'")
             # If we found exact matches, search using their descriptions for better semantic results
             combined_results = []
-            remaining_slots = top_k
             
             for match in exact_matches:
-                if remaining_slots <= 0:
-                    break
                 # Add the exact match with high score
                 combined_results.append({
                     "id": match["id"],
@@ -107,27 +102,23 @@ class PhenotypeVectorSearch:
                     "group": match["group"],
                     "score": 1.0
                 })
-                remaining_slots -= 1
                 
                 # Now search using the description to find related phenotypes
-                if remaining_slots > 0:
-                    semantic_results = self._search_semantic(
-                        match["description"], 
-                        remaining_slots, 
-                        similarity_threshold,
-                        group_filter,
-                        exclude_ids=[match["id"]]  # Don't include the exact match again
-                    )
-                    combined_results.extend(semantic_results)
-                    remaining_slots -= len(semantic_results)
+                semantic_results = self._search_semantic(
+                    match["description"], 
+                    similarity_threshold,
+                    group_filter,
+                    exclude_ids=[match["id"]]  # Don't include the exact match again
+                )
+                combined_results.extend(semantic_results)
             
-            return combined_results[:top_k]
+            return combined_results
         else:
             # Step 2: Fall back to semantic search with synonym expansion
             expanded_query = self._expand_query_with_synonyms(query)
             if expanded_query != query:
                 logger.info(f"Expanded query '{query}' to '{expanded_query}'")
-            return self._search_semantic(expanded_query, top_k, similarity_threshold, group_filter)
+            return self._search_semantic(expanded_query, similarity_threshold, group_filter)
     
     def _search_exact_name(self, query: str, group_filter: Optional[str] = None) -> List[Dict[str, Any]]:
         """Search for exact name matches."""
@@ -157,7 +148,6 @@ class PhenotypeVectorSearch:
     def _search_semantic(
         self, 
         query: str, 
-        top_k: int, 
         similarity_threshold: float, 
         group_filter: Optional[str] = None,
         exclude_ids: Optional[List[str]] = None
@@ -170,7 +160,7 @@ class PhenotypeVectorSearch:
         try:
             results = self.collection.query(
                 query_texts=[query],
-                n_results=top_k * 2,  # Get more results to filter out excluded IDs
+                n_results=1000,  # Get large number to apply similarity threshold filtering
                 where=where_clause,
                 include=["metadatas", "distances"]
             )
@@ -190,7 +180,7 @@ class PhenotypeVectorSearch:
                 continue
                 
             similarity = 1 - distances[i]
-            if similarity >= similarity_threshold and len(filtered_results) < top_k:
+            if similarity >= similarity_threshold:
                 filtered_results.append({
                     "id": hit_id,
                     "description": metadatas[i]["description"],
