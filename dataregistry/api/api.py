@@ -598,7 +598,7 @@ async def search_phenotypes(
         results = vector_search.search(
             query=q,
             top_k=10,
-            similarity_threshold=0.1,
+            similarity_threshold=0.05,
             group_filter=group
         )
     except Exception as e:

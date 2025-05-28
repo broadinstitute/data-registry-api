@@ -14,6 +14,16 @@ class PhenotypeVectorSearch:
         self.db_path = db_path
         self.client = None
         self.collection = None
+        # Medical synonyms for better matching
+        self.synonyms = {
+            'diabetes': ['diabetes mellitus', 'T2D', 'type 2 diabetes', 'diabetes type 2'],
+            'T2D': ['type 2 diabetes', 'diabetes mellitus type 2', 'diabetes'],
+            'hypertension': ['high blood pressure', 'HTN'],
+            'obesity': ['BMI', 'body mass index', 'overweight'],
+            'CAD': ['coronary artery disease', 'heart disease', 'cardiovascular disease'],
+            'stroke': ['cerebrovascular accident', 'CVA'],
+            'MI': ['myocardial infarction', 'heart attack'],
+        }
         self._initialize()
     
     def _initialize(self):
@@ -34,6 +44,26 @@ class PhenotypeVectorSearch:
         except Exception as e:
             logger.error(f"Failed to initialize vector search: {e}")
             raise
+    
+    def _expand_query_with_synonyms(self, query: str) -> str:
+        """Expand query with medical synonyms for better semantic matching."""
+        query_lower = query.lower().strip()
+        
+        # Check if query matches any of our known synonyms
+        for key, synonyms in self.synonyms.items():
+            if query_lower == key.lower() or query_lower in [syn.lower() for syn in synonyms]:
+                # Create an expanded query with the original term plus synonyms
+                expanded_terms = [query] + [key] + synonyms
+                # Remove duplicates while preserving order
+                unique_terms = []
+                seen = set()
+                for term in expanded_terms:
+                    if term.lower() not in seen:
+                        unique_terms.append(term)
+                        seen.add(term.lower())
+                return ' '.join(unique_terms)
+        
+        return query
     
     def search(
         self, 
@@ -94,8 +124,11 @@ class PhenotypeVectorSearch:
             
             return combined_results[:top_k]
         else:
-            # Step 2: Fall back to semantic search
-            return self._search_semantic(query, top_k, similarity_threshold, group_filter)
+            # Step 2: Fall back to semantic search with synonym expansion
+            expanded_query = self._expand_query_with_synonyms(query)
+            if expanded_query != query:
+                logger.info(f"Expanded query '{query}' to '{expanded_query}'")
+            return self._search_semantic(expanded_query, top_k, similarity_threshold, group_filter)
     
     def _search_exact_name(self, query: str, group_filter: Optional[str] = None) -> List[Dict[str, Any]]:
         """Search for exact name matches."""
