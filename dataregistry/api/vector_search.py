@@ -103,10 +103,9 @@ class PhenotypeVectorSearch:
                 # Add the exact match with high score
                 combined_results.append({
                     "id": match["id"],
-                    "name": match["name"],
                     "description": match["description"],
                     "group": match["group"],
-                    "score": 1.0  # Perfect match for exact name
+                    "score": 1.0
                 })
                 remaining_slots -= 1
                 
@@ -132,7 +131,7 @@ class PhenotypeVectorSearch:
     
     def _search_exact_name(self, query: str, group_filter: Optional[str] = None) -> List[Dict[str, Any]]:
         """Search for exact name matches."""
-        where_clause = {"name": query}
+        where_clause = {"id": query}
         if group_filter:
             where_clause["group"] = group_filter
             
@@ -146,7 +145,6 @@ class PhenotypeVectorSearch:
             for i, metadata in enumerate(results['metadatas']):
                 exact_matches.append({
                     "id": results['ids'][i],
-                    "name": metadata["name"],
                     "description": metadata["description"],
                     "group": metadata["group"]
                 })
@@ -195,7 +193,6 @@ class PhenotypeVectorSearch:
             if similarity >= similarity_threshold and len(filtered_results) < top_k:
                 filtered_results.append({
                     "id": hit_id,
-                    "name": metadatas[i]["name"],
                     "description": metadatas[i]["description"],
                     "group": metadatas[i]["group"],
                     "score": round(similarity, 4)

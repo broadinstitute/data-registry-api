@@ -7,32 +7,25 @@ import os
 import logging
 import chromadb
 from chromadb.config import Settings
-import sqlalchemy
-from dataregistry.api.db import DataRegistryReadWriteDB
+import pandas as pd
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def fetch_phenotypes_from_db():
-    """Fetch phenotypes from the database."""
-    db = DataRegistryReadWriteDB()
-    engine = db.get_engine()
+def fetch_phenotypes_from_csv(csv_path: str = "phenotypes.csv"):
+    """Fetch phenotypes from CSV file."""
+    df = pd.read_csv(csv_path)
     
-    query = "SELECT id, name, description, `group` FROM Phenotypes"
+    phenotype_list = []
+    for _, row in df.iterrows():
+        phenotype_list.append({
+            "id": row['phenotype'],
+            "description": row['phenotype_name'],
+            "group": row['trait_group']
+        })
     
-    with engine.connect() as conn:
-        result = conn.execute(sqlalchemy.text(query))
-        phenotypes = []
-        for row in result:
-            phenotypes.append({
-                'id': str(row[0]),
-                'name': row[1],
-                'description': row[2],
-                'group': row[3]
-            })
-    
-    logger.info(f"Fetched {len(phenotypes)} phenotypes from database")
-    return phenotypes
+    logger.info(f"Fetched {len(phenotype_list)} phenotypes from CSV")
+    return phenotype_list
 
 def build_chromadb_collection(db_path: str = "./chroma_db"):
     """Build ChromaDB collection from phenotypes data."""
@@ -61,7 +54,7 @@ def build_chromadb_collection(db_path: str = "./chroma_db"):
     logger.info(f"Created collection: {collection_name} with all-mpnet-base-v2")
     
     # Fetch phenotypes
-    phenotypes = fetch_phenotypes_from_db()
+    phenotypes = fetch_phenotypes_from_csv()
     
     # Prepare data for ChromaDB
     ids = []
@@ -70,10 +63,10 @@ def build_chromadb_collection(db_path: str = "./chroma_db"):
     
     for pheno in phenotypes:
         ids.append(pheno['id'])
-        # Combine name and description for better semantic search
-        documents.append(f"{pheno['name']}: {pheno['description']}")
+        # Use description for semantic search
+        documents.append(pheno['description'])
         metadatas.append({
-            'name': pheno['name'],
+            'id': pheno['id'],
             'description': pheno['description'],
             'group': pheno['group']
         })
@@ -107,7 +100,7 @@ def test_search(collection):
         
         for i, hit_id in enumerate(hits):
             similarity = 1 - distances[i]
-            logger.info(f"  {i+1}. {metadatas[i]['name']} (score: {similarity:.3f})")
+            logger.info(f"  {i+1}. {hit_id} (score: {similarity:.3f})")
             logger.info(f"     Description: {metadatas[i]['description']}")
 
 if __name__ == "__main__":

@@ -592,13 +592,14 @@ async def stream_ma(ma_id: str):
 async def search_phenotypes(
         q: str = Query(..., description="Search query text"),
         group: Optional[str] = Query(None, description="Filter by phenotype group"),
+        similarity_threshold: Optional[float] = Query(0.05, description="Minimum similarity threshold for results")
 ):
     try:
         vector_search = get_vector_search()
         results = vector_search.search(
             query=q,
             top_k=10,
-            similarity_threshold=0.05,
+            similarity_threshold=similarity_threshold,
             group_filter=group
         )
     except Exception as e:
