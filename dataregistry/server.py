@@ -20,6 +20,8 @@ app.include_router(api.router, prefix='/api', tags=['api'])
 origins = [
     "http://localhost:3000",
     "http://localhost:8090",
+    "https://dev.cfdeknowledge.org",
+    "https://cfdeknowledge.org",
     "http://local.kpndataregistry.org:3000",
     "https://kpndataregistry.org",
     "https://local.kpndataregistry.org:8000",
