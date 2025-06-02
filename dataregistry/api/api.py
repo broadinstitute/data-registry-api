@@ -334,7 +334,7 @@ async def start_metanalysis(req: MetaAnalysisRequest, background: BackgroundTask
     for path in paths_to_copy:
         path_parts = path.split('/')
         s3.copy_files_for_meta_analysis(f"hermes/{path_parts[1]}/",
-                                        f"hermes/variants_raw/GWAS/{path_parts[1].replaceAll(" ", "_")}/{req.phenotype}")
+                                        f"hermes/variants_raw/GWAS/{path_parts[1].replace(' ', '_')}/{req.phenotype}")
     background.add_task(batch.submit_and_await_job, engine,
                         {
                             'jobName': 'aggregator-web',
