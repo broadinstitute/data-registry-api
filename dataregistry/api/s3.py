@@ -39,6 +39,10 @@ def clear_dir(prefix: str):
 
 
 def copy_files_for_meta_analysis(source_prefix, destination_prefix):
+    import gzip
+    import tempfile
+    import os
+    
     s3_client = boto3.client('s3')
 
     paginator = s3_client.get_paginator('list_objects_v2')
@@ -46,12 +50,38 @@ def copy_files_for_meta_analysis(source_prefix, destination_prefix):
         for obj in page.get('Contents', []):
             source_key = obj['Key']
             rest_of_path = source_key[len(source_prefix):]
-            destination_key = f"{destination_prefix}/{rest_of_path}"
-            copy_source = {
-                'Bucket': BASE_BUCKET,
-                'Key': source_key
-            }
-            s3_client.copy(copy_source, BASE_BUCKET, destination_key)
+            
+            if rest_of_path.endswith('metadata.json'):
+                destination_key = f"{destination_prefix}/{rest_of_path}"
+                copy_source = {'Bucket': BASE_BUCKET, 'Key': source_key}
+                s3_client.copy(copy_source, BASE_BUCKET, destination_key)
+                continue
+            
+            should_compress = (
+                (rest_of_path.endswith('.csv') or rest_of_path.endswith('.tsv')) and
+                not rest_of_path.endswith('.gz')
+            )
+            
+            if should_compress:
+                with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+                    temp_path = temp_file.name
+                    
+                    try:
+                        response = s3_client.get_object(Bucket=BASE_BUCKET, Key=source_key)
+                        with gzip.open(temp_path, 'wb', compresslevel=6) as gz_file:
+                            for chunk in response['Body'].iter_chunks(chunk_size=1024*1024):
+                                gz_file.write(chunk)
+                        
+                        destination_key = f"{destination_prefix}/{rest_of_path}.gz"
+                        s3_client.upload_file(temp_path, BASE_BUCKET, destination_key)
+                        
+                    finally:
+                        if os.path.exists(temp_path):
+                            os.unlink(temp_path)
+            else:
+                destination_key = f"{destination_prefix}/{rest_of_path}"
+                copy_source = {'Bucket': BASE_BUCKET, 'Key': source_key}
+                s3_client.copy(copy_source, BASE_BUCKET, destination_key)
 
 def get_file_sample(file_path, sample_size=2048):
     s3_client = boto3.client('s3', region_name=S3_REGION)
