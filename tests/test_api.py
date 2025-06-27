@@ -365,3 +365,58 @@ def test_api_publications(mocker, api_client: TestClient):
 
     assert response.status_code == 200
     assert response.json()['title'] == 'Debated issues in major psychoses.'
+
+
+@mock_s3
+@mock_batch 
+def test_download_all_hermes_metadata_csv(mocker, api_client: TestClient):
+    set_up_moto_bucket()
+    patch = mocker.patch('dataregistry.api.batch.submit_and_await_job')
+    patch.return_value = None
+    mocker.patch('boto3.client').return_value.generate_presigned_url.return_value = 'http://mocked-presigned-url'
+
+    mock_aiohttp_put = mocker.patch('aiohttp.ClientSession.put')
+    mock_aiohttp_put.return_value.__aenter__.return_value.status = 200
+    with open('tests/test_csv_upload.csv', mode='rb') as f:
+        file_bytes = f.read()
+
+    mock_s3_get_object = mocker.patch('boto3.client').return_value.get_object
+    mock_s3_get_object.return_value = {
+        'Body': io.BytesIO(file_bytes),
+        'ContentLength': len(file_bytes)
+    }
+    
+    # Create two test datasets
+    res1 = api_client.post('api/validate-hermes', headers={AUTHORIZATION: auth_token}, json={
+        'file_name': 'dataset1.csv',
+        'dataset': 'test-dataset-1',
+        'metadata': {'phenotype': 'T2D', 'ancestry': 'EUR', 'sample_size': 1000,
+                     'column_map': {"chromosome": "CHR", "position": "BP", "eaf": "EAF", "beta": "BETA", "se": "SE", "pValue": "P"}},
+        'qc_script_options': {'fd': 0.2, 'noind': True}
+    })
+    
+    res2 = api_client.post('api/validate-hermes', headers={AUTHORIZATION: auth_token}, json={
+        'file_name': 'dataset2.csv', 
+        'dataset': 'test-dataset-2',
+        'metadata': {'phenotype': 'T1D', 'ancestry': 'AFR', 'sample_size': 2000,
+                     'column_map': {"chromosome": "CHR", "position": "BP", "eaf": "EAF", "beta": "BETA", "se": "SE", "pValue": "P"}},
+        'qc_script_options': {'fd': 0.1, 'noind': False}
+    })
+    
+    # Test the all metadata endpoint
+    response = api_client.get('api/hermes/metadata', headers={AUTHORIZATION: auth_token})
+    assert response.status_code == HTTP_200_OK
+    assert response.headers['content-type'] == 'text/csv; charset=utf-8'
+    assert 'all_datasets_metadata.csv' in response.headers['content-disposition']
+    
+    # Parse CSV content
+    csv_content = response.content.decode('utf-8')
+    lines = csv_content.strip().split('\n')
+    assert len(lines) >= 3  # Header + at least 2 data rows
+    
+    # Check headers contain expected columns
+    headers = lines[0].split(',')
+    assert 'dataset_name' in headers
+    assert 'ancestry' in headers
+    assert 'phenotype' in headers
+    assert any('sample_size' in header for header in headers)  # Handle potential \r at end

@@ -32,6 +32,46 @@ def convert_json_to_csv(json):
     output.seek(0)
     return output
 
+def convert_multiple_datasets_to_csv(datasets):
+    if not datasets:
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(['No datasets found'])
+        output.seek(0)
+        return output
+        
+    # Collect all possible keys from all datasets to create headers
+    all_keys = set()
+    flattened_datasets = []
+    
+    for dataset in datasets:
+        flat_data = {'dataset_name': dataset.dataset_name}
+        for key, value in dataset.metadata.items():
+            if isinstance(value, dict):
+                for nested_key, nested_value in value.items():
+                    flat_key = f"{key}_{nested_key}"
+                    flat_data[flat_key] = nested_value
+                    all_keys.add(flat_key)
+            else:
+                flat_data[key] = value
+                all_keys.add(key)
+        all_keys.add('dataset_name')
+        flattened_datasets.append(flat_data)
+    
+    # Sort keys for consistent output
+    sorted_keys = ['dataset_name'] + sorted([k for k in all_keys if k != 'dataset_name'])
+    
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(sorted_keys)
+    
+    for flat_data in flattened_datasets:
+        row = [flat_data.get(key, '') for key in sorted_keys]
+        writer.writerow(row)
+    
+    output.seek(0)
+    return output
+
 async def parse_file(file_content, file_name) -> pd.DataFrame:
     if '.csv' in file_name:
         return pd.read_csv(file_content)

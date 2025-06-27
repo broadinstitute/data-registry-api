@@ -611,6 +611,39 @@ async def search_phenotypes(
         "total_results": len(results)
     }
 
+@router.get('/hermes/metadata/{ds_id}')
+def get_hermes_metadata(ds_id, user: User = Depends(get_current_user)):
+    if VIEW_ALL_ROLES.intersection(user.roles):
+        dataset = query.fetch_file_upload(engine, str(ds_id).replace('-', ''))
+        try:
+
+            csv = file_utils.convert_json_to_csv(dataset.metadata)
+            return StreamingResponse(
+                iter([csv.getvalue()]),
+                media_type="text/csv",
+                headers={"Content-Disposition": f"attachment; filename={dataset.dataset_name}_metadata.csv"}
+            )
+        except Exception as e:
+            raise fastapi.HTTPException(status_code=400, detail=f"JSON conversion error: {str(e)}")
+    else:
+        raise fastapi.HTTPException(status_code=403, detail="You need to be a reviewer")
+
+@router.get('/hermes/metadata')
+def get_all_hermes_metadata(user: User = Depends(get_current_user)):
+    if VIEW_ALL_ROLES.intersection(user.roles):
+        datasets = query.fetch_file_uploads(engine)
+        try:
+            csv = file_utils.convert_multiple_datasets_to_csv(datasets)
+            return StreamingResponse(
+                iter([csv.getvalue()]),
+                media_type="text/csv",
+                headers={"Content-Disposition": "attachment; filename=all_datasets_metadata.csv"}
+            )
+        except Exception as e:
+            raise fastapi.HTTPException(status_code=400, detail=f"JSON conversion error: {str(e)}")
+    else:
+        raise fastapi.HTTPException(status_code=403, detail="You need to be a reviewer")
+
 @router.get("/{ft}/{file_id}", name="stream_file")
 async def stream_file(file_id: str, ft: str):
     no_dash_id = query.shortened_file_id_lookup(file_id, ft, engine)
@@ -770,22 +803,6 @@ def check_perms(ds_id: str, user: User, msg: str):
 
 
 
-@router.get('/hermes/metadata/{ds_id}')
-def get_hermes_metadata(ds_id, user: User = Depends(get_current_user)):
-    if VIEW_ALL_ROLES.intersection(user.roles):
-        dataset = query.fetch_file_upload(engine, str(ds_id).replace('-', ''))
-        try:
-
-            csv = file_utils.convert_json_to_csv(dataset.metadata)
-            return StreamingResponse(
-                iter([csv.getvalue()]),
-                media_type="text/csv",
-                headers={"Content-Disposition": f"attachment; filename={dataset.dataset_name}_metadata.csv"}
-            )
-        except Exception as e:
-            raise fastapi.HTTPException(status_code=400, detail=f"JSON conversion error: {str(e)}")
-    else:
-        raise fastapi.HTTPException(status_code=403, detail="You need to be a reviewer")
 
 @router.get('/is-logged-in')
 def is_logged_in(user: User = Depends(get_current_user)):
