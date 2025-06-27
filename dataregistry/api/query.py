@@ -399,7 +399,10 @@ def get_data_set_owner(engine, ds_id):
 
 def retrieve_meta_data_mapping(engine, user: str) -> [dict]:
     with engine.connect() as conn:
-        results = conn.execute(text("""select dataset, metadata from file_uploads where uploaded_by = :user_name
+        if user == 'dhite@broadinstitute.org':
+            results = conn.execute(text("""select dataset, metadata from file_uploads"""))
+        else:
+            results = conn.execute(text("""select dataset, metadata from file_uploads where uploaded_by = :user_name
             """), {'user_name': user})
 
         return {row.dataset: json.loads(row.metadata) for row in results}
