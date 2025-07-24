@@ -19,6 +19,6 @@ COPY entry.sh /app
 COPY plotMetaAnalysis.py /app
 RUN chmod +x /app/entry.sh
 ENTRYPOINT ["/app/entry.sh"]
-CMD ["dig-data-registry-qa", "test-ma", "master", "intake bottom-line:PartitionStage bottom-line:AncestrySpecificStage bottom-line:LoadAncestrySpecificStage", "--no-insert-runs --yes"]
+CMD ["dig-data-registry-qa", "test-ma", "master", "intake bottom-line:PartitionStage bottom-line:NaiveStage", "--no-insert-runs --yes"]
 
 
