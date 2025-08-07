@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from dataregistry.api import api
 from dataregistry.api.api import get_current_user
 
-ROUTES_WITHOUT_AUTH = {'stream_file', 'version', 'login', 'google_login', 'start_aggregator', 'search_phenotypes'}
+ROUTES_WITHOUT_AUTH = {'stream_file', 'version', 'login', 'google_login', 'start_aggregator', 'search_phenotypes', 'search_terms'}
 
 # create web server
 app = fastapi.FastAPI(title='DataRegistry', redoc_url=None)

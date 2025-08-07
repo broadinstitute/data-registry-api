@@ -611,6 +611,27 @@ async def search_phenotypes(
         "total_results": len(results)
     }
 
+@router.get('/search/terms', response_class=fastapi.responses.ORJSONResponse)
+async def search_terms(
+        q: str = Query(..., description="Search query text"),
+        similarity_threshold: Optional[float] = Query(-0.2, description="Minimum similarity threshold for results")
+):
+    try:
+        vector_search = get_vector_search()
+        results = vector_search.search_terms(
+            query=q,
+            similarity_threshold=similarity_threshold
+        )
+    except Exception as e:
+        logger.error(f"Terms search error: {str(e)}")
+        raise fastapi.HTTPException(status_code=500, detail=f'Terms search failed: {str(e)}')
+
+    logger.info(f"Terms search completed. Found {len(results)} results.")
+    return {
+        "data": results,
+        "total_results": len(results)
+    }
+
 @router.get('/hermes/metadata/{ds_id}')
 def get_hermes_metadata(ds_id, user: User = Depends(get_current_user)):
     if VIEW_ALL_ROLES.intersection(user.roles):

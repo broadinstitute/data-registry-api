@@ -14,6 +14,7 @@ class PhenotypeVectorSearch:
         self.db_path = db_path
         self.client = None
         self.collection = None
+        self.terms_collection = None
         # Medical synonyms for better matching
         self.synonyms = {
             'diabetes': ['diabetes mellitus', 'T2D', 'type 2 diabetes', 'diabetes type 2'],
@@ -40,7 +41,17 @@ class PhenotypeVectorSearch:
                 name="phenotypes",
                 embedding_function=sentence_transformer_ef
             )
-            logger.info("Vector search initialized successfully with all-mpnet-base-v2")
+            
+            # Initialize terms collection if it exists
+            try:
+                self.terms_collection = self.client.get_collection(
+                    name="terms",
+                    embedding_function=sentence_transformer_ef
+                )
+                logger.info("Vector search initialized successfully with phenotypes and terms collections")
+            except Exception:
+                logger.info("Vector search initialized successfully with phenotypes collection only")
+                self.terms_collection = None
         except Exception as e:
             logger.error(f"Failed to initialize vector search: {e}")
             raise
@@ -204,6 +215,87 @@ class PhenotypeVectorSearch:
                 groups.add(metadata['group'])
         
         return sorted(list(groups))
+    
+    def search_terms(
+        self,
+        query: str,
+        similarity_threshold: float = -0.2
+    ) -> List[Dict[str, Any]]:
+        """
+        Search terms using semantic similarity with synonym expansion.
+        
+        Args:
+            query: Search query text
+            similarity_threshold: Minimum similarity score (0.0 to 1.0)
+            
+        Returns:
+            List of matching terms with similarity scores
+        """
+        if not self.terms_collection:
+            raise RuntimeError("Terms collection not initialized")
+        
+        # Apply synonym expansion like phenotypes search
+        expanded_query = self._expand_query_with_synonyms(query)
+        if expanded_query != query:
+            logger.info(f"Expanded terms query '{query}' to '{expanded_query}'")
+        
+        try:
+            results = self.terms_collection.query(
+                query_texts=[expanded_query],
+                n_results=1000,
+                include=["metadatas", "distances"]
+            )
+        except Exception as e:
+            logger.error(f"ChromaDB terms query error: {str(e)}")
+            raise
+        
+        hits = results['ids'][0]
+        metadatas = results['metadatas'][0]
+        distances = results['distances'][0]
+        
+        filtered_results = []
+        
+        for i, hit_id in enumerate(hits):
+            similarity = 1 - distances[i]
+            if similarity >= similarity_threshold:
+                filtered_results.append({
+                    "id": hit_id,
+                    "term": metadatas[i]["term"],
+                    "phenotype": metadatas[i]["phenotype"],
+                    "gene_set": metadatas[i]["gene_set"],
+                    "source": metadatas[i]["source"],
+                    "beta_uncorrected": metadatas[i]["beta_uncorrected"],
+                    "score": round(similarity, 4)
+                })
+        
+        logger.info(f"Terms search for '{query}' returned {len(filtered_results)} results")
+        return filtered_results
+    
+    def get_available_sources(self) -> List[str]:
+        """Get list of available sources from terms collection."""
+        if not self.terms_collection:
+            raise RuntimeError("Terms collection not initialized")
+        
+        results = self.terms_collection.get(include=["metadatas"])
+        sources = set()
+        for metadata in results['metadatas']:
+            if 'source' in metadata:
+                sources.add(metadata['source'])
+        
+        return sorted(list(sources))
+    
+    def get_available_phenotypes_from_terms(self) -> List[str]:
+        """Get list of available phenotypes from terms collection."""
+        if not self.terms_collection:
+            raise RuntimeError("Terms collection not initialized")
+        
+        results = self.terms_collection.get(include=["metadatas"])
+        phenotypes = set()
+        for metadata in results['metadatas']:
+            if 'phenotype' in metadata:
+                phenotypes.add(metadata['phenotype'])
+        
+        return sorted(list(phenotypes))
 
 # Global instance
 vector_search = None
