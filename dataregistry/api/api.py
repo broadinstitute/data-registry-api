@@ -361,15 +361,7 @@ async def get_hermes_pre_signed_url(request: Request):
     filename = request.headers.get('Filename')
     dataset = request.headers.get('Dataset')
     s3_path = f"hermes/{dataset}/{filename}"
-    try:
-        presigned_url = s3.generate_presigned_url(
-            'put_object',
-            params={'Bucket': s3.BASE_BUCKET, 'Key': s3_path},
-            expires_in=7200
-        )
-    except ClientError as e:
-        raise fastapi.HTTPException(status_code=500, detail="Failed to generate presigned URL") from e
-    return {"presigned_url": presigned_url, "s3_path": s3_path}
+    return s3.generate_presigned_url_with_path(s3_path)
 
 
 @router.patch("/hermes-rerun-qc/{file_id}")
@@ -462,7 +454,7 @@ async def check_column_counts(lines):
     delim = '\t'
     header_count = len(lines[0].split(delim))
     for i, line in enumerate(lines[1:], start=2):
-        col_count = len(line.strip().split(delim))
+        col_count = len(line.rstrip('\n\r').split(delim))
         if col_count != header_count:
             raise fastapi.HTTPException(
                 status_code=400,

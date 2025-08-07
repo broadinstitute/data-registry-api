@@ -1,0 +1,506 @@
+import json
+
+import fastapi
+import pandas as pd
+import io
+from typing import Dict, List, Optional
+from fastapi import UploadFile, Body, Query, Form
+from pydantic import BaseModel
+from starlette.requests import Request
+
+from dataregistry.api import file_utils, s3
+
+router = fastapi.APIRouter()
+
+
+class SGCCasesControlsMapping(BaseModel):
+    phenotype_column: str
+    cases_column: str
+    controls_column: str
+
+
+class SGCCoOccurrenceMapping(BaseModel):
+    phenotype1_column: str
+    phenotype2_column: str
+    num_individuals_column: str
+
+
+SGC_PHENOTYPE_DESCRIPTIONS = {
+    # L01-L08: Infections of the skin and subcutaneous tissue
+    "L01.0K": "Impetigo, unspecified",
+    "L02K": "Cutaneous abscess, furuncle and carbuncle",
+    "L03K": "Cellulitis and acute lymphangitis",
+    "L05K": "Pilonidal cyst and sinus",
+    "L05.0K": "Pilonidal cyst with abscess",
+    "L05.9K": "Pilonidal cyst without abscess",
+    "L08K": "Other local infections of skin and subcutaneous tissue",
+
+    # L10-L14: Bullous disorders
+    "L10K": "Pemphigus",
+    "L10.0K": "Pemphigus vulgaris",
+    "L10.2K": "Pemphigus foliaceus",
+    "L12K": "Pemphigoid",
+    "L12.0K": "Bullous pemphigoid",
+    "L13.0K": "Dermatitis herpetiformis",
+
+    # L20-L30: Dermatitis and eczema
+    "L20K": "Atopic dermatitis",  # Confirmed from cohort_details.txt
+    "L21K": "Seborrheic dermatitis",
+    "L23_L24_L25K": "Contact dermatitis (allergic, irritant, unspecified)",
+    "L23K": "Allergic contact dermatitis",
+    "L24K": "Irritant contact dermatitis",
+    "L27K": "Dermatitis due to substances taken internally",
+    "L28K": "Lichen simplex chronicus and prurigo",
+    "L28.0K": "Lichen simplex chronicus",
+    "L28.1K": "Prurigo nodularis",
+    "L29K": "Pruritus",
+    "L30K": "Other and unspecified dermatitis",
+
+    # L40-L45: Papulosquamous disorders
+    "L40K": "Psoriasis",  # Confirmed from documents
+    "L40.0K": "Psoriasis vulgaris",
+    "L40.1K": "Generalized pustular psoriasis",
+    "L40.3K": "Pustulosis of palms and soles",
+    "L40.4K": "Guttate psoriasis",
+    "L40.5K": "Arthropathic psoriasis",
+    "L43K": "Lichen planus",
+
+    # L50-L54: Urticaria and erythema
+    "L50K": "Urticaria",
+    "L51.0K": "Nonbullous erythema multiforme",
+    "L51.1_L51.2_L51.3K": "Stevens-Johnson syndrome and toxic epidermal necrolysis",
+    "L51.8_L51.9K": "Other and unspecified erythema multiforme",
+    "L52K": "Erythema nodosum",
+    "L53.9K": "Erythematous condition, unspecified",
+
+    # L60-L75: Disorders of skin appendages
+    "L66K": "Cicatricial alopecia",
+    "L68.0K": "Hirsutism",
+    "L70K": "Acne",
+    "L71K": "Rosacea",
+    "L72K": "Follicular cysts of skin and subcutaneous tissue",
+    "L72.0K": "Epidermal cyst",
+    "L72.1K": "Pilar and trichilemmal cyst",
+    "L73.0K": "Acne keloid",
+    "L73.2K": "Hidradenitis suppurativa",
+    "L74.4K": "Anhidrosis",
+    "L75.0K": "Bromhidrosis",
+
+    # L80-L99: Other disorders of the skin
+    "L80K": "Vitiligo",
+    "L81.2K": "Freckles",
+    "L81.3K": "Café au lait spots",
+    "L81.4K": "Other melanin hyperpigmentation",
+    "L82K": "Seborrheic keratosis",
+    "L83K": "Acanthosis nigricans",
+    "L84K": "Corns and callosities",
+    "L85K": "Other epidermal thickening",
+    "L88K": "Pyoderma gangrenosum",
+    "L89K": "Pressure ulcer and chronic ulcer of skin",
+    "L90.0K": "Lichen sclerosus et atrophicus",
+    "L90.5K": "Scar conditions and fibrosis of skin",
+    "L91.0K": "Hypertrophic scar",
+    "L91.8_L91.9K": "Other and unspecified hypertrophic and atrophic conditions of skin",
+    "L92K": "Granulomatous disorders of skin and subcutaneous tissue",
+    "L92.0K": "Granuloma annulare",
+    "L92.1K": "Necrobiosis lipoidica",
+    "L93K": "Lupus erythematosus",
+    "L93.0K": "Discoid lupus erythematosus",
+    "L93.1K": "Subacute cutaneous lupus erythematosus",
+    "L94.0_L94.1K": "Localized and linear scleroderma",
+    "L94.2K": "Calcinosis cutis",
+    "L94.3K": "Sclerodactyly",
+    "L94.4K": "Gottron papules",
+    "L95K": "Vasculitis limited to skin",
+    "L97_L98.4K": "Ulcer and chronic skin breakdown",
+    "L98.0K": "Pyogenic granuloma",
+    "L98.2K": "Febrile neutrophilic dermatosis [Sweet syndrome]",
+    "L99.0K": "Amyloidosis of skin",
+
+    # C43-C44: Skin cancers
+    "C43K": "Malignant melanoma of skin",
+    "C44K": "Other and unspecified malignant neoplasm of skin",
+    "C44.X1K": "Basal cell carcinoma of skin",
+    "C44.X2K": "Squamous cell carcinoma of skin",
+
+    # D03: Pre-malignant skin lesions
+    "D03K": "Melanoma in situ",
+
+    # Other categories
+    "D86.3K": "Sarcoidosis of skin",
+    "M33K": "Dermatopolymyositis",
+    "Q80.0K": "Ichthyosis vulgaris",
+    "A63.0K": "Anogenital (venereal) warts",
+    "B00K": "Herpesviral [herpes simplex] infections",
+    "B02K": "Zoster [herpes zoster]",
+    "B35_B36.1K": "Dermatophytosis and superficial mycoses",
+    "B86K": "Scabies",
+    "D72.12K": "Eosinophilia",
+    "O26.4K": "Herpes gestationis",
+    "O26.86K": "Pruritic urticarial papules and plaques of pregnancy"
+}
+
+
+def validate_sgc_cases_controls(df: pd.DataFrame, header_mapping: Dict[str, str], is_sample: bool = True) -> Optional[str]:
+    """
+    Validate SGC cases/controls format (Case 1).
+    
+    Requirements:
+    - 3 columns: phenotype (text, valid SGC code), cases (positive int), controls (positive int)
+    - Each phenotype should appear only once
+    - Phenotype codes must exist in SGC_PHENOTYPE_DESCRIPTIONS
+    
+    Args:
+        df: DataFrame to validate
+        header_mapping: dict with 'phenotype_column', 'cases_column', 'controls_column'
+        is_sample: True if validating sample data, False for full file
+    
+    Returns:
+        str: Error message if validation fails, None if valid
+    """
+    required_cols = [header_mapping['phenotype'],
+                    header_mapping['cases'],
+                    header_mapping['controls']]
+    
+    # Check required columns exist
+    missing_cols = [col for col in required_cols if col not in df.columns]
+    if missing_cols:
+        return f"Missing required columns: {missing_cols}"
+    
+    phenotype_col = header_mapping['phenotype']
+    cases_col = header_mapping['cases']
+    controls_col = header_mapping['controls']
+    
+    errors = []
+    
+    # Check phenotype column
+    if df[phenotype_col].isna().any():
+        errors.append(f"Column '{phenotype_col}' contains empty values")
+    
+    # Validate phenotype codes against SGC_PHENOTYPE_DESCRIPTIONS
+    invalid_phenotypes = []
+    for phenotype in df[phenotype_col].dropna():
+        if phenotype not in SGC_PHENOTYPE_DESCRIPTIONS:
+            invalid_phenotypes.append(phenotype)
+    
+    if invalid_phenotypes:
+        sample_invalid = invalid_phenotypes[:5]  # Show first 5
+        error_msg = f"Invalid phenotype codes: {sample_invalid}"
+        if len(invalid_phenotypes) > 5:
+            error_msg += f" (and {len(invalid_phenotypes) - 5} more)"
+        errors.append(error_msg)
+    
+    # Check for duplicate phenotypes
+    duplicates = df[phenotype_col].value_counts()
+    duplicates = duplicates[duplicates > 1]
+    if not duplicates.empty:
+        dup_list = duplicates.index.tolist()[:5]  # Show first 5
+        error_msg = f"Duplicate phenotypes found: {dup_list}"
+        if len(duplicates) > 5:
+            error_msg += f" (and {len(duplicates) - 5} more)"
+        errors.append(error_msg)
+    
+    # Validate cases column (positive integers)
+    if df[cases_col].isna().any():
+        errors.append(f"Column '{cases_col}' contains empty values")
+    else:
+        try:
+            cases_numeric = pd.to_numeric(df[cases_col], errors='coerce')
+            if cases_numeric.isna().any():
+                errors.append(f"Column '{cases_col}' contains non-numeric values")
+            elif (cases_numeric <= 0).any():
+                errors.append(f"Column '{cases_col}' must contain only positive integers")
+            elif not cases_numeric.equals(cases_numeric.astype(int)):
+                errors.append(f"Column '{cases_col}' must contain integers, not decimals")
+        except Exception:
+            errors.append(f"Column '{cases_col}' validation failed")
+    
+    # Validate controls column (positive integers)
+    if df[controls_col].isna().any():
+        errors.append(f"Column '{controls_col}' contains empty values")
+    else:
+        try:
+            controls_numeric = pd.to_numeric(df[controls_col], errors='coerce')
+            if controls_numeric.isna().any():
+                errors.append(f"Column '{controls_col}' contains non-numeric values")
+            elif (controls_numeric <= 0).any():
+                errors.append(f"Column '{controls_col}' must contain only positive integers")
+            elif not controls_numeric.equals(controls_numeric.astype(int)):
+                errors.append(f"Column '{controls_col}' must contain integers, not decimals")
+        except Exception:
+            errors.append(f"Column '{controls_col}' validation failed")
+    
+    return "; ".join(errors) if errors else None
+
+
+def validate_sgc_co_occurrence(df: pd.DataFrame, header_mapping: Dict[str, str], is_sample: bool = True) -> Optional[str]:
+    """
+    Validate SGC co-occurrence format (Case 2).
+    
+    Requirements:
+    - 3 columns: phenotype1 (text, valid SGC code), phenotype2 (text, valid SGC code), num_individuals (positive int)
+    - Each phenotype pair should appear only once
+    - Both phenotype codes must exist in SGC_PHENOTYPE_DESCRIPTIONS
+    
+    Args:
+        df: DataFrame to validate
+        header_mapping: dict with 'phenotype1_column', 'phenotype2_column', 'num_individuals_column'
+        is_sample: True if validating sample data, False for full file
+    
+    Returns:
+        str: Error message if validation fails, None if valid
+    """
+    required_cols = [header_mapping['phenotype1_column'], 
+                    header_mapping['phenotype2_column'], 
+                    header_mapping['num_individuals_column']]
+    
+    # Check required columns exist
+    missing_cols = [col for col in required_cols if col not in df.columns]
+    if missing_cols:
+        return f"Missing required columns: {missing_cols}"
+    
+    phenotype1_col = header_mapping['phenotype1_column']
+    phenotype2_col = header_mapping['phenotype2_column']
+    num_individuals_col = header_mapping['num_individuals_column']
+    
+    errors = []
+    
+    # Check phenotype1 column
+    if df[phenotype1_col].isna().any():
+        errors.append(f"Column '{phenotype1_col}' contains empty values")
+    
+    # Check phenotype2 column
+    if df[phenotype2_col].isna().any():
+        errors.append(f"Column '{phenotype2_col}' contains empty values")
+    
+    # Validate phenotype1 codes
+    invalid_phenotypes1 = []
+    for phenotype in df[phenotype1_col].dropna():
+        if phenotype not in SGC_PHENOTYPE_DESCRIPTIONS:
+            invalid_phenotypes1.append(phenotype)
+    
+    if invalid_phenotypes1:
+        sample_invalid = invalid_phenotypes1[:5]
+        error_msg = f"Invalid phenotype codes in {phenotype1_col}: {sample_invalid}"
+        if len(invalid_phenotypes1) > 5:
+            error_msg += f" (and {len(invalid_phenotypes1) - 5} more)"
+        errors.append(error_msg)
+    
+    # Validate phenotype2 codes
+    invalid_phenotypes2 = []
+    for phenotype in df[phenotype2_col].dropna():
+        if phenotype not in SGC_PHENOTYPE_DESCRIPTIONS:
+            invalid_phenotypes2.append(phenotype)
+    
+    if invalid_phenotypes2:
+        sample_invalid = invalid_phenotypes2[:5]
+        error_msg = f"Invalid phenotype codes in {phenotype2_col}: {sample_invalid}"
+        if len(invalid_phenotypes2) > 5:
+            error_msg += f" (and {len(invalid_phenotypes2) - 5} more)"
+        errors.append(error_msg)
+    
+    # Check for duplicate phenotype pairs
+    df_pairs = df[[phenotype1_col, phenotype2_col]].copy()
+    # Create a standardized pair representation (sorted order to catch A,B and B,A as duplicates)
+    df_pairs['pair'] = df_pairs.apply(lambda row: tuple(sorted([row[phenotype1_col], row[phenotype2_col]])), axis=1)
+    duplicates = df_pairs['pair'].value_counts()
+    duplicates = duplicates[duplicates > 1]
+    if not duplicates.empty:
+        dup_list = [f"({pair[0]}, {pair[1]})" for pair in duplicates.index.tolist()[:5]]
+        error_msg = f"Duplicate phenotype pairs found: {dup_list}"
+        if len(duplicates) > 5:
+            error_msg += f" (and {len(duplicates) - 5} more)"
+        errors.append(error_msg)
+    
+    # Validate num_individuals column (positive integers)
+    if df[num_individuals_col].isna().any():
+        errors.append(f"Column '{num_individuals_col}' contains empty values")
+    else:
+        try:
+            num_numeric = pd.to_numeric(df[num_individuals_col], errors='coerce')
+            if num_numeric.isna().any():
+                errors.append(f"Column '{num_individuals_col}' contains non-numeric values")
+            elif (num_numeric <= 0).any():
+                errors.append(f"Column '{num_individuals_col}' must contain only positive integers")
+            elif not num_numeric.equals(num_numeric.astype(int)):
+                errors.append(f"Column '{num_individuals_col}' must contain integers, not decimals")
+        except Exception:
+            errors.append(f"Column '{num_individuals_col}' validation failed")
+    
+    return "; ".join(errors) if errors else None
+
+@router.post("/sgc/upload-file")
+async def upload_sgc_file(
+        file: UploadFile,
+        validation_type: str = Form(...),
+        column_mapping: str = Form(...)
+):
+    """
+    Upload and validate SGC files with column mapping.
+
+    Args:
+        file: The uploaded file
+        validation_type: Either 'cases_controls' or 'cooccurrence'
+        column_mapping: JSON string containing column mappings
+    """
+    try:
+        # Parse the column mapping JSON
+        mapping = json.loads(column_mapping)
+
+        content = await file.read()
+        df = await file_utils.parse_file(io.StringIO(content.decode('utf-8')), file.filename)
+
+        if validation_type == "cases_controls":
+            error_message = validate_sgc_cases_controls(df, mapping, is_sample=False)
+        elif validation_type == "cooccurrence":
+            error_message = validate_sgc_co_occurrence(df, mapping, is_sample=False)
+        else:
+            raise fastapi.HTTPException(
+                status_code=400,
+                detail="validation_type must be 'cases_controls' or 'cooccurrence'"
+            )
+
+        if error_message:
+            raise fastapi.HTTPException(detail=error_message, status_code=400)
+
+
+        return {
+            "message": "File uploaded and validated successfully",
+            "filename": file.filename,
+            "validation_type": validation_type,
+            "column_mapping": mapping,
+            "columns": list(df.columns)
+        }
+
+    except json.JSONDecodeError:
+        raise fastapi.HTTPException(status_code=400, detail="Invalid column_mapping JSON")
+    except Exception as e:
+        # Log the error for debugging
+        print(f"Error processing SGC file upload: {str(e)}")
+        raise fastapi.HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
+
+
+
+@router.get("/sgc/get-pre-signed-url")
+async def get_sgc_pre_signed_url(request: Request):
+    filename = request.headers.get('Filename')
+    dataset = request.headers.get('Dataset')
+    s3_path = f"sgc/{dataset}/{filename}"
+    return s3.generate_presigned_url_with_path(s3_path)
+
+@router.post("/sgc-preview-cases-controls")
+async def preview_sgc_cases_controls(file: UploadFile, header_mapping: SGCCasesControlsMapping = Body(...)):
+    """
+    Preview and validate SGC cases/controls file format (TSV/TSV.gz).
+    """
+    contents = await file.read(100)
+    await file.seek(0)
+
+    if contents.startswith(b'\x1f\x8b'):
+        sample_lines = await file_utils.get_compressed_sample(file)
+    else:
+        sample_lines = await file_utils.get_text_sample(file)
+
+    df = await file_utils.parse_file(io.StringIO('\n'.join(sample_lines)), file.filename)
+    
+    # Validate using cases/controls rules
+    error_message = validate_sgc_cases_controls(df, header_mapping.dict(), is_sample=True)
+    
+    if error_message:
+        raise fastapi.HTTPException(
+            status_code=400,
+            detail={
+                "message": "File does not meet SGC cases/controls format requirements",
+                "errors": error_message
+            }
+        )
+    
+    return {
+        "valid": True,
+        "columns": list(df.columns),
+        "sample_row_count": len(sample_lines) - 1,
+        "validation_type": "cases_controls",
+        "header_mapping": header_mapping.dict(),
+        "message": "File format is valid for SGC cases/controls requirements"
+    }
+
+
+@router.post("/sgc-preview-co-occurrence")
+async def preview_sgc_co_occurrence(file: UploadFile, header_mapping: SGCCoOccurrenceMapping = Body(...)):
+    """
+    Preview and validate SGC co-occurrence file format (TSV/TSV.gz).
+    """
+    contents = await file.read(100)
+    await file.seek(0)
+
+    if contents.startswith(b'\x1f\x8b'):
+        sample_lines = await file_utils.get_compressed_sample(file)
+    else:
+        sample_lines = await file_utils.get_text_sample(file)
+
+    df = await file_utils.parse_file(io.StringIO('\n'.join(sample_lines)), file.filename)
+    
+    # Validate using co-occurrence rules
+    error_message = validate_sgc_co_occurrence(df, header_mapping.dict(), is_sample=True)
+    
+    if error_message:
+        raise fastapi.HTTPException(
+            status_code=400,
+            detail={
+                "message": "File does not meet SGC co-occurrence format requirements",
+                "errors": error_message
+            }
+        )
+    
+    return {
+        "valid": True,
+        "columns": list(df.columns),
+        "sample_row_count": len(sample_lines) - 1,
+        "validation_type": "co_occurrence",
+        "header_mapping": header_mapping.dict(),
+        "message": "File format is valid for SGC co-occurrence requirements"
+    }
+
+
+@router.post("/sgc-validate-s3-cases-controls")
+async def validate_s3_cases_controls(
+    s3_path: str = Body(..., description="S3 path to file (e.g., s3://bucket/key)"),
+    header_mapping: SGCCasesControlsMapping = Body(...)
+):
+    """
+    Validate full SGC cases/controls file from S3.
+    """
+    # Read file from S3 and create DataFrame
+    # This would need to be implemented based on your S3 access patterns
+    # For now, returning a placeholder
+    return {
+        "message": "S3 validation not yet implemented",
+        "s3_path": s3_path,
+        "validation_type": "cases_controls"
+    }
+
+
+@router.post("/sgc-validate-s3-co-occurrence") 
+async def validate_s3_co_occurrence(
+    s3_path: str = Body(..., description="S3 path to file (e.g., s3://bucket/key)"),
+    header_mapping: SGCCoOccurrenceMapping = Body(...)
+):
+    """
+    Validate full SGC co-occurrence file from S3.
+    """
+    # Read file from S3 and create DataFrame
+    # This would need to be implemented based on your S3 access patterns
+    # For now, returning a placeholder
+    return {
+        "message": "S3 validation not yet implemented", 
+        "s3_path": s3_path,
+        "validation_type": "co_occurrence"
+    }
+
+
+@router.get("/hello-sgc")
+async def hello_sgc():
+    """
+    Simple hello endpoint for SGC tenant.
+    """
+    return {"message": "Hello from SGC tenant!"}

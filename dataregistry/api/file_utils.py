@@ -75,7 +75,7 @@ def convert_multiple_datasets_to_csv(datasets):
 async def parse_file(file_content, file_name) -> pd.DataFrame:
     if '.csv' in file_name:
         return pd.read_csv(file_content)
-    elif '.tsv' in file_name:
+    elif '.tsv' or '.txt' in file_name:
         return pd.read_csv(file_content, sep='\t')
     else:
         raise ValueError("Unsupported file format")
