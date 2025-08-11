@@ -1,16 +1,58 @@
 import json
+import os
 
 import fastapi
 import pandas as pd
 import io
 from typing import Dict, List, Optional
-from fastapi import UploadFile, Body, Query, Form
+from fastapi import UploadFile, Body, Query, Form, Depends, Header
 from pydantic import BaseModel
 from starlette.requests import Request
 
-from dataregistry.api import file_utils, s3
+import httpx
+
+from dataregistry.api import file_utils, s3, query
+from dataregistry.api.db import DataRegistryReadWriteDB
+from dataregistry.api.model import SGCPhenotype, User
+from dataregistry.api.api import get_current_user
 
 router = fastapi.APIRouter()
+engine = DataRegistryReadWriteDB().get_engine()
+
+USER_SERVICE_URL = os.getenv('USER_SERVICE_URL', 'https://users.kpndataregistry.org')
+
+async def get_sgc_user(authorization: Optional[str] = Header(None)):
+    """Validate JWT token with user service for SGC authentication."""
+    if not authorization:
+        raise fastapi.HTTPException(status_code=401, detail='Authorization header required')
+    
+    schema, _, token = authorization.partition(' ')
+    if schema.lower() != 'bearer' or not token:
+        raise fastapi.HTTPException(status_code=401, detail='Bearer token required')
+    
+    sgc_user_group = os.getenv('SGC_USER_GROUP', 'sgc')
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{USER_SERVICE_URL}/api/auth/verify/",
+                params={"group": sgc_user_group},
+                headers={"Authorization": f"Bearer {token}"}
+            )
+            if response.status_code == 200:
+                user_data = response.json()
+                user = user_data.get('user')
+                return User(
+                    id=user.get('id'),
+                    user_name=user.get('username'),
+                    email=user.get('email'),
+                    roles=user.get('roles', []),
+                    permissions=user.get('permissions', [])
+                )
+            else:
+                raise fastapi.HTTPException(status_code=401, detail='Invalid token')
+    except httpx.RequestError:
+        raise fastapi.HTTPException(status_code=503, detail='User service unavailable')
 
 
 class SGCCasesControlsMapping(BaseModel):
@@ -142,22 +184,6 @@ SGC_PHENOTYPE_DESCRIPTIONS = {
 
 
 def validate_sgc_cases_controls(df: pd.DataFrame, header_mapping: Dict[str, str], is_sample: bool = True) -> Optional[str]:
-    """
-    Validate SGC cases/controls format (Case 1).
-    
-    Requirements:
-    - 3 columns: phenotype (text, valid SGC code), cases (positive int), controls (positive int)
-    - Each phenotype should appear only once
-    - Phenotype codes must exist in SGC_PHENOTYPE_DESCRIPTIONS
-    
-    Args:
-        df: DataFrame to validate
-        header_mapping: dict with 'phenotype_column', 'cases_column', 'controls_column'
-        is_sample: True if validating sample data, False for full file
-    
-    Returns:
-        str: Error message if validation fails, None if valid
-    """
     required_cols = [header_mapping['phenotype'],
                     header_mapping['cases'],
                     header_mapping['controls']]
@@ -234,23 +260,7 @@ def validate_sgc_cases_controls(df: pd.DataFrame, header_mapping: Dict[str, str]
 
 
 def validate_sgc_co_occurrence(df: pd.DataFrame, header_mapping: Dict[str, str], is_sample: bool = True) -> Optional[str]:
-    """
-    Validate SGC co-occurrence format (Case 2).
-    
-    Requirements:
-    - 3 columns: phenotype1 (text, valid SGC code), phenotype2 (text, valid SGC code), num_individuals (positive int)
-    - Each phenotype pair should appear only once
-    - Both phenotype codes must exist in SGC_PHENOTYPE_DESCRIPTIONS
-    
-    Args:
-        df: DataFrame to validate
-        header_mapping: dict with 'phenotype1_column', 'phenotype2_column', 'num_individuals_column'
-        is_sample: True if validating sample data, False for full file
-    
-    Returns:
-        str: Error message if validation fails, None if valid
-    """
-    required_cols = [header_mapping['phenotype1_column'], 
+    required_cols = [header_mapping['phenotype1_column'],
                     header_mapping['phenotype2_column'], 
                     header_mapping['num_individuals_column']]
     
@@ -335,14 +345,6 @@ async def upload_sgc_file(
         validation_type: str = Form(...),
         column_mapping: str = Form(...)
 ):
-    """
-    Upload and validate SGC files with column mapping.
-
-    Args:
-        file: The uploaded file
-        validation_type: Either 'cases_controls' or 'cooccurrence'
-        column_mapping: JSON string containing column mappings
-    """
     try:
         # Parse the column mapping JSON
         mapping = json.loads(column_mapping)
@@ -390,9 +392,6 @@ async def get_sgc_pre_signed_url(request: Request):
 
 @router.post("/sgc-preview-cases-controls")
 async def preview_sgc_cases_controls(file: UploadFile, header_mapping: SGCCasesControlsMapping = Body(...)):
-    """
-    Preview and validate SGC cases/controls file format (TSV/TSV.gz).
-    """
     contents = await file.read(100)
     await file.seek(0)
 
@@ -427,9 +426,6 @@ async def preview_sgc_cases_controls(file: UploadFile, header_mapping: SGCCasesC
 
 @router.post("/sgc-preview-co-occurrence")
 async def preview_sgc_co_occurrence(file: UploadFile, header_mapping: SGCCoOccurrenceMapping = Body(...)):
-    """
-    Preview and validate SGC co-occurrence file format (TSV/TSV.gz).
-    """
     contents = await file.read(100)
     await file.seek(0)
 
@@ -467,12 +463,6 @@ async def validate_s3_cases_controls(
     s3_path: str = Body(..., description="S3 path to file (e.g., s3://bucket/key)"),
     header_mapping: SGCCasesControlsMapping = Body(...)
 ):
-    """
-    Validate full SGC cases/controls file from S3.
-    """
-    # Read file from S3 and create DataFrame
-    # This would need to be implemented based on your S3 access patterns
-    # For now, returning a placeholder
     return {
         "message": "S3 validation not yet implemented",
         "s3_path": s3_path,
@@ -496,6 +486,30 @@ async def validate_s3_co_occurrence(
         "s3_path": s3_path,
         "validation_type": "co_occurrence"
     }
+
+
+@router.get("/sgc/phenotypes")
+async def get_all_sgc_phenotypes(user: User = Depends(get_sgc_user)):
+    return query.get_sgc_phenotypes(engine)
+
+
+@router.post("/sgc/phenotypes")
+async def create_sgc_phenotype(phenotype_code: str = Body(...), description: str = Body(...), user: User = Depends(get_sgc_user)):
+    try:
+        query.insert_sgc_phenotype(engine, phenotype_code, description)
+        return {"message": "Phenotype created successfully", "phenotype_code": phenotype_code}
+    except Exception as e:
+        if "Duplicate entry" in str(e):
+            raise fastapi.HTTPException(status_code=409, detail=f"Phenotype code '{phenotype_code}' already exists")
+        raise fastapi.HTTPException(status_code=500, detail=f"Error creating phenotype: {str(e)}")
+
+
+@router.delete("/sgc/phenotypes/{phenotype_code}")
+async def delete_sgc_phenotype(phenotype_code: str, user: User = Depends(get_sgc_user)):
+    deleted = query.delete_sgc_phenotype(engine, phenotype_code)
+    if not deleted:
+        raise fastapi.HTTPException(status_code=404, detail=f"Phenotype code '{phenotype_code}' not found")
+    return {"message": f"Phenotype '{phenotype_code}' deleted successfully"}
 
 
 @router.get("/hello-sgc")

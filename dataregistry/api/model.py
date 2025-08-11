@@ -271,6 +271,12 @@ class HermesPhenotype(BaseModel):
     description: str
     dichotomous: bool
 
+
+class SGCPhenotype(BaseModel):
+    phenotype_code: str
+    description: str
+    created_at: datetime
+
 class FileUpload(BaseModel):
     id: UUID
     dataset_name: str

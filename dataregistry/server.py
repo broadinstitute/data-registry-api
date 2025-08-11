@@ -4,8 +4,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from dataregistry.api import api, sgc
 from dataregistry.api.api import get_current_user
+from dataregistry.api.sgc import get_sgc_user
 
 ROUTES_WITHOUT_AUTH = {'stream_file', 'version', 'login', 'google_login', 'start_aggregator', 'search_phenotypes', 'preview_files'}
+SGC_ROUTES_WITHOUT_AUTH = {'hello_sgc'}
 
 # create web server
 app = fastapi.FastAPI(title='DataRegistry', redoc_url=None)
@@ -13,6 +15,10 @@ app = fastapi.FastAPI(title='DataRegistry', redoc_url=None)
 for route in api.router.routes:
     if route.name not in ROUTES_WITHOUT_AUTH:
         route.dependencies.append(Depends(get_current_user))
+
+for route in sgc.router.routes:
+    if route.name not in SGC_ROUTES_WITHOUT_AUTH:
+        route.dependencies.append(Depends(get_sgc_user))
 
 # all the various routers for each api
 app.include_router(sgc.router, prefix='/api', tags=['sgc'])

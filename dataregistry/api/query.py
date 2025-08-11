@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 
 from dataregistry.api.model import SavedDataset, DataSet, Study, SavedStudy, SavedPhenotypeDataSet, SavedCredibleSet, \
     CsvBioIndexRequest, SavedCsvBioIndexRequest, User, FileUpload, NewUserRequest, HermesUser, MetaAnalysisRequest, \
-    HermesMetaAnalysisStatus, SavedMetaAnalysisRequest, HermesPhenotype
+    HermesMetaAnalysisStatus, SavedMetaAnalysisRequest, HermesPhenotype, SGCPhenotype
 from dataregistry.id_shortener import shorten_uuid
 
 
@@ -701,3 +701,27 @@ def get_hermes_phenotypes(engine) -> List[HermesPhenotype]:
     with engine.connect() as conn:
         result = conn.execute(text("SELECT name, description, dichotomous FROM hermes_phenotype")).mappings().all()
         return [HermesPhenotype(**row) for row in result]
+
+
+def get_sgc_phenotypes(engine) -> List[SGCPhenotype]:
+    """Get all SGC phenotypes from the database."""
+    with engine.connect() as conn:
+        result = conn.execute(text("SELECT phenotype_code, description, created_at FROM sgc_phenotypes")).mappings().all()
+        return [SGCPhenotype(**row) for row in result]
+
+
+def delete_sgc_phenotype(engine, phenotype_code: str) -> bool:
+    """Delete an SGC phenotype by phenotype_code. Returns True if deleted, False if not found."""
+    with engine.connect() as conn:
+        result = conn.execute(text("DELETE FROM sgc_phenotypes WHERE phenotype_code = :phenotype_code"), 
+                            {'phenotype_code': phenotype_code})
+        conn.commit()
+        return result.rowcount > 0
+
+
+def insert_sgc_phenotype(engine, phenotype_code: str, description: str):
+    """Insert a new SGC phenotype. Raises IntegrityError if phenotype_code already exists."""
+    with engine.connect() as conn:
+        conn.execute(text("INSERT INTO sgc_phenotypes (phenotype_code, description) VALUES (:phenotype_code, :description)"),
+                    {'phenotype_code': phenotype_code, 'description': description})
+        conn.commit()
