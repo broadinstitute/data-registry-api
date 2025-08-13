@@ -21,8 +21,10 @@ engine = DataRegistryReadWriteDB().get_engine()
 
 USER_SERVICE_URL = os.getenv('USER_SERVICE_URL', 'https://users.kpndataregistry.org')
 
+def check_review_permissions(user: User):
+    return user.permissions and "sgc-review-data" in user.permissions
+
 async def get_sgc_user(authorization: Optional[str] = Header(None)):
-    """Validate JWT token with user service for SGC authentication."""
     if not authorization:
         raise fastapi.HTTPException(status_code=401, detail='Authorization header required')
     
@@ -495,6 +497,9 @@ async def get_all_sgc_phenotypes(user: User = Depends(get_sgc_user)):
 
 @router.post("/sgc/phenotypes")
 async def create_sgc_phenotype(phenotype_code: str = Body(...), description: str = Body(...), user: User = Depends(get_sgc_user)):
+    if not check_review_permissions(user):
+        raise fastapi.HTTPException(status_code=403, detail="You need sgc-review-data permission to add phenotypes")
+    
     try:
         query.insert_sgc_phenotype(engine, phenotype_code, description)
         return {"message": "Phenotype created successfully", "phenotype_code": phenotype_code}
@@ -506,6 +511,9 @@ async def create_sgc_phenotype(phenotype_code: str = Body(...), description: str
 
 @router.delete("/sgc/phenotypes/{phenotype_code}")
 async def delete_sgc_phenotype(phenotype_code: str, user: User = Depends(get_sgc_user)):
+    if not check_review_permissions(user):
+        raise fastapi.HTTPException(status_code=403, detail="You need sgc-review-data permission to delete phenotypes")
+    
     deleted = query.delete_sgc_phenotype(engine, phenotype_code)
     if not deleted:
         raise fastapi.HTTPException(status_code=404, detail=f"Phenotype code '{phenotype_code}' not found")
