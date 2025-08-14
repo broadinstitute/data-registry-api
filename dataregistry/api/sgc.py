@@ -13,7 +13,7 @@ import httpx
 
 from dataregistry.api import file_utils, s3, query
 from dataregistry.api.db import DataRegistryReadWriteDB
-from dataregistry.api.model import SGCPhenotype, User
+from dataregistry.api.model import SGCPhenotype, SGCCohort, SGCCohortFile, User
 from dataregistry.api.api import get_current_user
 
 router = fastapi.APIRouter()
@@ -23,6 +23,12 @@ USER_SERVICE_URL = os.getenv('USER_SERVICE_URL', 'https://users.kpndataregistry.
 
 def check_review_permissions(user: User):
     return user.permissions and "sgc-review-data" in user.permissions
+
+
+def get_valid_phenotype_codes() -> set:
+    """Get set of valid phenotype codes from the database."""
+    phenotypes = query.get_sgc_phenotypes(engine)
+    return {phenotype.phenotype_code for phenotype in phenotypes}
 
 async def get_sgc_user(authorization: Optional[str] = Header(None)):
     if not authorization:
@@ -69,120 +75,6 @@ class SGCCoOccurrenceMapping(BaseModel):
     num_individuals_column: str
 
 
-SGC_PHENOTYPE_DESCRIPTIONS = {
-    # L01-L08: Infections of the skin and subcutaneous tissue
-    "L01.0K": "Impetigo, unspecified",
-    "L02K": "Cutaneous abscess, furuncle and carbuncle",
-    "L03K": "Cellulitis and acute lymphangitis",
-    "L05K": "Pilonidal cyst and sinus",
-    "L05.0K": "Pilonidal cyst with abscess",
-    "L05.9K": "Pilonidal cyst without abscess",
-    "L08K": "Other local infections of skin and subcutaneous tissue",
-
-    # L10-L14: Bullous disorders
-    "L10K": "Pemphigus",
-    "L10.0K": "Pemphigus vulgaris",
-    "L10.2K": "Pemphigus foliaceus",
-    "L12K": "Pemphigoid",
-    "L12.0K": "Bullous pemphigoid",
-    "L13.0K": "Dermatitis herpetiformis",
-
-    # L20-L30: Dermatitis and eczema
-    "L20K": "Atopic dermatitis",  # Confirmed from cohort_details.txt
-    "L21K": "Seborrheic dermatitis",
-    "L23_L24_L25K": "Contact dermatitis (allergic, irritant, unspecified)",
-    "L23K": "Allergic contact dermatitis",
-    "L24K": "Irritant contact dermatitis",
-    "L27K": "Dermatitis due to substances taken internally",
-    "L28K": "Lichen simplex chronicus and prurigo",
-    "L28.0K": "Lichen simplex chronicus",
-    "L28.1K": "Prurigo nodularis",
-    "L29K": "Pruritus",
-    "L30K": "Other and unspecified dermatitis",
-
-    # L40-L45: Papulosquamous disorders
-    "L40K": "Psoriasis",  # Confirmed from documents
-    "L40.0K": "Psoriasis vulgaris",
-    "L40.1K": "Generalized pustular psoriasis",
-    "L40.3K": "Pustulosis of palms and soles",
-    "L40.4K": "Guttate psoriasis",
-    "L40.5K": "Arthropathic psoriasis",
-    "L43K": "Lichen planus",
-
-    # L50-L54: Urticaria and erythema
-    "L50K": "Urticaria",
-    "L51.0K": "Nonbullous erythema multiforme",
-    "L51.1_L51.2_L51.3K": "Stevens-Johnson syndrome and toxic epidermal necrolysis",
-    "L51.8_L51.9K": "Other and unspecified erythema multiforme",
-    "L52K": "Erythema nodosum",
-    "L53.9K": "Erythematous condition, unspecified",
-
-    # L60-L75: Disorders of skin appendages
-    "L66K": "Cicatricial alopecia",
-    "L68.0K": "Hirsutism",
-    "L70K": "Acne",
-    "L71K": "Rosacea",
-    "L72K": "Follicular cysts of skin and subcutaneous tissue",
-    "L72.0K": "Epidermal cyst",
-    "L72.1K": "Pilar and trichilemmal cyst",
-    "L73.0K": "Acne keloid",
-    "L73.2K": "Hidradenitis suppurativa",
-    "L74.4K": "Anhidrosis",
-    "L75.0K": "Bromhidrosis",
-
-    # L80-L99: Other disorders of the skin
-    "L80K": "Vitiligo",
-    "L81.2K": "Freckles",
-    "L81.3K": "Café au lait spots",
-    "L81.4K": "Other melanin hyperpigmentation",
-    "L82K": "Seborrheic keratosis",
-    "L83K": "Acanthosis nigricans",
-    "L84K": "Corns and callosities",
-    "L85K": "Other epidermal thickening",
-    "L88K": "Pyoderma gangrenosum",
-    "L89K": "Pressure ulcer and chronic ulcer of skin",
-    "L90.0K": "Lichen sclerosus et atrophicus",
-    "L90.5K": "Scar conditions and fibrosis of skin",
-    "L91.0K": "Hypertrophic scar",
-    "L91.8_L91.9K": "Other and unspecified hypertrophic and atrophic conditions of skin",
-    "L92K": "Granulomatous disorders of skin and subcutaneous tissue",
-    "L92.0K": "Granuloma annulare",
-    "L92.1K": "Necrobiosis lipoidica",
-    "L93K": "Lupus erythematosus",
-    "L93.0K": "Discoid lupus erythematosus",
-    "L93.1K": "Subacute cutaneous lupus erythematosus",
-    "L94.0_L94.1K": "Localized and linear scleroderma",
-    "L94.2K": "Calcinosis cutis",
-    "L94.3K": "Sclerodactyly",
-    "L94.4K": "Gottron papules",
-    "L95K": "Vasculitis limited to skin",
-    "L97_L98.4K": "Ulcer and chronic skin breakdown",
-    "L98.0K": "Pyogenic granuloma",
-    "L98.2K": "Febrile neutrophilic dermatosis [Sweet syndrome]",
-    "L99.0K": "Amyloidosis of skin",
-
-    # C43-C44: Skin cancers
-    "C43K": "Malignant melanoma of skin",
-    "C44K": "Other and unspecified malignant neoplasm of skin",
-    "C44.X1K": "Basal cell carcinoma of skin",
-    "C44.X2K": "Squamous cell carcinoma of skin",
-
-    # D03: Pre-malignant skin lesions
-    "D03K": "Melanoma in situ",
-
-    # Other categories
-    "D86.3K": "Sarcoidosis of skin",
-    "M33K": "Dermatopolymyositis",
-    "Q80.0K": "Ichthyosis vulgaris",
-    "A63.0K": "Anogenital (venereal) warts",
-    "B00K": "Herpesviral [herpes simplex] infections",
-    "B02K": "Zoster [herpes zoster]",
-    "B35_B36.1K": "Dermatophytosis and superficial mycoses",
-    "B86K": "Scabies",
-    "D72.12K": "Eosinophilia",
-    "O26.4K": "Herpes gestationis",
-    "O26.86K": "Pruritic urticarial papules and plaques of pregnancy"
-}
 
 
 def validate_sgc_cases_controls(df: pd.DataFrame, header_mapping: Dict[str, str], is_sample: bool = True) -> Optional[str]:
@@ -205,10 +97,11 @@ def validate_sgc_cases_controls(df: pd.DataFrame, header_mapping: Dict[str, str]
     if df[phenotype_col].isna().any():
         errors.append(f"Column '{phenotype_col}' contains empty values")
     
-    # Validate phenotype codes against SGC_PHENOTYPE_DESCRIPTIONS
+    # Validate phenotype codes against database
+    valid_phenotype_codes = get_valid_phenotype_codes()
     invalid_phenotypes = []
     for phenotype in df[phenotype_col].dropna():
-        if phenotype not in SGC_PHENOTYPE_DESCRIPTIONS:
+        if phenotype not in valid_phenotype_codes:
             invalid_phenotypes.append(phenotype)
     
     if invalid_phenotypes:
@@ -285,10 +178,13 @@ def validate_sgc_co_occurrence(df: pd.DataFrame, header_mapping: Dict[str, str],
     if df[phenotype2_col].isna().any():
         errors.append(f"Column '{phenotype2_col}' contains empty values")
     
+    # Validate phenotype codes against database
+    valid_phenotype_codes = get_valid_phenotype_codes()
+    
     # Validate phenotype1 codes
     invalid_phenotypes1 = []
     for phenotype in df[phenotype1_col].dropna():
-        if phenotype not in SGC_PHENOTYPE_DESCRIPTIONS:
+        if phenotype not in valid_phenotype_codes:
             invalid_phenotypes1.append(phenotype)
     
     if invalid_phenotypes1:
@@ -301,7 +197,7 @@ def validate_sgc_co_occurrence(df: pd.DataFrame, header_mapping: Dict[str, str],
     # Validate phenotype2 codes
     invalid_phenotypes2 = []
     for phenotype in df[phenotype2_col].dropna():
-        if phenotype not in SGC_PHENOTYPE_DESCRIPTIONS:
+        if phenotype not in valid_phenotype_codes:
             invalid_phenotypes2.append(phenotype)
     
     if invalid_phenotypes2:
@@ -520,9 +416,46 @@ async def delete_sgc_phenotype(phenotype_code: str, user: User = Depends(get_sgc
     return {"message": f"Phenotype '{phenotype_code}' deleted successfully"}
 
 
-@router.get("/hello-sgc")
-async def hello_sgc():
-    """
-    Simple hello endpoint for SGC tenant.
-    """
-    return {"message": "Hello from SGC tenant!"}
+@router.post("/sgc/cohorts")
+async def upsert_sgc_cohort(cohort: SGCCohort, user: User = Depends(get_sgc_user)):
+    try:
+        # Set uploaded_by to current user if not provided
+        if not cohort.uploaded_by:
+            cohort.uploaded_by = user.user_name
+            
+        cohort_id = query.upsert_sgc_cohort(engine, cohort)
+        return {
+            "message": "Cohort saved successfully",
+            "cohort_id": cohort_id,
+            "name": cohort.name,
+            "uploaded_by": cohort.uploaded_by
+        }
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Error saving cohort: {str(e)}")
+
+
+@router.post("/sgc/cohort-files")
+async def create_sgc_cohort_file(cohort_file: SGCCohortFile, user: User = Depends(get_sgc_user)):
+    try:
+        file_id = query.insert_sgc_cohort_file(engine, cohort_file)
+        return {
+            "message": "Cohort file saved successfully",
+            "file_id": file_id,
+            "cohort_id": str(cohort_file.cohort_id),
+            "file_type": cohort_file.file_type,
+            "file_name": cohort_file.file_name
+        }
+    except Exception as e:
+        if "Duplicate entry" in str(e):
+            raise fastapi.HTTPException(
+                status_code=409, 
+                detail=f"A file of type '{cohort_file.file_type}' already exists for this cohort. Delete the existing file first."
+            )
+        elif "Cannot add or update a child row" in str(e) or "foreign key constraint fails" in str(e):
+            raise fastapi.HTTPException(
+                status_code=400,
+                detail="Invalid cohort_id: cohort does not exist"
+            )
+        raise fastapi.HTTPException(status_code=500, detail=f"Error saving cohort file: {str(e)}")
+
+

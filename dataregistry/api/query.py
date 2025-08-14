@@ -725,3 +725,137 @@ def insert_sgc_phenotype(engine, phenotype_code: str, description: str):
         conn.execute(text("INSERT INTO sgc_phenotypes (phenotype_code, description) VALUES (:phenotype_code, :description)"),
                     {'phenotype_code': phenotype_code, 'description': description})
         conn.commit()
+
+
+def upsert_sgc_cohort(engine, cohort) -> str:
+    """
+    Upsert (insert or update) an SGC cohort record using ON DUPLICATE KEY UPDATE.
+    Takes an SGCCohort object and returns the cohort ID (as hex string without dashes).
+    """
+    with engine.connect() as conn:
+        # Generate ID if not provided
+        cohort_id = str(cohort.id).replace('-', '') if cohort.id else str(uuid.uuid4()).replace('-', '')
+        
+        conn.execute(text("""
+            INSERT INTO sgc_cohorts (id, name, uploaded_by, total_sample_size, number_of_males, number_of_females)
+            VALUES (:id, :name, :uploaded_by, :total_sample_size, :number_of_males, :number_of_females)
+            ON DUPLICATE KEY UPDATE
+                total_sample_size = VALUES(total_sample_size),
+                number_of_males = VALUES(number_of_males),
+                number_of_females = VALUES(number_of_females),
+                updated_at = CURRENT_TIMESTAMP
+        """), {
+            'id': cohort_id,
+            'name': cohort.name,
+            'uploaded_by': cohort.uploaded_by,
+            'total_sample_size': cohort.total_sample_size,
+            'number_of_males': cohort.number_of_males,
+            'number_of_females': cohort.number_of_females
+        })
+        conn.commit()
+        return cohort_id
+
+
+def insert_sgc_cohort_file(engine, cohort_file) -> str:
+    """
+    Insert a new SGC cohort file record. 
+    Takes an SGCCohortFile object and returns the file ID (as hex string without dashes).
+    Will raise IntegrityError if cohort_id + file_type already exists.
+    """
+    with engine.connect() as conn:
+        # Generate ID if not provided
+        file_id = str(cohort_file.id).replace('-', '') if cohort_file.id else str(uuid.uuid4()).replace('-', '')
+        cohort_id_hex = str(cohort_file.cohort_id).replace('-', '')
+        
+        conn.execute(text("""
+            INSERT INTO sgc_cohort_files (id, cohort_id, file_type, file_path, file_name, file_size)
+            VALUES (:id, :cohort_id, :file_type, :file_path, :file_name, :file_size)
+        """), {
+            'id': file_id,
+            'cohort_id': cohort_id_hex,
+            'file_type': cohort_file.file_type,
+            'file_path': cohort_file.file_path,
+            'file_name': cohort_file.file_name,
+            'file_size': cohort_file.file_size
+        })
+        conn.commit()
+        return file_id
+
+
+def get_sgc_cohort_files(engine, cohort_id: str):
+    """Get all files for a specific SGC cohort."""
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+            SELECT id, cohort_id, file_type, file_path, file_name, file_size, uploaded_at
+            FROM sgc_cohort_files 
+            WHERE cohort_id = :cohort_id
+        """), {'cohort_id': cohort_id}).mappings().all()
+        return [dict(row) for row in result]
+
+
+def delete_sgc_cohort_file(engine, file_id: str) -> bool:
+    """Delete an SGC cohort file by file_id. Returns True if deleted, False if not found."""
+    with engine.connect() as conn:
+        result = conn.execute(text("DELETE FROM sgc_cohort_files WHERE id = :file_id"), 
+                            {'file_id': file_id})
+        conn.commit()
+        return result.rowcount > 0
+
+
+def get_sgc_cohorts_with_files(engine, uploaded_by: str = None):
+    """
+    Get SGC cohorts with their associated files using a LEFT JOIN.
+    If uploaded_by is provided, filter by that user. Otherwise return all cohorts.
+    Returns a list of cohorts with their files nested.
+    """
+    with engine.connect() as conn:
+        query = """
+            SELECT 
+                c.id as cohort_id, c.name, c.uploaded_by, c.total_sample_size, 
+                c.number_of_males, c.number_of_females, c.created_at, c.updated_at,
+                f.id as file_id, f.file_type, f.file_path, f.file_name, 
+                f.file_size, f.uploaded_at as file_uploaded_at
+            FROM sgc_cohorts c
+            LEFT JOIN sgc_cohort_files f ON c.id = f.cohort_id
+        """
+        
+        params = {}
+        if uploaded_by:
+            query += " WHERE c.uploaded_by = :uploaded_by"
+            params['uploaded_by'] = uploaded_by
+            
+        query += " ORDER BY c.created_at DESC, f.file_type"
+        
+        result = conn.execute(text(query), params).mappings().all()
+        
+        # Group results by cohort
+        cohorts_dict = {}
+        for row in result:
+            cohort_id = row['cohort_id']
+            
+            if cohort_id not in cohorts_dict:
+                cohorts_dict[cohort_id] = {
+                    'id': row['cohort_id'],
+                    'name': row['name'],
+                    'uploaded_by': row['uploaded_by'],
+                    'total_sample_size': row['total_sample_size'],
+                    'number_of_males': row['number_of_males'],
+                    'number_of_females': row['number_of_females'],
+                    'created_at': row['created_at'],
+                    'updated_at': row['updated_at'],
+                    'files': []
+                }
+            
+            # Add file if it exists (LEFT JOIN may have NULL files)
+            if row['file_id']:
+                cohorts_dict[cohort_id]['files'].append({
+                    'id': row['file_id'],
+                    'cohort_id': row['cohort_id'],
+                    'file_type': row['file_type'],
+                    'file_path': row['file_path'],
+                    'file_name': row['file_name'],
+                    'file_size': row['file_size'],
+                    'uploaded_at': row['file_uploaded_at']
+                })
+        
+        return list(cohorts_dict.values())
