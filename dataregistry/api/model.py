@@ -285,6 +285,8 @@ class FileUpload(BaseModel):
     s3_path: Union[str, None]
     qc_log: Union[str, None]
     qc_script_options: Union[dict, None]
+    qc_job_submitted_at: Union[datetime, None]
+    qc_job_completed_at: Union[datetime, None]
 
     def dict(self, **kwargs):
         d = super().dict(**kwargs)
