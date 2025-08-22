@@ -237,56 +237,6 @@ def validate_sgc_co_occurrence(df: pd.DataFrame, header_mapping: Dict[str, str],
     
     return "; ".join(errors) if errors else None
 
-@router.post("/sgc/upload-file")
-async def upload_sgc_file(
-        file: UploadFile,
-        validation_type: str = Form(...),
-        column_mapping: str = Form(...)
-):
-    try:
-        # Parse the column mapping JSON
-        mapping = json.loads(column_mapping)
-
-        content = await file.read()
-        df = await file_utils.parse_file(io.StringIO(content.decode('utf-8')), file.filename)
-
-        if validation_type == "cases_controls":
-            error_message = validate_sgc_cases_controls(df, mapping, is_sample=False)
-        elif validation_type == "cooccurrence":
-            error_message = validate_sgc_co_occurrence(df, mapping, is_sample=False)
-        else:
-            raise fastapi.HTTPException(
-                status_code=400,
-                detail="validation_type must be 'cases_controls' or 'cooccurrence'"
-            )
-
-        if error_message:
-            raise fastapi.HTTPException(detail=error_message, status_code=400)
-
-
-        return {
-            "message": "File uploaded and validated successfully",
-            "filename": file.filename,
-            "validation_type": validation_type,
-            "column_mapping": mapping,
-            "columns": list(df.columns)
-        }
-
-    except json.JSONDecodeError:
-        raise fastapi.HTTPException(status_code=400, detail="Invalid column_mapping JSON")
-    except Exception as e:
-        # Log the error for debugging
-        print(f"Error processing SGC file upload: {str(e)}")
-        raise fastapi.HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
-
-
-
-@router.get("/sgc/get-pre-signed-url")
-async def get_sgc_pre_signed_url(request: Request):
-    filename = request.headers.get('Filename')
-    dataset = request.headers.get('Dataset')
-    s3_path = f"sgc/{dataset}/{filename}"
-    return s3.generate_presigned_url_with_path(s3_path)
 
 @router.post("/sgc-preview-cases-controls")
 async def preview_sgc_cases_controls(file: UploadFile, header_mapping: SGCCasesControlsMapping = Body(...)):
@@ -435,27 +385,146 @@ async def upsert_sgc_cohort(cohort: SGCCohort, user: User = Depends(get_sgc_user
 
 
 @router.post("/sgc/cohort-files")
-async def create_sgc_cohort_file(cohort_file: SGCCohortFile, user: User = Depends(get_sgc_user)):
+async def upload_and_create_sgc_cohort_file(
+    file: UploadFile,
+    cohort_id: str = Form(...),
+    file_type: str = Form(...),
+    validation_type: str = Form(...),
+    column_mapping: str = Form(...),
+    user: User = Depends(get_sgc_user)
+):
+    """
+    Combined endpoint that validates file, uploads to S3, and creates cohort file record.
+    """
     try:
+        # Parse the column mapping JSON
+        mapping = json.loads(column_mapping)
+        
+        # Read and validate file content
+        content = await file.read()
+        df = await file_utils.parse_file(io.StringIO(content.decode('utf-8')), file.filename)
+        
+        # Validate file content
+        if validation_type == "cases_controls":
+            error_message = validate_sgc_cases_controls(df, mapping, is_sample=False)
+        elif validation_type == "cooccurrence":
+            error_message = validate_sgc_co_occurrence(df, mapping, is_sample=False)
+        else:
+            raise fastapi.HTTPException(
+                status_code=400,
+                detail="validation_type must be 'cases_controls' or 'cooccurrence'"
+            )
+        
+        if error_message:
+            raise fastapi.HTTPException(detail=error_message, status_code=400)
+        
+        # Upload to S3
+        s3_path = f"sgc/{cohort_id}/{file.filename}"
+        await file.seek(0)  # Reset file pointer
+        file_content = await file.read()
+        
+        # Upload to S3 using boto3
+        import boto3
+        s3_client = boto3.client('s3', region_name=os.getenv('AWS_DEFAULT_REGION', 'us-east-1'))
+        bucket = os.getenv('S3_BUCKET', 'dig-data-registry-qa')
+        
+        s3_client.put_object(
+            Bucket=bucket,
+            Key=s3_path,
+            Body=file_content,
+            ContentType=file.content_type or 'application/octet-stream'
+        )
+        
+        # Create cohort file record
+        cohort_file = SGCCohortFile(
+            cohort_id=cohort_id,
+            file_type=file_type,
+            file_path=f"s3://{bucket}/{s3_path}",
+            file_name=file.filename,
+            file_size=len(file_content)
+        )
+        
         file_id = query.insert_sgc_cohort_file(engine, cohort_file)
+        
         return {
-            "message": "Cohort file saved successfully",
+            "message": "File validated, uploaded, and saved successfully",
             "file_id": file_id,
-            "cohort_id": str(cohort_file.cohort_id),
-            "file_type": cohort_file.file_type,
-            "file_name": cohort_file.file_name
+            "cohort_id": cohort_id,
+            "file_type": file_type,
+            "file_name": file.filename,
+            "file_path": cohort_file.file_path,
+            "validation_type": validation_type,
+            "file_size": cohort_file.file_size
         }
+        
+    except json.JSONDecodeError:
+        raise fastapi.HTTPException(status_code=400, detail="Invalid column_mapping JSON")
+    except fastapi.HTTPException:
+        raise
     except Exception as e:
         if "Duplicate entry" in str(e):
             raise fastapi.HTTPException(
                 status_code=409, 
-                detail=f"A file of type '{cohort_file.file_type}' already exists for this cohort. Delete the existing file first."
+                detail=f"A file of type '{file_type}' already exists for this cohort. Delete the existing file first."
             )
         elif "Cannot add or update a child row" in str(e) or "foreign key constraint fails" in str(e):
             raise fastapi.HTTPException(
                 status_code=400,
                 detail="Invalid cohort_id: cohort does not exist"
             )
-        raise fastapi.HTTPException(status_code=500, detail=f"Error saving cohort file: {str(e)}")
+        raise fastapi.HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
+
+
+@router.get("/sgc/cohorts")
+async def get_sgc_cohorts(user: User = Depends(get_sgc_user)):
+    """
+    Get SGC cohorts with their associated files.
+    - Users with 'sgc-review-data' permission can see all cohorts
+    - Other users can only see cohorts they uploaded
+    """
+    try:
+        # Check if user has review permissions to see all cohorts
+        if check_review_permissions(user):
+            # Reviewer can see all cohorts
+            cohorts = query.get_sgc_cohorts_with_files(engine, uploaded_by=None)
+        else:
+            # Regular user can only see their own cohorts
+            cohorts = query.get_sgc_cohorts_with_files(engine, uploaded_by=user.user_name)
+        
+        return cohorts
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Error retrieving cohorts: {str(e)}")
+
+
+@router.delete("/sgc/cohort-files/{file_id}")
+async def delete_sgc_cohort_file(file_id: str, user: User = Depends(get_sgc_user)):
+    """
+    Delete an SGC cohort file.
+    - Users can delete files from cohorts they uploaded
+    - Users with 'sgc-review-data' permission can delete any file
+    """
+    try:
+        # Get the owner of the file
+        file_owner = query.get_sgc_cohort_file_owner(engine, file_id)
+        if not file_owner:
+            raise fastapi.HTTPException(status_code=404, detail="File not found")
+        
+        # Check permissions: either the user owns the file or has review permissions
+        if not (file_owner == user.user_name or check_review_permissions(user)):
+            raise fastapi.HTTPException(
+                status_code=403, 
+                detail="You can only delete files from cohorts you uploaded"
+            )
+        
+        # Delete the file
+        deleted = query.delete_sgc_cohort_file(engine, file_id)
+        if not deleted:
+            raise fastapi.HTTPException(status_code=404, detail="File not found")
+        
+        return {"message": "File deleted successfully", "file_id": file_id}
+    except fastapi.HTTPException:
+        raise
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Error deleting file: {str(e)}")
 
 

@@ -793,6 +793,18 @@ def get_sgc_cohort_files(engine, cohort_id: str):
         return [dict(row) for row in result]
 
 
+def get_sgc_cohort_file_owner(engine, file_id: str) -> str:
+    """Get the owner (uploaded_by) of an SGC cohort file."""
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+            SELECT c.uploaded_by 
+            FROM sgc_cohort_files f
+            JOIN sgc_cohorts c ON f.cohort_id = c.id
+            WHERE f.id = :file_id
+        """), {'file_id': file_id}).first()
+        return result[0] if result else None
+
+
 def delete_sgc_cohort_file(engine, file_id: str) -> bool:
     """Delete an SGC cohort file by file_id. Returns True if deleted, False if not found."""
     with engine.connect() as conn:
