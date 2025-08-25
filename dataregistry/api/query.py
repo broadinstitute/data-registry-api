@@ -485,10 +485,20 @@ def get_file_upload_sql_and_params(limit, offset, phenotype, statuses, uploader)
 
 def update_file_upload_qc_log(engine, qc_log: str, file_upload_id: str, qc_status: str):
     with engine.connect() as conn:
-        conn.execute(text("UPDATE file_uploads set qc_log=:qc_log, qc_status = :qc_status where id = :file_upload_id"),
-                     {'qc_log': qc_log, 'qc_status': qc_status,
-                      'file_upload_id': file_upload_id.replace('-', '')})
+        conn.execute(text("""UPDATE file_uploads 
+                           SET qc_log=:qc_log, qc_status=:qc_status, qc_job_completed_at=NOW()
+                           WHERE id=:file_upload_id"""),
+                    {'qc_log': qc_log, 'qc_status': qc_status, 'file_upload_id': file_upload_id.replace('-', '')})
         conn.commit()
+
+
+def record_qc_job_submission_time(engine, file_upload_id: str):
+    with engine.connect() as conn:
+        conn.execute(text("UPDATE file_uploads SET qc_job_submitted_at=NOW() WHERE id=:file_upload_id"),
+                     {'file_upload_id': file_upload_id.replace('-', '')})
+        conn.commit()
+
+
 
 
 def update_meta_analysis_log(engine, log: str, meta_analysis_id: str, status: str):

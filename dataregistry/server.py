@@ -6,7 +6,7 @@ from dataregistry.api import api, sgc
 from dataregistry.api.api import get_current_user
 from dataregistry.api.sgc import get_sgc_user
 
-ROUTES_WITHOUT_AUTH = {'stream_file', 'version', 'login', 'google_login', 'start_aggregator', 'search_phenotypes', 'preview_files'}
+ROUTES_WITHOUT_AUTH = {'stream_file', 'version', 'login', 'google_login', 'start_aggregator', 'search_phenotypes', 'search_terms', 'preview_files'}
 SGC_ROUTES_WITHOUT_AUTH = {'hello_sgc'}
 
 # create web server
