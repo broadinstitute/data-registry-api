@@ -155,18 +155,18 @@ def validate_sgc_cases_controls(df: pd.DataFrame, header_mapping: Dict[str, str]
 
 
 def validate_sgc_co_occurrence(df: pd.DataFrame, header_mapping: Dict[str, str], is_sample: bool = True) -> Optional[str]:
-    required_cols = [header_mapping['phenotype1_column'],
-                    header_mapping['phenotype2_column'], 
-                    header_mapping['num_individuals_column']]
+    required_cols = [header_mapping['phenotype1'],
+                    header_mapping['phenotype2'],
+                    header_mapping['cooccurrence_count']]
     
     # Check required columns exist
     missing_cols = [col for col in required_cols if col not in df.columns]
     if missing_cols:
         return f"Missing required columns: {missing_cols}"
     
-    phenotype1_col = header_mapping['phenotype1_column']
-    phenotype2_col = header_mapping['phenotype2_column']
-    num_individuals_col = header_mapping['num_individuals_column']
+    phenotype1_col = header_mapping['phenotype1']
+    phenotype2_col = header_mapping['phenotype2']
+    num_individuals_col = header_mapping['cooccurrence_count']
     
     errors = []
     
@@ -494,6 +494,33 @@ async def get_sgc_cohorts(user: User = Depends(get_sgc_user)):
         return cohorts
     except Exception as e:
         raise fastapi.HTTPException(status_code=500, detail=f"Error retrieving cohorts: {str(e)}")
+
+
+@router.get("/sgc/cohorts/{cohort_id}")
+async def get_sgc_cohort_by_id(cohort_id: str, user: User = Depends(get_sgc_user)):
+    """
+    Get a single SGC cohort by ID with its associated files.
+    - Users with 'sgc-review-data' permission can see any cohort
+    - Other users can only see cohorts they uploaded
+    """
+    try:
+        cohort_data = query.get_sgc_cohort_by_id(engine, cohort_id)
+        if not cohort_data:
+            raise fastapi.HTTPException(status_code=404, detail="Cohort not found")
+        
+        # Check permissions: either the user owns the cohort or has review permissions
+        cohort_owner = cohort_data[0]['uploaded_by']  # First row has cohort info
+        if not (cohort_owner == user.user_name or check_review_permissions(user)):
+            raise fastapi.HTTPException(
+                status_code=403, 
+                detail="You can only view cohorts you uploaded"
+            )
+        
+        return cohort_data
+    except fastapi.HTTPException:
+        raise
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Error retrieving cohort: {str(e)}")
 
 
 @router.delete("/sgc/cohort-files/{file_id}")

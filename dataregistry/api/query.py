@@ -743,6 +743,7 @@ def upsert_sgc_cohort(engine, cohort) -> str:
                 total_sample_size = VALUES(total_sample_size),
                 number_of_males = VALUES(number_of_males),
                 number_of_females = VALUES(number_of_females),
+                name = VALUES(name),
                 updated_at = CURRENT_TIMESTAMP
         """), {
             'id': cohort_id,
@@ -791,6 +792,23 @@ def get_sgc_cohort_files(engine, cohort_id: str):
             WHERE cohort_id = :cohort_id
         """), {'cohort_id': cohort_id}).mappings().all()
         return [dict(row) for row in result]
+
+
+def get_sgc_cohort_by_id(engine, cohort_id: str):
+    """Get a single SGC cohort by ID with its associated files."""
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+            SELECT 
+                c.id as cohort_id, c.name, c.uploaded_by, c.total_sample_size, 
+                c.number_of_males, c.number_of_females, c.created_at, c.updated_at,
+                f.id as file_id, f.file_type, f.file_path, f.file_name, 
+                f.file_size, f.uploaded_at as file_uploaded_at
+            FROM sgc_cohorts c
+            LEFT JOIN sgc_cohort_files f ON c.id = f.cohort_id
+            WHERE c.id = :cohort_id
+            ORDER BY f.file_type
+        """), {'cohort_id': cohort_id}).mappings().all()
+        return [dict(row) for row in result] if result else None
 
 
 def get_sgc_cohort_file_owner(engine, file_id: str) -> str:
@@ -869,5 +887,10 @@ def get_sgc_cohorts_with_files(engine, uploaded_by: str = None):
                     'file_size': row['file_size'],
                     'uploaded_at': row['file_uploaded_at']
                 })
+        
+        # Add computed status based on file count
+        for cohort in cohorts_dict.values():
+            file_count = len(cohort['files'])
+            cohort['status'] = 'complete' if file_count == 3 else 'incomplete'
         
         return list(cohorts_dict.values())
