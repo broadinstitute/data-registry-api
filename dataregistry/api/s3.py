@@ -3,6 +3,9 @@ import json
 import boto3
 import os
 
+import fastapi
+from botocore.exceptions import ClientError
+
 S3_REGION = 'us-east-1'
 BASE_BUCKET = os.environ.get('DATA_REGISTRY_BUCKET', 'dig-data-registry')
 
@@ -182,6 +185,17 @@ def finalize_upload(directory, name, parts, multipart_upload):
         },
         UploadId=multipart_upload['UploadId'],
     )
+
+def generate_presigned_url_with_path(path: str):
+    try:
+        presigned_url = generate_presigned_url(
+            'put_object',
+            params={'Bucket': BASE_BUCKET, 'Key': path},
+            expires_in=7200
+        )
+    except ClientError as e:
+        raise fastapi.HTTPException(status_code=500, detail="Failed to generate presigned URL") from e
+    return {"presigned_url": presigned_url, "s3_path": path}
 
 
 def generate_presigned_url(param, params, expires_in):

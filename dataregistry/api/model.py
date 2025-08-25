@@ -271,6 +271,33 @@ class HermesPhenotype(BaseModel):
     description: str
     dichotomous: bool
 
+
+class SGCPhenotype(BaseModel):
+    phenotype_code: str
+    description: str
+    created_at: datetime
+
+
+class SGCCohort(BaseModel):
+    id: Union[UUID, None] = None
+    name: str
+    uploaded_by: Union[str, None] = None
+    total_sample_size: int
+    number_of_males: int
+    number_of_females: int
+    created_at: Union[datetime, None] = None
+    updated_at: Union[datetime, None] = None
+
+
+class SGCCohortFile(BaseModel):
+    id: Union[UUID, None] = None
+    cohort_id: UUID
+    file_type: str
+    file_path: str
+    file_name: str
+    file_size: int
+    uploaded_at: Union[datetime, None] = None
+
 class FileUpload(BaseModel):
     id: UUID
     dataset_name: str

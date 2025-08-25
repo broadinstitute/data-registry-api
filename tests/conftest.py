@@ -43,6 +43,9 @@ def before_each_test():
         con.execute(text("TRUNCATE TABLE file_uploads"))
         con.execute(text("TRUNCATE TABLE roles"))
         con.execute(text("TRUNCATE TABLE user_roles"))
+        con.execute(text("TRUNCATE TABLE sgc_cohort_files"))
+        con.execute(text("TRUNCATE TABLE sgc_cohorts"))
+        con.execute(text("TRUNCATE TABLE sgc_phenotypes"))
         con.execute(text("INSERT INTO users (id, user_name, oauth_provider, created_at) "
                          "values (1, 'testuser@broadinstitute.org', 'google', NOW())"))
         con.execute(text("INSERT INTO roles (role) VALUES ('admin')"))
