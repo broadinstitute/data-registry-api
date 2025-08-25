@@ -8,7 +8,7 @@ from dataregistry.api.sgc import get_sgc_user
 
 
 SGC_ROUTES_WITHOUT_AUTH = {'hello_sgc'}
-ROUTES_WITHOUT_AUTH = {'stream_file', 'version', 'login', 'google_login', 'start_aggregator', 'search_phenotypes', 'search_terms'}
+ROUTES_WITHOUT_AUTH = {'stream_file', 'version', 'login', 'google_login', 'start_aggregator', 'search_phenotypes', 'search_terms', 'preview_files'}
 
 # create web server
 app = fastapi.FastAPI(title='DataRegistry', redoc_url=None)
