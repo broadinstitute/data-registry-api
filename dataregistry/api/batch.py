@@ -1,4 +1,5 @@
 import time
+from datetime import datetime
 
 import boto3
 
@@ -22,6 +23,10 @@ def submit_aggregator_job(branch, method, extra_args):
 def submit_and_await_job(engine, job_config, db_callback, identifier, is_qc=True):
     batch_client = boto3.client('batch', region_name=S3_REGION)
 
+    if is_qc:
+        from dataregistry.api import query
+        query.record_qc_job_submission_time(engine, identifier)
+
     response = batch_client.submit_job(**job_config)
     job_id = response['jobId']
     logs_client = boto3.client('logs', region_name=S3_REGION)
@@ -37,6 +42,7 @@ def submit_and_await_job(engine, job_config, db_callback, identifier, is_qc=True
             )
             log_messages = [event['message'] for event in log_events['events']]
             complete_log = '\n'.join(log_messages)
+            
             if is_qc:
                 db_callback(engine, complete_log, identifier,
                             HermesFileStatus.READY_FOR_REVIEW if job_status == 'SUCCEEDED' else
@@ -44,4 +50,4 @@ def submit_and_await_job(engine, job_config, db_callback, identifier, is_qc=True
             else:
                 db_callback(engine, complete_log, identifier, job_status)
             break
-        time.sleep(60)
+        time.sleep(10)  # Reduced from 60 to 10 seconds for more accurate timing
