@@ -39,7 +39,7 @@ def test_upsert_sgc_cohort_insert_new(api_client: TestClient):
 
 
 def test_upsert_sgc_cohort_update_existing(api_client: TestClient):
-    """Test that duplicate name+uploaded_by triggers update via unique constraint"""
+    """Test updating existing cohort by providing ID"""
     engine = DataRegistryReadWriteDB().get_engine()
     
     # Insert initial cohort
@@ -53,9 +53,10 @@ def test_upsert_sgc_cohort_update_existing(api_client: TestClient):
     
     cohort_id = query.upsert_sgc_cohort(engine, cohort)
     
-    # Insert another cohort with same name+uploaded_by (should trigger ON DUPLICATE KEY UPDATE)
+    # Update cohort by providing the ID
     updated_cohort = SGCCohort(
-        name="Test Cohort",  # Same name and uploaded_by
+        id=cohort_id,  # Provide ID to trigger update
+        name="Test Cohort",
         uploaded_by="testuser",
         total_sample_size=1500,  # Different values
         number_of_males=700,
@@ -63,6 +64,9 @@ def test_upsert_sgc_cohort_update_existing(api_client: TestClient):
     )
     
     updated_id = query.upsert_sgc_cohort(engine, updated_cohort)
+    
+    # Should return same ID
+    assert updated_id == cohort_id
     
     # Verify there's still only one record and values were updated
     with engine.connect() as conn:
@@ -111,6 +115,36 @@ def test_upsert_sgc_cohort_invalid_data(api_client: TestClient):
             number_of_males=500,
             number_of_females=500
         )
+
+
+def test_upsert_sgc_cohort_duplicate_name_error(api_client: TestClient):
+    """Test that duplicate name for same user raises IntegrityError when no ID provided"""
+    engine = DataRegistryReadWriteDB().get_engine()
+    
+    # Insert initial cohort
+    cohort = SGCCohort(
+        name="Duplicate Name Test",
+        uploaded_by="testuser",
+        total_sample_size=1000,
+        number_of_males=500,
+        number_of_females=500
+    )
+    
+    cohort_id = query.upsert_sgc_cohort(engine, cohort)
+    assert cohort_id is not None
+    
+    # Try to create another cohort with same name+uploaded_by (no ID provided)
+    duplicate_cohort = SGCCohort(
+        name="Duplicate Name Test",  # Same name and uploaded_by
+        uploaded_by="testuser",
+        total_sample_size=1500,
+        number_of_males=700,
+        number_of_females=800
+    )
+    
+    # Should raise IntegrityError
+    with pytest.raises(IntegrityError):
+        query.upsert_sgc_cohort(engine, duplicate_cohort)
 
 
 def test_upsert_sgc_cohort_different_users_same_name(api_client: TestClient):
