@@ -739,30 +739,44 @@ def insert_sgc_phenotype(engine, phenotype_code: str, description: str):
 
 def upsert_sgc_cohort(engine, cohort) -> str:
     """
-    Upsert (insert or update) an SGC cohort record using ON DUPLICATE KEY UPDATE.
+    Upsert (insert or update) an SGC cohort record.
+    - If cohort.id is provided, UPDATE existing record
+    - If cohort.id is None, INSERT new record (will error on duplicate name/uploaded_by)
     Takes an SGCCohort object and returns the cohort ID (as hex string without dashes).
     """
     with engine.connect() as conn:
-        # Generate ID if not provided
-        cohort_id = str(cohort.id).replace('-', '') if cohort.id else str(uuid.uuid4()).replace('-', '')
+        if cohort.id:
+            # Update existing cohort
+            cohort_id = str(cohort.id).replace('-', '')
+            conn.execute(text("""
+                UPDATE sgc_cohorts 
+                SET name = :name, total_sample_size = :total_sample_size, 
+                    number_of_males = :number_of_males, number_of_females = :number_of_females,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = :id AND uploaded_by = :uploaded_by
+            """), {
+                'id': cohort_id,
+                'name': cohort.name,
+                'uploaded_by': cohort.uploaded_by,
+                'total_sample_size': cohort.total_sample_size,
+                'number_of_males': cohort.number_of_males,
+                'number_of_females': cohort.number_of_females
+            })
+        else:
+            # Insert new cohort
+            cohort_id = str(uuid.uuid4()).replace('-', '')
+            conn.execute(text("""
+                INSERT INTO sgc_cohorts (id, name, uploaded_by, total_sample_size, number_of_males, number_of_females)
+                VALUES (:id, :name, :uploaded_by, :total_sample_size, :number_of_males, :number_of_females)
+            """), {
+                'id': cohort_id,
+                'name': cohort.name,
+                'uploaded_by': cohort.uploaded_by,
+                'total_sample_size': cohort.total_sample_size,
+                'number_of_males': cohort.number_of_males,
+                'number_of_females': cohort.number_of_females
+            })
         
-        conn.execute(text("""
-            INSERT INTO sgc_cohorts (id, name, uploaded_by, total_sample_size, number_of_males, number_of_females)
-            VALUES (:id, :name, :uploaded_by, :total_sample_size, :number_of_males, :number_of_females)
-            ON DUPLICATE KEY UPDATE
-                total_sample_size = VALUES(total_sample_size),
-                number_of_males = VALUES(number_of_males),
-                number_of_females = VALUES(number_of_females),
-                name = VALUES(name),
-                updated_at = CURRENT_TIMESTAMP
-        """), {
-            'id': cohort_id,
-            'name': cohort.name,
-            'uploaded_by': cohort.uploaded_by,
-            'total_sample_size': cohort.total_sample_size,
-            'number_of_males': cohort.number_of_males,
-            'number_of_females': cohort.number_of_females
-        })
         conn.commit()
         return cohort_id
 
@@ -840,6 +854,17 @@ def delete_sgc_cohort_file(engine, file_id: str) -> bool:
                             {'file_id': file_id})
         conn.commit()
         return result.rowcount > 0
+
+
+def get_sgc_cohort_file_by_id(engine, file_id: str):
+    """Get a single SGC cohort file by ID."""
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+            SELECT id, cohort_id, file_type, file_path, file_name, file_size, uploaded_at
+            FROM sgc_cohort_files 
+            WHERE id = :file_id
+        """), {'file_id': file_id}).mappings().first()
+        return dict(result) if result else None
 
 
 def get_sgc_cohorts_with_files(engine, uploaded_by: str = None):

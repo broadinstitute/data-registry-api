@@ -368,18 +368,32 @@ async def delete_sgc_phenotype(phenotype_code: str, user: User = Depends(get_sgc
 
 @router.post("/sgc/cohorts")
 async def upsert_sgc_cohort(cohort: SGCCohort, user: User = Depends(get_sgc_user)):
+    from sqlalchemy.exc import IntegrityError
+    
     try:
         # Set uploaded_by to current user if not provided
         if not cohort.uploaded_by:
             cohort.uploaded_by = user.user_name
             
         cohort_id = query.upsert_sgc_cohort(engine, cohort)
+        
+        # Determine if this was a create or update based on whether ID was provided
+        was_update = cohort.id is not None
+        message = "Cohort updated successfully" if was_update else "Cohort created successfully"
+        
         return {
-            "message": "Cohort saved successfully",
+            "message": message,
             "cohort_id": cohort_id,
             "name": cohort.name,
             "uploaded_by": cohort.uploaded_by
         }
+    except IntegrityError as e:
+        if "unique_cohort_name_uploader" in str(e) or "Duplicate entry" in str(e):
+            raise fastapi.HTTPException(
+                status_code=409, 
+                detail=f"A cohort named '{cohort.name}' already exists for user '{cohort.uploaded_by}'"
+            )
+        raise fastapi.HTTPException(status_code=500, detail=f"Database error: {str(e)}")
     except Exception as e:
         raise fastapi.HTTPException(status_code=500, detail=f"Error saving cohort: {str(e)}")
 
@@ -404,17 +418,12 @@ async def upload_and_create_sgc_cohort_file(
         content = await file.read()
         df = await file_utils.parse_file(io.StringIO(content.decode('utf-8')), file.filename)
         
-        # Validate file content
+        error_message = None
         if validation_type == "cases_controls":
             error_message = validate_sgc_cases_controls(df, mapping, is_sample=False)
         elif validation_type == "cooccurrence":
             error_message = validate_sgc_co_occurrence(df, mapping, is_sample=False)
-        else:
-            raise fastapi.HTTPException(
-                status_code=400,
-                detail="validation_type must be 'cases_controls' or 'cooccurrence'"
-            )
-        
+
         if error_message:
             raise fastapi.HTTPException(detail=error_message, status_code=400)
         
@@ -553,5 +562,50 @@ async def delete_sgc_cohort_file(file_id: str, user: User = Depends(get_sgc_user
         raise
     except Exception as e:
         raise fastapi.HTTPException(status_code=500, detail=f"Error deleting file: {str(e)}")
+
+
+@router.get("/sgc/cohort-files/{file_id}")
+async def download_sgc_cohort_file(file_id: str, user: User = Depends(get_sgc_user)):
+    """
+    Download an SGC cohort file.
+    - Users can download files from cohorts they uploaded
+    - Users with 'sgc-review-data' permission can download any file
+    Returns a redirect to a presigned S3 URL for the file download.
+    """
+    try:
+        # Get the file information
+        file_info = query.get_sgc_cohort_file_by_id(engine, file_id)
+        if not file_info:
+            raise fastapi.HTTPException(status_code=404, detail="File not found")
+        
+        # Get the owner of the file for permission checking
+        file_owner = query.get_sgc_cohort_file_owner(engine, file_id)
+        if not file_owner:
+            raise fastapi.HTTPException(status_code=404, detail="File not found")
+        
+        # Check permissions: either the user owns the file or has review permissions
+        if not (file_owner == user.user_name or check_review_permissions(user)):
+            raise fastapi.HTTPException(
+                status_code=403, 
+                detail="You can only download files from cohorts you uploaded"
+            )
+        
+        # Get the S3 path and create a presigned URL
+        s3_full_path = file_info['file_path']
+        # Strip s3://bucket/ prefix to get just the key
+        s3_path = s3_full_path.replace(f"s3://{s3.BASE_BUCKET}/", "")
+        presigned_url = s3.get_signed_url(s3.BASE_BUCKET, s3_path)
+        
+        # Return the presigned URL in response payload
+        return {
+            "presigned_url": presigned_url,
+            "file_name": file_info['file_name'],
+            "file_size": file_info['file_size']
+        }
+        
+    except fastapi.HTTPException:
+        raise
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Error downloading file: {str(e)}")
 
 
