@@ -13,7 +13,7 @@ import httpx
 
 from dataregistry.api import file_utils, s3, query
 from dataregistry.api.db import DataRegistryReadWriteDB
-from dataregistry.api.model import SGCPhenotype, SGCCohort, SGCCohortFile, User
+from dataregistry.api.model import SGCPhenotype, SGCCohort, SGCCohortFile, SGCCasesControlsMetadata, SGCCoOccurrenceMetadata, User
 from dataregistry.api.api import get_current_user
 
 router = fastapi.APIRouter()
@@ -238,6 +238,205 @@ def validate_sgc_co_occurrence(df: pd.DataFrame, header_mapping: Dict[str, str],
     return "; ".join(errors) if errors else None
 
 
+def extract_cases_controls_metadata(df: pd.DataFrame, header_mapping: Dict[str, str]) -> SGCCasesControlsMetadata:
+    """Extract metadata from a cases/controls file."""
+    phenotype_col = header_mapping['phenotype']
+    cases_col = header_mapping['cases']
+    controls_col = header_mapping['controls']
+    
+    # Get distinct phenotypes
+    distinct_phenotypes = df[phenotype_col].dropna().unique().tolist()
+    
+    # Calculate totals
+    total_cases = pd.to_numeric(df[cases_col], errors='coerce').sum()
+    total_controls = pd.to_numeric(df[controls_col], errors='coerce').sum()
+    
+    return SGCCasesControlsMetadata(
+        file_id=None,  # Will be set when file is created
+        distinct_phenotypes=distinct_phenotypes,
+        total_cases=int(total_cases) if not pd.isna(total_cases) else 0,
+        total_controls=int(total_controls) if not pd.isna(total_controls) else 0
+    )
+
+
+def extract_cooccurrence_metadata(df: pd.DataFrame, header_mapping: Dict[str, str]) -> SGCCoOccurrenceMetadata:
+    """Extract metadata from a co-occurrence file."""
+    phenotype1_col = header_mapping['phenotype1']
+    phenotype2_col = header_mapping['phenotype2']
+    cooccurrence_count_col = header_mapping['cooccurrence_count']
+    
+    # Get all distinct phenotypes from both columns
+    phenotypes1 = set(df[phenotype1_col].dropna().unique())
+    phenotypes2 = set(df[phenotype2_col].dropna().unique())
+    distinct_phenotypes = sorted(phenotypes1.union(phenotypes2))
+    
+    # Calculate totals
+    total_pairs = len(df)
+    total_cooccurrence_count = pd.to_numeric(df[cooccurrence_count_col], errors='coerce').sum()
+    
+    return SGCCoOccurrenceMetadata(
+        file_id=None,  # Will be set when file is created
+        distinct_phenotypes=distinct_phenotypes,
+        total_pairs=total_pairs,
+        total_cooccurrence_count=int(total_cooccurrence_count) if not pd.isna(total_cooccurrence_count) else 0
+    )
+
+
+def extract_cooccurrence_phenotypes(df: pd.DataFrame, header_mapping: Dict[str, str]) -> List[str]:
+    """Extract distinct phenotypes from a co-occurrence file."""
+    phenotype1_col = header_mapping['phenotype1']
+    phenotype2_col = header_mapping['phenotype2']
+    
+    # Get all distinct phenotypes from both columns
+    phenotypes1 = set(df[phenotype1_col].dropna().unique())
+    phenotypes2 = set(df[phenotype2_col].dropna().unique())
+    return sorted(phenotypes1.union(phenotypes2))
+
+
+def generate_validation_warnings(cohort: SGCCohort, cases_controls_metadata: Optional[SGCCasesControlsMetadata], 
+                                cooccurrence_phenotypes: Optional[List[str]] = None,
+                                cases_controls_df: Optional[pd.DataFrame] = None,
+                                cooccurrence_df: Optional[pd.DataFrame] = None,
+                                cases_controls_mapping: Optional[Dict[str, str]] = None,
+                                cooccurrence_mapping: Optional[Dict[str, str]] = None) -> List[str]:
+    """
+    Generate warnings for SGC cohort files based on cohort metadata and file contents.
+    These are non-blocking warnings that don't prevent file upload.
+    """
+    warnings = []
+    
+    if not cases_controls_metadata:
+        return warnings  # No cases/controls file to validate against
+    
+    # 1. Check cases + controls vs total sample size
+    file_total = cases_controls_metadata.total_cases + cases_controls_metadata.total_controls
+    if file_total != cohort.total_sample_size:
+        warnings.append(
+            f"Cases + Controls ({file_total}) does not equal total cohort sample size ({cohort.total_sample_size})"
+        )
+    
+    # 2. Check Female + Male counts vs total cases/controls
+    cohort_total_gender = cohort.number_of_males + cohort.number_of_females
+    if cohort_total_gender != cohort.total_sample_size:
+        warnings.append(
+            f"Male count ({cohort.number_of_males}) + Female count ({cohort.number_of_females}) = {cohort_total_gender} "
+            f"does not equal total sample size ({cohort.total_sample_size})"
+        )
+    
+    if cooccurrence_metadata and cooccurrence_df is not None and cases_controls_df is not None:
+        # 3. Check for co-occurrence phenotypes not in cases/controls file
+        cases_phenotypes = set(cases_controls_metadata.distinct_phenotypes)
+        cooccurrence_phenotypes = set(cooccurrence_metadata.distinct_phenotypes)
+        missing_from_cases = cooccurrence_phenotypes - cases_phenotypes
+        
+        if missing_from_cases:
+            missing_list = sorted(list(missing_from_cases))[:5]  # Show first 5
+            warning_msg = f"Co-occurrence phenotypes not found in cases/controls file: {missing_list}"
+            if len(missing_from_cases) > 5:
+                warning_msg += f" (and {len(missing_from_cases) - 5} more)"
+            warnings.append(warning_msg)
+        
+        # 4. Check co-occurrence numbers are smaller than case numbers for relevant phenotypes
+        if cases_controls_mapping and cooccurrence_mapping:
+            cases_col = cases_controls_mapping['cases']
+            phenotype_col = cases_controls_mapping['phenotype'] 
+            cooccur_col = cooccurrence_mapping['cooccurrence_count']
+            phenotype1_col = cooccurrence_mapping['phenotype1']
+            phenotype2_col = cooccurrence_mapping['phenotype2']
+            
+            # Create a lookup of phenotype -> case count
+            case_counts = {}
+            for _, row in cases_controls_df.iterrows():
+                phenotype = row[phenotype_col]
+                cases = pd.to_numeric(row[cases_col], errors='coerce')
+                if not pd.isna(cases):
+                    case_counts[phenotype] = int(cases)
+            
+            # Check each co-occurrence against individual case counts
+            violations = []
+            for _, row in cooccurrence_df.iterrows():
+                phenotype1 = row[phenotype1_col]
+                phenotype2 = row[phenotype2_col]
+                cooccur_count = pd.to_numeric(row[cooccur_col], errors='coerce')
+                
+                if not pd.isna(cooccur_count) and int(cooccur_count) > 0:
+                    cooccur_count = int(cooccur_count)
+                    # Check against both phenotypes' case counts
+                    for phenotype in [phenotype1, phenotype2]:
+                        if phenotype in case_counts:
+                            if cooccur_count > case_counts[phenotype]:
+                                violations.append(f"({phenotype1}, {phenotype2}): {cooccur_count} > {phenotype} cases ({case_counts[phenotype]})")
+            
+            if violations:
+                sample_violations = violations[:3]  # Show first 3
+                warning_msg = f"Co-occurrence counts exceed individual case counts: {sample_violations}"
+                if len(violations) > 3:
+                    warning_msg += f" (and {len(violations) - 3} more)"
+                warnings.append(warning_msg)
+        
+        # 5. Check for missing phenotypes (in cases/controls but not co-occurrence)
+        missing_from_cooccurrence = cases_phenotypes - cooccurrence_phenotypes
+        if missing_from_cooccurrence:
+            missing_list = sorted(list(missing_from_cooccurrence))[:5]
+            warning_msg = f"Phenotypes missing from co-occurrence file: {missing_list}"
+            if len(missing_from_cooccurrence) > 5:
+                warning_msg += f" (and {len(missing_from_cooccurrence) - 5} more)"
+            warnings.append(warning_msg)
+        
+        # 6. Check for missing phenotype pairs from co-occurrence file
+        # Generate all possible pairs from cases/controls phenotypes
+        cases_phenotype_list = sorted(cases_phenotypes)
+        all_possible_pairs = set()
+        for i in range(len(cases_phenotype_list)):
+            for j in range(i + 1, len(cases_phenotype_list)):
+                pair = tuple(sorted([cases_phenotype_list[i], cases_phenotype_list[j]]))
+                all_possible_pairs.add(pair)
+        
+        # Get actual pairs from co-occurrence file
+        if cooccurrence_mapping:
+            phenotype1_col = cooccurrence_mapping['phenotype1']
+            phenotype2_col = cooccurrence_mapping['phenotype2']
+            actual_pairs = set()
+            for _, row in cooccurrence_df.iterrows():
+                pair = tuple(sorted([row[phenotype1_col], row[phenotype2_col]]))
+                actual_pairs.add(pair)
+            
+            missing_pairs = all_possible_pairs - actual_pairs
+            if missing_pairs:
+                missing_list = [f"({p[0]}, {p[1]})" for p in sorted(missing_pairs)[:5]]
+                warning_msg = f"Missing phenotype pairs from co-occurrence file: {missing_list}"
+                if len(missing_pairs) > 5:
+                    warning_msg += f" (and {len(missing_pairs) - 5} more)"
+                warnings.append(warning_msg)
+    
+    elif cooccurrence_metadata:
+        # Basic checks without access to full dataframe data
+        cases_phenotypes = set(cases_controls_metadata.distinct_phenotypes)
+        cooccurrence_phenotypes = set(cooccurrence_metadata.distinct_phenotypes)
+        missing_from_cases = cooccurrence_phenotypes - cases_phenotypes
+        
+        if missing_from_cases:
+            missing_list = sorted(list(missing_from_cases))[:5]
+            warning_msg = f"Co-occurrence phenotypes not found in cases/controls file: {missing_list}"
+            if len(missing_from_cases) > 5:
+                warning_msg += f" (and {len(missing_from_cases) - 5} more)"
+            warnings.append(warning_msg)
+            
+        missing_from_cooccurrence = cases_phenotypes - cooccurrence_phenotypes
+        if missing_from_cooccurrence:
+            missing_list = sorted(list(missing_from_cooccurrence))[:5]
+            warning_msg = f"Phenotypes missing from co-occurrence file: {missing_list}"
+            if len(missing_from_cooccurrence) > 5:
+                warning_msg += f" (and {len(missing_from_cooccurrence) - 5} more)"
+            warnings.append(warning_msg)
+    
+    else:
+        # Flag that co-occurrence file is missing entirely
+        warnings.append("Co-occurrence file not provided")
+    
+    return warnings
+
+
 @router.post("/sgc-preview-cases-controls")
 async def preview_sgc_cases_controls(file: UploadFile, header_mapping: SGCCasesControlsMapping = Body(...)):
     contents = await file.read(100)
@@ -411,10 +610,8 @@ async def upload_and_create_sgc_cohort_file(
     Combined endpoint that validates file, uploads to S3, and creates cohort file record.
     """
     try:
-        # Parse the column mapping JSON
         mapping = json.loads(column_mapping)
         
-        # Read and validate file content
         content = await file.read()
         df = await file_utils.parse_file(io.StringIO(content.decode('utf-8')), file.filename)
         
@@ -454,6 +651,16 @@ async def upload_and_create_sgc_cohort_file(
         )
         
         file_id = query.insert_sgc_cohort_file(engine, cohort_file)
+        
+        # Extract and store metadata based on file type
+        if validation_type == "cases_controls":
+            metadata = extract_cases_controls_metadata(df, mapping)
+            metadata.file_id = file_id
+            query.insert_sgc_cases_controls_metadata(engine, metadata)
+        elif validation_type == "cooccurrence":
+            metadata = extract_cooccurrence_metadata(df, mapping)
+            metadata.file_id = file_id
+            query.insert_sgc_cooccurrence_metadata(engine, metadata)
         
         return {
             "message": "File validated, uploaded, and saved successfully",
@@ -551,6 +758,11 @@ async def delete_sgc_cohort_file(file_id: str, user: User = Depends(get_sgc_user
                 status_code=403, 
                 detail="You can only delete files from cohorts you uploaded"
             )
+        
+        # Delete associated metadata first (foreign key will handle cascade, but let's be explicit)
+        # Try to delete both types of metadata (only one will exist per file)
+        query.delete_sgc_cases_controls_metadata(engine, file_id)
+        query.delete_sgc_cooccurrence_metadata(engine, file_id)
         
         # Delete the file
         deleted = query.delete_sgc_cohort_file(engine, file_id)

@@ -744,7 +744,11 @@ def upsert_sgc_cohort(engine, cohort) -> str:
     - If cohort.id is None, INSERT new record (will error on duplicate name/uploaded_by)
     Takes an SGCCohort object and returns the cohort ID (as hex string without dashes).
     """
+    import json
+    
     with engine.connect() as conn:
+        cohort_metadata_json = json.dumps(cohort.cohort_metadata) if cohort.cohort_metadata else None
+        
         if cohort.id:
             # Update existing cohort
             cohort_id = str(cohort.id).replace('-', '')
@@ -752,7 +756,7 @@ def upsert_sgc_cohort(engine, cohort) -> str:
                 UPDATE sgc_cohorts 
                 SET name = :name, total_sample_size = :total_sample_size, 
                     number_of_males = :number_of_males, number_of_females = :number_of_females,
-                    updated_at = CURRENT_TIMESTAMP
+                    cohort_metadata = :cohort_metadata, updated_at = CURRENT_TIMESTAMP
                 WHERE id = :id AND uploaded_by = :uploaded_by
             """), {
                 'id': cohort_id,
@@ -760,21 +764,23 @@ def upsert_sgc_cohort(engine, cohort) -> str:
                 'uploaded_by': cohort.uploaded_by,
                 'total_sample_size': cohort.total_sample_size,
                 'number_of_males': cohort.number_of_males,
-                'number_of_females': cohort.number_of_females
+                'number_of_females': cohort.number_of_females,
+                'cohort_metadata': cohort_metadata_json
             })
         else:
             # Insert new cohort
             cohort_id = str(uuid.uuid4()).replace('-', '')
             conn.execute(text("""
-                INSERT INTO sgc_cohorts (id, name, uploaded_by, total_sample_size, number_of_males, number_of_females)
-                VALUES (:id, :name, :uploaded_by, :total_sample_size, :number_of_males, :number_of_females)
+                INSERT INTO sgc_cohorts (id, name, uploaded_by, total_sample_size, number_of_males, number_of_females, cohort_metadata)
+                VALUES (:id, :name, :uploaded_by, :total_sample_size, :number_of_males, :number_of_females, :cohort_metadata)
             """), {
                 'id': cohort_id,
                 'name': cohort.name,
                 'uploaded_by': cohort.uploaded_by,
                 'total_sample_size': cohort.total_sample_size,
                 'number_of_males': cohort.number_of_males,
-                'number_of_females': cohort.number_of_females
+                'number_of_females': cohort.number_of_females,
+                'cohort_metadata': cohort_metadata_json
             })
         
         conn.commit()
@@ -820,11 +826,13 @@ def get_sgc_cohort_files(engine, cohort_id: str):
 
 def get_sgc_cohort_by_id(engine, cohort_id: str):
     """Get a single SGC cohort by ID with its associated files."""
+    import json
+    
     with engine.connect() as conn:
         result = conn.execute(text("""
             SELECT 
                 c.id as cohort_id, c.name, c.uploaded_by, c.total_sample_size, 
-                c.number_of_males, c.number_of_females, c.created_at, c.updated_at,
+                c.number_of_males, c.number_of_females, c.cohort_metadata, c.created_at, c.updated_at,
                 f.id as file_id, f.file_type, f.file_path, f.file_name, 
                 f.file_size, f.uploaded_at as file_uploaded_at
             FROM sgc_cohorts c
@@ -832,7 +840,17 @@ def get_sgc_cohort_by_id(engine, cohort_id: str):
             WHERE c.id = :cohort_id
             ORDER BY f.file_type
         """), {'cohort_id': cohort_id}).mappings().all()
-        return [dict(row) for row in result] if result else None
+        
+        if result:
+            # Parse JSON metadata for each row
+            parsed_result = []
+            for row in result:
+                row_dict = dict(row)
+                if row_dict['cohort_metadata']:
+                    row_dict['cohort_metadata'] = json.loads(row_dict['cohort_metadata'])
+                parsed_result.append(row_dict)
+            return parsed_result
+        return None
 
 
 def get_sgc_cohort_file_owner(engine, file_id: str) -> str:
@@ -873,11 +891,13 @@ def get_sgc_cohorts_with_files(engine, uploaded_by: str = None):
     If uploaded_by is provided, filter by that user. Otherwise return all cohorts.
     Returns a list of cohorts with their files nested.
     """
+    import json
+    
     with engine.connect() as conn:
         query = """
             SELECT 
                 c.id as cohort_id, c.name, c.uploaded_by, c.total_sample_size, 
-                c.number_of_males, c.number_of_females, c.created_at, c.updated_at,
+                c.number_of_males, c.number_of_females, c.cohort_metadata, c.created_at, c.updated_at,
                 f.id as file_id, f.file_type, f.file_path, f.file_name, 
                 f.file_size, f.uploaded_at as file_uploaded_at
             FROM sgc_cohorts c
@@ -899,6 +919,11 @@ def get_sgc_cohorts_with_files(engine, uploaded_by: str = None):
             cohort_id = row['cohort_id']
             
             if cohort_id not in cohorts_dict:
+                # Parse JSON metadata
+                cohort_metadata = None
+                if row['cohort_metadata']:
+                    cohort_metadata = json.loads(row['cohort_metadata'])
+                    
                 cohorts_dict[cohort_id] = {
                     'id': row['cohort_id'],
                     'name': row['name'],
@@ -906,6 +931,7 @@ def get_sgc_cohorts_with_files(engine, uploaded_by: str = None):
                     'total_sample_size': row['total_sample_size'],
                     'number_of_males': row['number_of_males'],
                     'number_of_females': row['number_of_females'],
+                    'cohort_metadata': cohort_metadata,
                     'created_at': row['created_at'],
                     'updated_at': row['updated_at'],
                     'files': []
@@ -929,3 +955,123 @@ def get_sgc_cohorts_with_files(engine, uploaded_by: str = None):
             cohort['status'] = 'complete' if file_count == 3 else 'incomplete'
         
         return list(cohorts_dict.values())
+
+
+def insert_sgc_cases_controls_metadata(engine, metadata) -> str:
+    """
+    Insert SGC cases/controls metadata record.
+    Takes an SGCCasesControlsMetadata object and returns the metadata ID (as hex string without dashes).
+    """
+    import uuid
+    import json
+    
+    with engine.connect() as conn:
+        # Generate ID if not provided
+        metadata_id = str(metadata.id).replace('-', '') if metadata.id else str(uuid.uuid4()).replace('-', '')
+        file_id_hex = str(metadata.file_id).replace('-', '')
+        
+        conn.execute(text("""
+            INSERT INTO sgc_cases_controls_metadata (id, file_id, distinct_phenotypes, total_cases, total_controls)
+            VALUES (:id, :file_id, :distinct_phenotypes, :total_cases, :total_controls)
+        """), {
+            'id': metadata_id,
+            'file_id': file_id_hex,
+            'distinct_phenotypes': json.dumps(metadata.distinct_phenotypes),
+            'total_cases': metadata.total_cases,
+            'total_controls': metadata.total_controls
+        })
+        conn.commit()
+        return metadata_id
+
+
+def get_sgc_cases_controls_metadata(engine, file_id: str):
+    """Get SGC cases/controls metadata by file ID."""
+    import json
+    
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+            SELECT id, file_id, distinct_phenotypes, total_cases, total_controls, created_at
+            FROM sgc_cases_controls_metadata 
+            WHERE file_id = :file_id
+        """), {"file_id": file_id}).fetchone()
+        
+        if result:
+            return {
+                'id': result[0],
+                'file_id': result[1],
+                'distinct_phenotypes': json.loads(result[2]),
+                'total_cases': result[3],
+                'total_controls': result[4],
+                'created_at': result[5]
+            }
+        return None
+
+
+def delete_sgc_cases_controls_metadata(engine, file_id: str) -> bool:
+    """Delete SGC cases/controls metadata by file ID. Returns True if deleted, False if not found."""
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+            DELETE FROM sgc_cases_controls_metadata WHERE file_id = :file_id
+        """), {"file_id": file_id})
+        conn.commit()
+        return result.rowcount > 0
+
+
+def insert_sgc_cooccurrence_metadata(engine, metadata) -> str:
+    """
+    Insert SGC co-occurrence metadata record.
+    Takes an SGCCoOccurrenceMetadata object and returns the metadata ID (as hex string without dashes).
+    """
+    import uuid
+    import json
+    
+    with engine.connect() as conn:
+        # Generate ID if not provided
+        metadata_id = str(metadata.id).replace('-', '') if metadata.id else str(uuid.uuid4()).replace('-', '')
+        file_id_hex = str(metadata.file_id).replace('-', '')
+        
+        conn.execute(text("""
+            INSERT INTO sgc_cooccurrence_metadata (id, file_id, distinct_phenotypes, total_pairs, total_cooccurrence_count)
+            VALUES (:id, :file_id, :distinct_phenotypes, :total_pairs, :total_cooccurrence_count)
+        """), {
+            'id': metadata_id,
+            'file_id': file_id_hex,
+            'distinct_phenotypes': json.dumps(metadata.distinct_phenotypes),
+            'total_pairs': metadata.total_pairs,
+            'total_cooccurrence_count': metadata.total_cooccurrence_count
+        })
+        conn.commit()
+        return metadata_id
+
+
+def get_sgc_cooccurrence_metadata(engine, file_id: str):
+    """Get SGC co-occurrence metadata by file ID."""
+    import json
+    
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+            SELECT id, file_id, distinct_phenotypes, total_pairs, total_cooccurrence_count, created_at
+            FROM sgc_cooccurrence_metadata 
+            WHERE file_id = :file_id
+        """), {"file_id": file_id}).fetchone()
+        
+        if result:
+            return {
+                'id': result[0],
+                'file_id': result[1],
+                'distinct_phenotypes': json.loads(result[2]),
+                'total_pairs': result[3],
+                'total_cooccurrence_count': result[4],
+                'created_at': result[5]
+            }
+        return None
+
+
+def delete_sgc_cooccurrence_metadata(engine, file_id: str) -> bool:
+    """Delete SGC co-occurrence metadata by file ID. Returns True if deleted, False if not found."""
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+            DELETE FROM sgc_cooccurrence_metadata WHERE file_id = :file_id
+        """), {"file_id": file_id})
+        conn.commit()
+        return result.rowcount > 0

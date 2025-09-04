@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import Union, List
+from typing import Union, List, Dict
 from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field, Extra
@@ -285,6 +285,7 @@ class SGCCohort(BaseModel):
     total_sample_size: int
     number_of_males: int
     number_of_females: int
+    cohort_metadata: Union[Dict, None] = None
     created_at: Union[datetime, None] = None
     updated_at: Union[datetime, None] = None
 
@@ -297,6 +298,23 @@ class SGCCohortFile(BaseModel):
     file_name: str
     file_size: int
     uploaded_at: Union[datetime, None] = None
+
+
+class SGCCasesControlsMetadata(BaseModel):
+    id: Union[UUID, None] = None
+    file_id: Union[UUID, None] = None
+    distinct_phenotypes: List[str]  # Treated as set logically
+    total_cases: int
+    total_controls: int
+
+
+class SGCCoOccurrenceMetadata(BaseModel):
+    id: Union[UUID, None] = None
+    file_id: Union[UUID, None] = None
+    distinct_phenotypes: List[str]  # Treated as set logically
+    total_pairs: int
+    total_cooccurrence_count: int
+
 
 class FileUpload(BaseModel):
     id: UUID
