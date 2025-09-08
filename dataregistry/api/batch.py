@@ -26,6 +26,10 @@ def submit_and_await_job(engine, job_config, db_callback, identifier, is_qc=True
     if is_qc:
         from dataregistry.api import query
         query.record_qc_job_submission_time(engine, identifier)
+    else:
+        # For meta-analysis jobs, record timing
+        from dataregistry.api import query
+        query.record_meta_analysis_job_submission_time(engine, identifier)
 
     response = batch_client.submit_job(**job_config)
     job_id = response['jobId']

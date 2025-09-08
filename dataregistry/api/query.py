@@ -501,9 +501,18 @@ def record_qc_job_submission_time(engine, file_upload_id: str):
 
 
 
-def update_meta_analysis_log(engine, log: str, meta_analysis_id: str, status: str):
+def record_meta_analysis_job_submission_time(engine, meta_analysis_id: str):
+    """Record when a meta-analysis job is submitted to AWS Batch."""
     with engine.connect() as conn:
-        conn.execute(text("UPDATE meta_analyses set log=:log, status = :status where id = :meta_analysis_id"),
+        conn.execute(text("UPDATE meta_analyses SET job_submitted_at=NOW() WHERE id=:meta_analysis_id"),
+                     {'meta_analysis_id': meta_analysis_id.replace('-', '')})
+        conn.commit()
+
+
+def update_meta_analysis_log(engine, log: str, meta_analysis_id: str, status: str):
+    """Update meta-analysis log and mark job as completed."""
+    with engine.connect() as conn:
+        conn.execute(text("UPDATE meta_analyses set log=:log, status = :status, job_completed_at=NOW() where id = :meta_analysis_id"),
                      {'log': log, 'status': status,
                       'meta_analysis_id': meta_analysis_id.replace('-', '')})
         conn.commit()
