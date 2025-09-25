@@ -308,6 +308,7 @@ class SGCCasesControlsMetadata(BaseModel):
     distinct_phenotypes: List[str]  # Treated as set logically
     total_cases: int
     total_controls: int
+    phenotype_counts: Dict[str, Dict[str, int]] = {}  # {phenotype: {"cases": count, "controls": count}}
 
 
 class SGCCoOccurrenceMetadata(BaseModel):
@@ -316,6 +317,7 @@ class SGCCoOccurrenceMetadata(BaseModel):
     distinct_phenotypes: List[str]  # Treated as set logically
     total_pairs: int
     total_cooccurrence_count: int
+    phenotype_pair_counts: Dict[str, int] = {}  # {"phenotype1|phenotype2": count}
 
 
 class FileUpload(BaseModel):

@@ -83,7 +83,7 @@ class SGCCoOccurrenceMapping(BaseModel):
 
 
 
-def validate_sgc_cases_controls(df: pd.DataFrame, header_mapping: Dict[str, str], is_sample: bool = True) -> Optional[str]:
+def validate_sgc_cases_controls(df: pd.DataFrame, header_mapping: Dict[str, str]) -> Optional[str]:
     required_cols = [header_mapping['phenotype'],
                     header_mapping['cases'],
                     header_mapping['controls']]
@@ -160,7 +160,7 @@ def validate_sgc_cases_controls(df: pd.DataFrame, header_mapping: Dict[str, str]
     return "; ".join(errors) if errors else None
 
 
-def validate_sgc_co_occurrence(df: pd.DataFrame, header_mapping: Dict[str, str], is_sample: bool = True) -> Optional[str]:
+def validate_sgc_co_occurrence(df: pd.DataFrame, header_mapping: Dict[str, str]) -> Optional[str]:
     required_cols = [header_mapping['phenotype1'],
                     header_mapping['phenotype2'],
                     header_mapping['cooccurrence_count']]
@@ -249,19 +249,34 @@ def extract_cases_controls_metadata(df: pd.DataFrame, header_mapping: Dict[str, 
     phenotype_col = header_mapping['phenotype']
     cases_col = header_mapping['cases']
     controls_col = header_mapping['controls']
-    
+
     # Get distinct phenotypes
     distinct_phenotypes = df[phenotype_col].dropna().unique().tolist()
-    
+
     # Calculate totals
     total_cases = pd.to_numeric(df[cases_col], errors='coerce').sum()
     total_controls = pd.to_numeric(df[controls_col], errors='coerce').sum()
-    
+
+    # Extract per-phenotype counts
+    phenotype_counts = {}
+    for _, row in df.iterrows():
+        phenotype = row[phenotype_col]
+        if pd.notna(phenotype):
+            cases_count = pd.to_numeric(row[cases_col], errors='coerce')
+            controls_count = pd.to_numeric(row[controls_col], errors='coerce')
+
+            if not pd.isna(cases_count) and not pd.isna(controls_count):
+                phenotype_counts[phenotype] = {
+                    "cases": int(cases_count),
+                    "controls": int(controls_count)
+                }
+
     return SGCCasesControlsMetadata(
         file_id=None,  # Will be set when file is created
         distinct_phenotypes=distinct_phenotypes,
         total_cases=int(total_cases) if not pd.isna(total_cases) else 0,
-        total_controls=int(total_controls) if not pd.isna(total_controls) else 0
+        total_controls=int(total_controls) if not pd.isna(total_controls) else 0,
+        phenotype_counts=phenotype_counts
     )
 
 
@@ -270,21 +285,36 @@ def extract_cooccurrence_metadata(df: pd.DataFrame, header_mapping: Dict[str, st
     phenotype1_col = header_mapping['phenotype1']
     phenotype2_col = header_mapping['phenotype2']
     cooccurrence_count_col = header_mapping['cooccurrence_count']
-    
+
     # Get all distinct phenotypes from both columns
     phenotypes1 = set(df[phenotype1_col].dropna().unique())
     phenotypes2 = set(df[phenotype2_col].dropna().unique())
     distinct_phenotypes = sorted(phenotypes1.union(phenotypes2))
-    
+
     # Calculate totals
     total_pairs = len(df)
     total_cooccurrence_count = pd.to_numeric(df[cooccurrence_count_col], errors='coerce').sum()
-    
+
+    # Extract per-phenotype-pair counts
+    phenotype_pair_counts = {}
+    for _, row in df.iterrows():
+        phenotype1 = row[phenotype1_col]
+        phenotype2 = row[phenotype2_col]
+        cooccur_count = row[cooccurrence_count_col]
+
+        if pd.notna(phenotype1) and pd.notna(phenotype2) and pd.notna(cooccur_count):
+            # Create standardized pair key (sorted order)
+            pair_key = '|'.join(sorted([str(phenotype1), str(phenotype2)]))
+            cooccur_count_int = pd.to_numeric(cooccur_count, errors='coerce')
+            if not pd.isna(cooccur_count_int):
+                phenotype_pair_counts[pair_key] = int(cooccur_count_int)
+
     return SGCCoOccurrenceMetadata(
         file_id=None,  # Will be set when file is created
         distinct_phenotypes=distinct_phenotypes,
         total_pairs=total_pairs,
-        total_cooccurrence_count=int(total_cooccurrence_count) if not pd.isna(total_cooccurrence_count) else 0
+        total_cooccurrence_count=int(total_cooccurrence_count) if not pd.isna(total_cooccurrence_count) else 0,
+        phenotype_pair_counts=phenotype_pair_counts
     )
 
 
@@ -393,7 +423,34 @@ def validate_cases_controls_file_consistency(cohort_id: str) -> Dict[str, any]:
         
         if both_total != cohort_total_count:
             errors.append(f"Both file total ({both_total}) does not match cohort total sample size ({cohort_total_count})")
-        
+
+        # Per-phenotype count validation: male + female should equal both for each phenotype
+        if all(file_type in metadata_by_type for file_type in ['cases_controls_male', 'cases_controls_female', 'cases_controls_both']):
+            male_phenotype_counts = metadata_by_type['cases_controls_male'].get('phenotype_counts', {})
+            female_phenotype_counts = metadata_by_type['cases_controls_female'].get('phenotype_counts', {})
+            both_phenotype_counts = metadata_by_type['cases_controls_both'].get('phenotype_counts', {})
+
+            # Get all phenotypes that appear in the both file
+            for phenotype in both_phenotype_counts:
+                both_cases = both_phenotype_counts[phenotype].get('cases', 0)
+                both_controls = both_phenotype_counts[phenotype].get('controls', 0)
+
+                # Calculate expected totals from male + female files
+                male_cases = male_phenotype_counts.get(phenotype, {}).get('cases', 0)
+                male_controls = male_phenotype_counts.get(phenotype, {}).get('controls', 0)
+                female_cases = female_phenotype_counts.get(phenotype, {}).get('cases', 0)
+                female_controls = female_phenotype_counts.get(phenotype, {}).get('controls', 0)
+
+                expected_cases = male_cases + female_cases
+                expected_controls = male_controls + female_controls
+
+                # Check if totals match
+                if both_cases != expected_cases:
+                    errors.append(f"Phenotype '{phenotype}': Both file cases ({both_cases}) != Male + Female cases ({expected_cases})")
+
+                if both_controls != expected_controls:
+                    errors.append(f"Phenotype '{phenotype}': Both file controls ({both_controls}) != Male + Female controls ({expected_controls})")
+
         return {
             "errors": errors,
             "warnings": warnings,
@@ -414,6 +471,236 @@ def validate_cases_controls_file_consistency(cohort_id: str) -> Dict[str, any]:
             "errors": [f"Error during cross-file validation: {str(e)}"],
             "warnings": [],
             "files_found": list(files_by_type.keys()) if 'files_by_type' in locals() else []
+        }
+
+
+def validate_cooccurrence_file_consistency(cohort_id: str) -> Dict[str, any]:
+    """
+    Validate consistency across the three co-occurrence files for a cohort.
+    Returns validation results with errors and warnings.
+    """
+    errors = []
+    warnings = []
+
+    try:
+        # Get all files for this cohort
+        cohort_files = query.get_sgc_cohort_by_id(engine, cohort_id)
+        if not cohort_files:
+            return {"errors": ["Cohort not found"], "warnings": [], "files_found": {}}
+
+        # Group co-occurrence files by type and get their metadata
+        files_by_type = {}
+        metadata_by_type = {}
+
+        for file_data in cohort_files:
+            if file_data.get('file_type') and file_data['file_type'].startswith('cooccurrence'):
+                file_type = file_data['file_type']
+                files_by_type[file_type] = file_data
+
+                # Get metadata for this file
+                if file_data.get('file_id'):
+                    try:
+                        cooccur_metadata = query.get_sgc_cooccurrence_metadata(engine, file_data['file_id'])
+                        if cooccur_metadata:
+                            metadata_by_type[file_type] = cooccur_metadata[0] if isinstance(cooccur_metadata, list) else cooccur_metadata
+                    except Exception as e:
+                        warnings.append(f"Could not retrieve metadata for {file_type}: {str(e)}")
+
+        # Check which file types we have
+        required_types = {'cooccurrence_male', 'cooccurrence_female', 'cooccurrence_both'}
+        available_types = set(files_by_type.keys())
+        missing_types = required_types - available_types
+
+        if missing_types:
+            return {
+                "errors": [],
+                "warnings": [f"Missing file types for complete validation: {sorted(list(missing_types))}"],
+                "files_found": list(available_types)
+            }
+
+        # Get cohort info for reference
+        cohort_info = cohort_files[0]  # First row contains cohort data
+
+        # Validate phenotype consistency across co-occurrence files
+        male_phenotypes = set(metadata_by_type['cooccurrence_male'].get('distinct_phenotypes', []))
+        female_phenotypes = set(metadata_by_type['cooccurrence_female'].get('distinct_phenotypes', []))
+        both_phenotypes = set(metadata_by_type['cooccurrence_both'].get('distinct_phenotypes', []))
+
+        # Combined phenotypes from male + female should match 'both' phenotypes
+        combined_phenotypes = male_phenotypes.union(female_phenotypes)
+        if combined_phenotypes != both_phenotypes:
+            missing_from_both = combined_phenotypes - both_phenotypes
+            extra_in_both = both_phenotypes - combined_phenotypes
+
+            if missing_from_both:
+                sample_missing = sorted(list(missing_from_both))[:5]
+                error_msg = f"Phenotypes in male/female co-occurrence files but missing from 'both' file: {sample_missing}"
+                if len(missing_from_both) > 5:
+                    error_msg += f" (and {len(missing_from_both) - 5} more)"
+                errors.append(error_msg)
+
+            if extra_in_both:
+                sample_extra = sorted(list(extra_in_both))[:5]
+                error_msg = f"Extra phenotypes in 'both' co-occurrence file not found in male/female files: {sample_extra}"
+                if len(extra_in_both) > 5:
+                    error_msg += f" (and {len(extra_in_both) - 5} more)"
+                errors.append(error_msg)
+
+        # Validate pair count consistency
+        male_pairs = metadata_by_type['cooccurrence_male'].get('total_pairs', 0)
+        female_pairs = metadata_by_type['cooccurrence_female'].get('total_pairs', 0)
+        both_pairs = metadata_by_type['cooccurrence_both'].get('total_pairs', 0)
+
+        # The 'both' file should have at least as many pairs as the combined unique pairs from male + female
+        # (It might have more due to cross-gender phenotype pairs)
+        combined_pairs = male_pairs + female_pairs
+        if both_pairs < combined_pairs:
+            warnings.append(f"Combined co-occurrence pairs count ({both_pairs}) is less than sum of male + female pairs ({combined_pairs}). This may indicate missing cross-gender pairs.")
+
+        # Validate co-occurrence count totals
+        male_total_count = metadata_by_type['cooccurrence_male'].get('total_cooccurrence_count', 0)
+        female_total_count = metadata_by_type['cooccurrence_female'].get('total_cooccurrence_count', 0)
+        both_total_count = metadata_by_type['cooccurrence_both'].get('total_cooccurrence_count', 0)
+
+        combined_count = male_total_count + female_total_count
+        if both_total_count != combined_count:
+            warnings.append(f"Combined male + female co-occurrence counts ({combined_count}) does not equal 'both' file total ({both_total_count})")
+
+        # Per-phenotype-pair count validation: male + female should equal both for each phenotype pair
+        if all(file_type in metadata_by_type for file_type in ['cooccurrence_male', 'cooccurrence_female', 'cooccurrence_both']):
+            male_pair_counts = metadata_by_type['cooccurrence_male'].get('phenotype_pair_counts', {})
+            female_pair_counts = metadata_by_type['cooccurrence_female'].get('phenotype_pair_counts', {})
+            both_pair_counts = metadata_by_type['cooccurrence_both'].get('phenotype_pair_counts', {})
+
+            # Get all phenotype pairs that appear in the both file
+            for pair_key in both_pair_counts:
+                both_count = both_pair_counts[pair_key]
+
+                # Calculate expected total from male + female files
+                male_count = male_pair_counts.get(pair_key, 0)
+                female_count = female_pair_counts.get(pair_key, 0)
+                expected_count = male_count + female_count
+
+                # Check if counts match
+                if both_count != expected_count:
+                    phenotypes = pair_key.split('|')
+                    pair_display = f"({phenotypes[0]}, {phenotypes[1]})"
+                    errors.append(f"Phenotype pair {pair_display}: Both file count ({both_count}) != Male + Female counts ({expected_count})")
+
+        return {
+            "errors": errors,
+            "warnings": warnings,
+            "files_found": list(available_types),
+            "validation_summary": {
+                "male_pairs": male_pairs,
+                "female_pairs": female_pairs,
+                "both_pairs": both_pairs,
+                "combined_pairs": combined_pairs,
+                "male_total_count": male_total_count,
+                "female_total_count": female_total_count,
+                "both_total_count": both_total_count,
+                "combined_count": combined_count
+            }
+        }
+
+    except Exception as e:
+        return {
+            "errors": [f"Error during co-occurrence cross-file validation: {str(e)}"],
+            "warnings": [],
+            "files_found": list(files_by_type.keys()) if 'files_by_type' in locals() else []
+        }
+
+
+def validate_cohort_cross_file_consistency(cohort_id: str) -> Dict[str, any]:
+    """
+    Validate consistency between co-occurrence files and their corresponding cases/controls files.
+    Ensures co-occurrence files only reference phenotypes that exist in cases/controls files.
+    Returns validation results with errors and warnings.
+    """
+    errors = []
+    warnings = []
+
+    try:
+        # Get all files for this cohort
+        cohort_files = query.get_sgc_cohort_by_id(engine, cohort_id)
+        if not cohort_files:
+            return {"errors": ["Cohort not found"], "warnings": [], "files_found": {}}
+
+        # Group files by type and get their metadata
+        cases_controls_files = {}
+        cooccurrence_files = {}
+        cases_controls_metadata = {}
+        cooccurrence_metadata = {}
+
+        for file_data in cohort_files:
+            file_type = file_data.get('file_type')
+            file_id = file_data.get('file_id')
+
+            if file_type and file_type.startswith('cases_controls'):
+                cases_controls_files[file_type] = file_data
+                if file_id:
+                    try:
+                        cc_metadata = query.get_sgc_cases_controls_metadata(engine, file_id)
+                        if cc_metadata:
+                            cases_controls_metadata[file_type] = cc_metadata[0] if isinstance(cc_metadata, list) else cc_metadata
+                    except Exception as e:
+                        warnings.append(f"Could not retrieve cases/controls metadata for {file_type}: {str(e)}")
+
+            elif file_type and file_type.startswith('cooccurrence'):
+                cooccurrence_files[file_type] = file_data
+                if file_id:
+                    try:
+                        cooccur_metadata = query.get_sgc_cooccurrence_metadata(engine, file_id)
+                        if cooccur_metadata:
+                            cooccurrence_metadata[file_type] = cooccur_metadata[0] if isinstance(cooccur_metadata, list) else cooccur_metadata
+                    except Exception as e:
+                        warnings.append(f"Could not retrieve co-occurrence metadata for {file_type}: {str(e)}")
+
+        # Define file type mappings (co-occurrence -> cases/controls)
+        file_type_mappings = {
+            'cooccurrence_male': 'cases_controls_male',
+            'cooccurrence_female': 'cases_controls_female',
+            'cooccurrence_both': 'cases_controls_both'
+        }
+
+        # Validate each co-occurrence file against its corresponding cases/controls file
+        validation_results = {}
+
+        for cooccur_type, cases_type in file_type_mappings.items():
+            if cooccur_type in cooccurrence_metadata and cases_type in cases_controls_metadata:
+                cooccur_phenotypes = set(cooccurrence_metadata[cooccur_type].get('distinct_phenotypes', []))
+                cases_phenotypes = set(cases_controls_metadata[cases_type].get('distinct_phenotypes', []))
+
+                # Check for phenotypes in co-occurrence that don't exist in cases/controls
+                missing_phenotypes = cooccur_phenotypes - cases_phenotypes
+                if missing_phenotypes:
+                    sample_missing = sorted(list(missing_phenotypes))[:5]
+                    error_msg = f"{cooccur_type} file references phenotypes not found in {cases_type} file: {sample_missing}"
+                    if len(missing_phenotypes) > 5:
+                        error_msg += f" (and {len(missing_phenotypes) - 5} more)"
+                    errors.append(error_msg)
+
+                validation_results[f"{cooccur_type}_vs_{cases_type}"] = {
+                    "cooccurrence_phenotypes": len(cooccur_phenotypes),
+                    "cases_controls_phenotypes": len(cases_phenotypes),
+                    "invalid_phenotypes_in_cooccurrence": len(missing_phenotypes)
+                }
+
+        return {
+            "errors": errors,
+            "warnings": warnings,
+            "files_found": {
+                "cases_controls": list(cases_controls_files.keys()),
+                "cooccurrence": list(cooccurrence_files.keys())
+            },
+            "validation_results": validation_results
+        }
+
+    except Exception as e:
+        return {
+            "errors": [f"Error during cross-file validation: {str(e)}"],
+            "warnings": [],
+            "files_found": {}
         }
 
 
@@ -574,7 +861,7 @@ async def preview_sgc_cases_controls(file: UploadFile, header_mapping: SGCCasesC
     df = await file_utils.parse_file(io.StringIO('\n'.join(sample_lines)), file.filename)
     
     # Validate using cases/controls rules
-    error_message = validate_sgc_cases_controls(df, header_mapping.dict(), is_sample=True)
+    error_message = validate_sgc_cases_controls(df, header_mapping.dict())
     
     if error_message:
         raise fastapi.HTTPException(
@@ -608,7 +895,7 @@ async def preview_sgc_co_occurrence(file: UploadFile, header_mapping: SGCCoOccur
     df = await file_utils.parse_file(io.StringIO('\n'.join(sample_lines)), file.filename)
     
     # Validate using co-occurrence rules
-    error_message = validate_sgc_co_occurrence(df, header_mapping.dict(), is_sample=True)
+    error_message = validate_sgc_co_occurrence(df, header_mapping.dict())
     
     if error_message:
         raise fastapi.HTTPException(
@@ -741,9 +1028,9 @@ async def upload_and_create_sgc_cohort_file(
         
         error_message = None
         if validation_type == "cases_controls" or file_type.startswith("cases_controls"):
-            error_message = validate_sgc_cases_controls(df, mapping, is_sample=False)
-        elif validation_type == "cooccurrence" or file_type == "cooccurrence":
-            error_message = validate_sgc_co_occurrence(df, mapping, is_sample=False)
+            error_message = validate_sgc_cases_controls(df, mapping)
+        elif validation_type == "cooccurrence" or file_type.startswith("cooccurrence"):
+            error_message = validate_sgc_co_occurrence(df, mapping)
 
         if error_message:
             raise fastapi.HTTPException(detail=error_message, status_code=400)
@@ -754,7 +1041,7 @@ async def upload_and_create_sgc_cohort_file(
             cohort_info = query.get_sgc_cohort_by_id(engine, cohort_id)
             if not cohort_info:
                 raise fastapi.HTTPException(status_code=400, detail="Invalid cohort_id: cohort does not exist")
-            
+
             cohort = cohort_info[0]  # Get first row which contains cohort data
             
             # Calculate total cases + controls from the file
@@ -787,7 +1074,54 @@ async def upload_and_create_sgc_cohort_file(
                             status_code=400,
                             detail=f"Combined cases/controls file total ({file_total}) does not match cohort total sample size ({expected_total})"
                         )
-        
+
+        # Add validation for co-occurrence files
+        if file_type.startswith("cooccurrence"):
+            # Get cohort info to validate against sample sizes
+            cohort_info = query.get_sgc_cohort_by_id(engine, cohort_id)
+            if not cohort_info:
+                raise fastapi.HTTPException(status_code=400, detail="Invalid cohort_id: cohort does not exist")
+
+            cohort = cohort_info[0]  # Get first row which contains cohort data
+
+            # Validate that the file type is one of the three supported co-occurrence types
+            valid_cooccurrence_types = {"cooccurrence_male", "cooccurrence_female", "cooccurrence_both"}
+            if file_type not in valid_cooccurrence_types:
+                raise fastapi.HTTPException(
+                    status_code=400,
+                    detail=f"Invalid co-occurrence file type: {file_type}. Must be one of: {valid_cooccurrence_types}"
+                )
+
+            # Validate co-occurrence counts against cohort sample sizes
+            cooccurrence_count_col = mapping.get('cooccurrence_count')
+            if cooccurrence_count_col:
+                # Check that individual co-occurrence counts don't exceed the relevant sample size
+                cooccurrence_counts = pd.to_numeric(df[cooccurrence_count_col], errors='coerce')
+                max_cooccurrence = cooccurrence_counts.max() if not cooccurrence_counts.isna().all() else 0
+
+                # Determine the maximum allowed count based on file type
+                if file_type == "cooccurrence_male":
+                    max_allowed = cohort['number_of_males']
+                    if max_cooccurrence > max_allowed:
+                        raise fastapi.HTTPException(
+                            status_code=400,
+                            detail=f"Male co-occurrence file contains counts ({max_cooccurrence}) exceeding cohort male count ({max_allowed})"
+                        )
+                elif file_type == "cooccurrence_female":
+                    max_allowed = cohort['number_of_females']
+                    if max_cooccurrence > max_allowed:
+                        raise fastapi.HTTPException(
+                            status_code=400,
+                            detail=f"Female co-occurrence file contains counts ({max_cooccurrence}) exceeding cohort female count ({max_allowed})"
+                        )
+                elif file_type == "cooccurrence_both":
+                    max_allowed = cohort['total_sample_size']
+                    if max_cooccurrence > max_allowed:
+                        raise fastapi.HTTPException(
+                            status_code=400,
+                            detail=f"Combined co-occurrence file contains counts ({max_cooccurrence}) exceeding cohort total sample size ({max_allowed})"
+                        )
+
         # Upload to S3
         s3_path = f"sgc/{cohort_id}/{file_type}/{file.filename}"
         await file.seek(0)  # Reset file pointer
@@ -813,15 +1147,15 @@ async def upload_and_create_sgc_cohort_file(
             file_name=file.filename,
             file_size=len(file_content)
         )
-        
+
         file_id = query.insert_sgc_cohort_file(engine, cohort_file)
-        
+
         # Extract and store metadata based on file type
         if validation_type == "cases_controls" or file_type.startswith("cases_controls"):
             metadata = extract_cases_controls_metadata(df, mapping)
             metadata.file_id = file_id
             query.insert_sgc_cases_controls_metadata(engine, metadata)
-        elif validation_type == "cooccurrence" or file_type == "cooccurrence":
+        elif validation_type == "cooccurrence" or file_type.startswith("cooccurrence"):
             metadata = extract_cooccurrence_metadata(df, mapping)
             metadata.file_id = file_id
             query.insert_sgc_cooccurrence_metadata(engine, metadata)
@@ -940,10 +1274,16 @@ async def delete_sgc_cohort_file(file_id: str, user: User = Depends(get_sgc_user
         raise fastapi.HTTPException(status_code=500, detail=f"Error deleting file: {str(e)}")
 
 
-@router.post("/sgc/cohorts/{cohort_id}/validate-consistency")
-async def validate_sgc_cohort_file_consistency(cohort_id: str, user: User = Depends(get_sgc_user)):
+@router.post("/sgc/cohorts/{cohort_id}/validate-all-consistency")
+async def validate_sgc_cohort_all_consistency(cohort_id: str, user: User = Depends(get_sgc_user)):
     """
-    Validate consistency across the three cases/controls files for a cohort.
+    Comprehensive validation that runs all consistency checks for a cohort.
+    Returns as soon as any error is found.
+    Validates:
+    1. Cases/controls files consistency (male, female, both)
+    2. Co-occurrence files consistency (male, female, both)
+    3. Cross-file consistency (co-occurrence phenotypes exist in cases/controls)
+
     - Users can validate cohorts they uploaded
     - Users with 'sgc-review-data' permission can validate any cohort
     """
@@ -952,33 +1292,75 @@ async def validate_sgc_cohort_file_consistency(cohort_id: str, user: User = Depe
         cohort_data = query.get_sgc_cohort_by_id(engine, cohort_id)
         if not cohort_data:
             raise fastapi.HTTPException(status_code=404, detail="Cohort not found")
-        
+
         # Check permissions: either the user owns the cohort or has review permissions
         cohort_owner = cohort_data[0]['uploaded_by']  # First row has cohort info
         if not (cohort_owner == user.user_name or check_review_permissions(user)):
             raise fastapi.HTTPException(
-                status_code=403, 
+                status_code=403,
                 detail="You can only validate cohorts you uploaded"
             )
-        
-        # Run the validation
-        validation_results = validate_cases_controls_file_consistency(cohort_id)
-        
-        # Determine overall validation status
-        has_errors = len(validation_results.get('errors', [])) > 0
-        has_warnings = len(validation_results.get('warnings', [])) > 0
-        
+
+        all_warnings = []
+
+        # 1. Validate cases/controls files consistency first
+        cases_controls_results = validate_cases_controls_file_consistency(cohort_id)
+        if cases_controls_results.get('errors'):
+            return {
+                "cohort_id": cohort_id,
+                "validation_status": "failed",
+                "validation_step": "cases_controls_consistency",
+                "message": "Cases/controls consistency validation failed",
+                **cases_controls_results
+            }
+        all_warnings.extend(cases_controls_results.get('warnings', []))
+
+        # 2. Validate co-occurrence files consistency
+        cooccurrence_results = validate_cooccurrence_file_consistency(cohort_id)
+        if cooccurrence_results.get('errors'):
+            return {
+                "cohort_id": cohort_id,
+                "validation_status": "failed",
+                "validation_step": "cooccurrence_consistency",
+                "message": "Co-occurrence consistency validation failed",
+                **cooccurrence_results
+            }
+        all_warnings.extend(cooccurrence_results.get('warnings', []))
+
+        # 3. Validate cross-file consistency (co-occurrence vs cases/controls)
+        cross_file_results = validate_cohort_cross_file_consistency(cohort_id)
+        if cross_file_results.get('errors'):
+            return {
+                "cohort_id": cohort_id,
+                "validation_status": "failed",
+                "validation_step": "cross_file_consistency",
+                "message": "Cross-file consistency validation failed",
+                **cross_file_results
+            }
+        all_warnings.extend(cross_file_results.get('warnings', []))
+
+        # If we get here, all validations passed
+        has_warnings = len(all_warnings) > 0
+
         return {
             "cohort_id": cohort_id,
-            "validation_status": "failed" if has_errors else "passed_with_warnings" if has_warnings else "passed",
-            "message": "Cross-file validation completed",
-            **validation_results
+            "validation_status": "passed_with_warnings" if has_warnings else "passed",
+            "validation_step": "all_completed",
+            "message": "All consistency validations passed",
+            "warnings": all_warnings,
+            "validation_summary": {
+                "cases_controls_files_found": cases_controls_results.get('files_found', []),
+                "cooccurrence_files_found": cooccurrence_results.get('files_found', []),
+                "cross_file_validation_results": cross_file_results.get('validation_results', {})
+            }
         }
-        
+
     except fastapi.HTTPException:
         raise
     except Exception as e:
         raise fastapi.HTTPException(status_code=500, detail=f"Error during validation: {str(e)}")
+
+
 
 
 @router.get("/sgc/cohort-files/{file_id}")

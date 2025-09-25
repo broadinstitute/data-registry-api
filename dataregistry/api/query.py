@@ -981,14 +981,15 @@ def insert_sgc_cases_controls_metadata(engine, metadata) -> str:
         file_id_hex = str(metadata.file_id).replace('-', '')
         
         conn.execute(text("""
-            INSERT INTO sgc_cases_controls_metadata (id, file_id, distinct_phenotypes, total_cases, total_controls)
-            VALUES (:id, :file_id, :distinct_phenotypes, :total_cases, :total_controls)
+            INSERT INTO sgc_cases_controls_metadata (id, file_id, distinct_phenotypes, total_cases, total_controls, phenotype_counts)
+            VALUES (:id, :file_id, :distinct_phenotypes, :total_cases, :total_controls, :phenotype_counts)
         """), {
             'id': metadata_id,
             'file_id': file_id_hex,
             'distinct_phenotypes': json.dumps(metadata.distinct_phenotypes),
             'total_cases': metadata.total_cases,
-            'total_controls': metadata.total_controls
+            'total_controls': metadata.total_controls,
+            'phenotype_counts': json.dumps(metadata.phenotype_counts)
         })
         conn.commit()
         return metadata_id
@@ -1000,19 +1001,28 @@ def get_sgc_cases_controls_metadata(engine, file_id: str):
     
     with engine.connect() as conn:
         result = conn.execute(text("""
-            SELECT id, file_id, distinct_phenotypes, total_cases, total_controls, created_at
-            FROM sgc_cases_controls_metadata 
+            SELECT id, file_id, distinct_phenotypes, total_cases, total_controls, phenotype_counts, created_at
+            FROM sgc_cases_controls_metadata
             WHERE file_id = :file_id
         """), {"file_id": file_id}).fetchone()
-        
+
         if result:
+            # Handle backward compatibility for phenotype_counts field
+            phenotype_counts = {}
+            if result[5]:  # phenotype_counts field
+                try:
+                    phenotype_counts = json.loads(result[5])
+                except (json.JSONDecodeError, TypeError):
+                    phenotype_counts = {}
+
             return {
                 'id': result[0],
                 'file_id': result[1],
                 'distinct_phenotypes': json.loads(result[2]),
                 'total_cases': result[3],
                 'total_controls': result[4],
-                'created_at': result[5]
+                'phenotype_counts': phenotype_counts,
+                'created_at': result[6]
             }
         return None
 
@@ -1041,14 +1051,15 @@ def insert_sgc_cooccurrence_metadata(engine, metadata) -> str:
         file_id_hex = str(metadata.file_id).replace('-', '')
         
         conn.execute(text("""
-            INSERT INTO sgc_cooccurrence_metadata (id, file_id, distinct_phenotypes, total_pairs, total_cooccurrence_count)
-            VALUES (:id, :file_id, :distinct_phenotypes, :total_pairs, :total_cooccurrence_count)
+            INSERT INTO sgc_cooccurrence_metadata (id, file_id, distinct_phenotypes, total_pairs, total_cooccurrence_count, phenotype_pair_counts)
+            VALUES (:id, :file_id, :distinct_phenotypes, :total_pairs, :total_cooccurrence_count, :phenotype_pair_counts)
         """), {
             'id': metadata_id,
             'file_id': file_id_hex,
             'distinct_phenotypes': json.dumps(metadata.distinct_phenotypes),
             'total_pairs': metadata.total_pairs,
-            'total_cooccurrence_count': metadata.total_cooccurrence_count
+            'total_cooccurrence_count': metadata.total_cooccurrence_count,
+            'phenotype_pair_counts': json.dumps(metadata.phenotype_pair_counts)
         })
         conn.commit()
         return metadata_id
@@ -1060,19 +1071,28 @@ def get_sgc_cooccurrence_metadata(engine, file_id: str):
     
     with engine.connect() as conn:
         result = conn.execute(text("""
-            SELECT id, file_id, distinct_phenotypes, total_pairs, total_cooccurrence_count, created_at
-            FROM sgc_cooccurrence_metadata 
+            SELECT id, file_id, distinct_phenotypes, total_pairs, total_cooccurrence_count, phenotype_pair_counts, created_at
+            FROM sgc_cooccurrence_metadata
             WHERE file_id = :file_id
         """), {"file_id": file_id}).fetchone()
-        
+
         if result:
+            # Handle backward compatibility for phenotype_pair_counts field
+            phenotype_pair_counts = {}
+            if result[5]:  # phenotype_pair_counts field
+                try:
+                    phenotype_pair_counts = json.loads(result[5])
+                except (json.JSONDecodeError, TypeError):
+                    phenotype_pair_counts = {}
+
             return {
                 'id': result[0],
                 'file_id': result[1],
                 'distinct_phenotypes': json.loads(result[2]),
                 'total_pairs': result[3],
                 'total_cooccurrence_count': result[4],
-                'created_at': result[5]
+                'phenotype_pair_counts': phenotype_pair_counts,
+                'created_at': result[6]
             }
         return None
 
