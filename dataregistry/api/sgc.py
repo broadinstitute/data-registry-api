@@ -13,16 +13,22 @@ import httpx
 
 from dataregistry.api import file_utils, s3, query
 from dataregistry.api.db import DataRegistryReadWriteDB
-from dataregistry.api.model import SGCPhenotype, SGCCohort, SGCCohortFile, SGCCasesControlsMetadata, SGCCoOccurrenceMetadata, User
+from dataregistry.api.model import SGCPhenotype, SGCCohort, SGCCohortFile, SGCCasesControlsMetadata, SGCCoOccurrenceMetadata, User, NewUserRequest
 from dataregistry.api.api import get_current_user
 
 router = fastapi.APIRouter()
 engine = DataRegistryReadWriteDB().get_engine()
 
 USER_SERVICE_URL = os.getenv('USER_SERVICE_URL', 'https://users.kpndataregistry.org')
+UPLOADER_TOKEN = os.getenv('SGC_UPLOADER_TOKEN')
+REVIEWER_TOKEN = os.getenv('SGC_REVIEWER_TOKEN')
 
 def check_review_permissions(user: User):
     return user.permissions and "sgc-review-data" in user.permissions
+
+
+def check_add_user_permissions(user: User):
+    return user.permissions and "sgc-add-user" in user.permissions
 
 
 def get_valid_phenotype_codes() -> set:
@@ -293,7 +299,125 @@ def extract_cooccurrence_phenotypes(df: pd.DataFrame, header_mapping: Dict[str, 
     return sorted(phenotypes1.union(phenotypes2))
 
 
-def generate_validation_warnings(cohort: SGCCohort, cases_controls_metadata: Optional[SGCCasesControlsMetadata], 
+def validate_cases_controls_file_consistency(cohort_id: str) -> Dict[str, any]:
+    """
+    Validate consistency across the three cases/controls files for a cohort.
+    Returns validation results with errors and warnings.
+    """
+    errors = []
+    warnings = []
+    
+    try:
+        # Get all files for this cohort
+        cohort_files = query.get_sgc_cohort_by_id(engine, cohort_id)
+        if not cohort_files:
+            return {"errors": ["Cohort not found"], "warnings": [], "files_found": {}}
+        
+        # Group cases_controls files by type and get their metadata
+        files_by_type = {}
+        metadata_by_type = {}
+        
+        for file_data in cohort_files:
+            if file_data.get('file_type') and file_data['file_type'].startswith('cases_controls'):
+                file_type = file_data['file_type']
+                files_by_type[file_type] = file_data
+                
+                # Get metadata for this file
+                if file_data.get('file_id'):
+                    try:
+                        cc_metadata = query.get_sgc_cases_controls_metadata(engine, file_data['file_id'])
+                        if cc_metadata:
+                            metadata_by_type[file_type] = cc_metadata[0] if isinstance(cc_metadata, list) else cc_metadata
+                    except Exception as e:
+                        warnings.append(f"Could not retrieve metadata for {file_type}: {str(e)}")
+        
+        # Check which file types we have
+        required_types = {'cases_controls_male', 'cases_controls_female', 'cases_controls_both'}
+        available_types = set(files_by_type.keys())
+        missing_types = required_types - available_types
+        
+        if missing_types:
+            return {
+                "errors": [],
+                "warnings": [f"Missing file types for complete validation: {sorted(list(missing_types))}"],
+                "files_found": list(available_types)
+            }
+        
+        # Get cohort info for reference
+        cohort_info = cohort_files[0]  # First row contains cohort data
+        
+        # Validate phenotype consistency
+        male_phenotypes = set(metadata_by_type['cases_controls_male'].get('distinct_phenotypes', []))
+        female_phenotypes = set(metadata_by_type['cases_controls_female'].get('distinct_phenotypes', []))
+        both_phenotypes = set(metadata_by_type['cases_controls_both'].get('distinct_phenotypes', []))
+        
+        # Combined phenotypes from male + female should match 'both' phenotypes
+        combined_phenotypes = male_phenotypes.union(female_phenotypes)
+        if combined_phenotypes != both_phenotypes:
+            missing_from_both = combined_phenotypes - both_phenotypes
+            extra_in_both = both_phenotypes - combined_phenotypes
+            
+            if missing_from_both:
+                sample_missing = sorted(list(missing_from_both))[:5]
+                error_msg = f"Phenotypes in male/female files but missing from 'both' file: {sample_missing}"
+                if len(missing_from_both) > 5:
+                    error_msg += f" (and {len(missing_from_both) - 5} more)"
+                errors.append(error_msg)
+            
+            if extra_in_both:
+                sample_extra = sorted(list(extra_in_both))[:5] 
+                error_msg = f"Extra phenotypes in 'both' file not found in male/female files: {sample_extra}"
+                if len(extra_in_both) > 5:
+                    error_msg += f" (and {len(extra_in_both) - 5} more)"
+                errors.append(error_msg)
+        
+        # Validate total counts consistency
+        male_total = metadata_by_type['cases_controls_male'].get('total_cases', 0) + metadata_by_type['cases_controls_male'].get('total_controls', 0)
+        female_total = metadata_by_type['cases_controls_female'].get('total_cases', 0) + metadata_by_type['cases_controls_female'].get('total_controls', 0)
+        both_total = metadata_by_type['cases_controls_both'].get('total_cases', 0) + metadata_by_type['cases_controls_both'].get('total_controls', 0)
+        
+        combined_total = male_total + female_total
+        if combined_total != both_total:
+            errors.append(f"Combined male + female totals ({combined_total}) does not equal 'both' file total ({both_total})")
+        
+        # Additional validation: Check individual file totals match cohort expectations
+        cohort_male_count = cohort_info.get('number_of_males', 0)
+        cohort_female_count = cohort_info.get('number_of_females', 0)
+        cohort_total_count = cohort_info.get('total_sample_size', 0)
+        
+        if male_total != cohort_male_count:
+            errors.append(f"Male file total ({male_total}) does not match cohort male count ({cohort_male_count})")
+        
+        if female_total != cohort_female_count:
+            errors.append(f"Female file total ({female_total}) does not match cohort female count ({cohort_female_count})")
+        
+        if both_total != cohort_total_count:
+            errors.append(f"Both file total ({both_total}) does not match cohort total sample size ({cohort_total_count})")
+        
+        return {
+            "errors": errors,
+            "warnings": warnings,
+            "files_found": list(available_types),
+            "validation_summary": {
+                "male_total": male_total,
+                "female_total": female_total,
+                "both_total": both_total,
+                "combined_total": combined_total,
+                "cohort_male_count": cohort_male_count,
+                "cohort_female_count": cohort_female_count,
+                "cohort_total_count": cohort_total_count
+            }
+        }
+        
+    except Exception as e:
+        return {
+            "errors": [f"Error during cross-file validation: {str(e)}"],
+            "warnings": [],
+            "files_found": list(files_by_type.keys()) if 'files_by_type' in locals() else []
+        }
+
+
+def generate_validation_warnings(cohort: SGCCohort, cases_controls_metadata: Optional[SGCCasesControlsMetadata],
                                 cooccurrence_phenotypes: Optional[List[str]] = None,
                                 cases_controls_df: Optional[pd.DataFrame] = None,
                                 cooccurrence_df: Optional[pd.DataFrame] = None,
@@ -616,16 +740,56 @@ async def upload_and_create_sgc_cohort_file(
         df = await file_utils.parse_file(io.StringIO(content.decode('utf-8')), file.filename)
         
         error_message = None
-        if validation_type == "cases_controls":
+        if validation_type == "cases_controls" or file_type.startswith("cases_controls"):
             error_message = validate_sgc_cases_controls(df, mapping, is_sample=False)
-        elif validation_type == "cooccurrence":
+        elif validation_type == "cooccurrence" or file_type == "cooccurrence":
             error_message = validate_sgc_co_occurrence(df, mapping, is_sample=False)
 
         if error_message:
             raise fastapi.HTTPException(detail=error_message, status_code=400)
         
+        # Add gender-specific sample size validation for cases/controls files
+        if file_type.startswith("cases_controls"):
+            # Get cohort info to validate against sample sizes
+            cohort_info = query.get_sgc_cohort_by_id(engine, cohort_id)
+            if not cohort_info:
+                raise fastapi.HTTPException(status_code=400, detail="Invalid cohort_id: cohort does not exist")
+            
+            cohort = cohort_info[0]  # Get first row which contains cohort data
+            
+            # Calculate total cases + controls from the file
+            cases_col = mapping.get('cases')
+            controls_col = mapping.get('controls')
+            if cases_col and controls_col:
+                total_cases = pd.to_numeric(df[cases_col], errors='coerce').sum()
+                total_controls = pd.to_numeric(df[controls_col], errors='coerce').sum()
+                file_total = int(total_cases + total_controls) if not (pd.isna(total_cases) or pd.isna(total_controls)) else 0
+                
+                # Validate against expected sample sizes based on file type
+                if file_type == "cases_controls_male":
+                    expected_total = cohort['number_of_males']
+                    if file_total != expected_total:
+                        raise fastapi.HTTPException(
+                            status_code=400,
+                            detail=f"Male cases/controls file total ({file_total}) does not match cohort male count ({expected_total})"
+                        )
+                elif file_type == "cases_controls_female":
+                    expected_total = cohort['number_of_females']
+                    if file_total != expected_total:
+                        raise fastapi.HTTPException(
+                            status_code=400,
+                            detail=f"Female cases/controls file total ({file_total}) does not match cohort female count ({expected_total})"
+                        )
+                elif file_type == "cases_controls_both":
+                    expected_total = cohort['total_sample_size']
+                    if file_total != expected_total:
+                        raise fastapi.HTTPException(
+                            status_code=400,
+                            detail=f"Combined cases/controls file total ({file_total}) does not match cohort total sample size ({expected_total})"
+                        )
+        
         # Upload to S3
-        s3_path = f"sgc/{cohort_id}/{file.filename}"
+        s3_path = f"sgc/{cohort_id}/{file_type}/{file.filename}"
         await file.seek(0)  # Reset file pointer
         file_content = await file.read()
         
@@ -653,11 +817,11 @@ async def upload_and_create_sgc_cohort_file(
         file_id = query.insert_sgc_cohort_file(engine, cohort_file)
         
         # Extract and store metadata based on file type
-        if validation_type == "cases_controls":
+        if validation_type == "cases_controls" or file_type.startswith("cases_controls"):
             metadata = extract_cases_controls_metadata(df, mapping)
             metadata.file_id = file_id
             query.insert_sgc_cases_controls_metadata(engine, metadata)
-        elif validation_type == "cooccurrence":
+        elif validation_type == "cooccurrence" or file_type == "cooccurrence":
             metadata = extract_cooccurrence_metadata(df, mapping)
             metadata.file_id = file_id
             query.insert_sgc_cooccurrence_metadata(engine, metadata)
@@ -776,6 +940,47 @@ async def delete_sgc_cohort_file(file_id: str, user: User = Depends(get_sgc_user
         raise fastapi.HTTPException(status_code=500, detail=f"Error deleting file: {str(e)}")
 
 
+@router.post("/sgc/cohorts/{cohort_id}/validate-consistency")
+async def validate_sgc_cohort_file_consistency(cohort_id: str, user: User = Depends(get_sgc_user)):
+    """
+    Validate consistency across the three cases/controls files for a cohort.
+    - Users can validate cohorts they uploaded
+    - Users with 'sgc-review-data' permission can validate any cohort
+    """
+    try:
+        # Check permissions: get cohort to verify ownership
+        cohort_data = query.get_sgc_cohort_by_id(engine, cohort_id)
+        if not cohort_data:
+            raise fastapi.HTTPException(status_code=404, detail="Cohort not found")
+        
+        # Check permissions: either the user owns the cohort or has review permissions
+        cohort_owner = cohort_data[0]['uploaded_by']  # First row has cohort info
+        if not (cohort_owner == user.user_name or check_review_permissions(user)):
+            raise fastapi.HTTPException(
+                status_code=403, 
+                detail="You can only validate cohorts you uploaded"
+            )
+        
+        # Run the validation
+        validation_results = validate_cases_controls_file_consistency(cohort_id)
+        
+        # Determine overall validation status
+        has_errors = len(validation_results.get('errors', [])) > 0
+        has_warnings = len(validation_results.get('warnings', [])) > 0
+        
+        return {
+            "cohort_id": cohort_id,
+            "validation_status": "failed" if has_errors else "passed_with_warnings" if has_warnings else "passed",
+            "message": "Cross-file validation completed",
+            **validation_results
+        }
+        
+    except fastapi.HTTPException:
+        raise
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Error during validation: {str(e)}")
+
+
 @router.get("/sgc/cohort-files/{file_id}")
 async def download_sgc_cohort_file(file_id: str, user: User = Depends(get_sgc_user)):
     """
@@ -819,5 +1024,141 @@ async def download_sgc_cohort_file(file_id: str, user: User = Depends(get_sgc_us
         raise
     except Exception as e:
         raise fastapi.HTTPException(status_code=500, detail=f"Error downloading file: {str(e)}")
+
+
+@router.get("/sgc/users")
+async def get_all_sgc_users(user: User = Depends(get_sgc_user)):
+    """
+    Get all SGC users from the dig-user-service.
+    Requires 'sgc-review-data' permission.
+    """
+    if not check_review_permissions(user):
+        raise fastapi.HTTPException(
+            status_code=403,
+            detail="You need 'sgc-review-data' permission to list users"
+        )
+
+    token = UPLOADER_TOKEN or REVIEWER_TOKEN
+
+    if not token:
+        raise fastapi.HTTPException(
+            status_code=500,
+            detail="No token configured for user service access"
+        )
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{USER_SERVICE_URL}/api/auth/list-users/",
+                params={"token": token}
+            )
+
+            if response.status_code == 200:
+                return response.json()
+            else:
+                try:
+                    error_detail = response.json()
+                except:
+                    error_detail = response.text
+
+                raise fastapi.HTTPException(
+                    status_code=response.status_code,
+                    detail=f"Failed to retrieve users: {error_detail}"
+                )
+
+    except httpx.RequestError as e:
+        raise fastapi.HTTPException(
+            status_code=503,
+            detail=f"User service unavailable: {str(e)}"
+        )
+    except Exception as e:
+        raise fastapi.HTTPException(
+            status_code=500,
+            detail=f"Error retrieving users: {str(e)}"
+        )
+
+
+@router.post("/sgc/create-user")
+async def create_sgc_user(request: NewUserRequest, user: User = Depends(get_sgc_user)):
+    """
+    Create a new SGC user via the dig-user-service.
+    Requires 'sgc-add-user' permission.
+    """
+    # Check permissions
+    if not check_add_user_permissions(user):
+        raise fastapi.HTTPException(
+            status_code=403,
+            detail="You need 'sgc-add-user' permission to create users"
+        )
+
+    # Get the appropriate token based on user type
+    token = None
+    if request.user_type == 'uploader':
+        token = UPLOADER_TOKEN
+    elif request.user_type == 'reviewer':
+        token = REVIEWER_TOKEN
+    else:
+        raise fastapi.HTTPException(
+            status_code=400,
+            detail=f"Invalid user_type: {request.user_type}. Must be 'uploader' or 'reviewer'"
+        )
+
+    if not token:
+        raise fastapi.HTTPException(
+            status_code=500,
+            detail=f"No token configured for user_type: {request.user_type}"
+        )
+
+    try:
+        # Prepare the request data for dig-user-service
+        user_data = {
+            "token": token,
+            "username": request.user_name,
+            "password": request.password
+        }
+
+        # Add optional fields if provided
+        if request.first_name:
+            user_data["first_name"] = request.first_name
+        if request.last_name:
+            user_data["last_name"] = request.last_name
+        if request.user_name:  # Use username as email if not provided separately
+            user_data["email"] = request.user_name
+
+        # Make the request to dig-user-service
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{USER_SERVICE_URL}/api/auth/create-user/",
+                data=user_data  # Use form data as specified in the API
+            )
+
+            if response.status_code == 200 or response.status_code == 201:
+                return {
+                    "message": "User created successfully",
+                    "username": request.user_name,
+                    "user_type": request.user_type
+                }
+            else:
+                # Try to get error details from response
+                try:
+                    error_detail = response.json()
+                except:
+                    error_detail = response.text
+
+                raise fastapi.HTTPException(
+                    status_code=response.status_code,
+                    detail=f"Failed to create user: {error_detail}"
+                )
+
+    except httpx.RequestError as e:
+        raise fastapi.HTTPException(
+            status_code=503,
+            detail=f"User service unavailable: {str(e)}"
+        )
+    except Exception as e:
+        raise fastapi.HTTPException(
+            status_code=500,
+            detail=f"Error creating user: {str(e)}"
+        )
 
 

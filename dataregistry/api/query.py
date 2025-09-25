@@ -263,6 +263,7 @@ def save_shortened_file_id(conn, file_id: str, file_type: str):
 
 def shortened_file_id_lookup(short_file_id: str, file_type: str, engine) -> str:
     with engine.connect() as conn:
+        result = None
         if file_type == 'd':
             result = conn.execute(text("""SELECT id  FROM data_file_ids where short_id = :id
             """), {'id': short_file_id}).first()

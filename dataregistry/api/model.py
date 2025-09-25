@@ -152,6 +152,8 @@ class NewUserRequest(BaseModel):
     user_name: EmailStr
     password: str
     user_type: str
+    first_name: Union[str, None] = None
+    last_name: Union[str, None] = None
 
 
 class CsvBioIndexRequest(BaseModel):
