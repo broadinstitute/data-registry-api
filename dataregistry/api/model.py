@@ -288,6 +288,7 @@ class SGCCohort(BaseModel):
     number_of_males: int
     number_of_females: int
     cohort_metadata: Union[Dict, None] = None
+    validation_status: Union[bool, None] = None
     created_at: Union[datetime, None] = None
     updated_at: Union[datetime, None] = None
 

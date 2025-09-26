@@ -766,23 +766,23 @@ def upsert_sgc_cohort(engine, cohort) -> str:
                 UPDATE sgc_cohorts 
                 SET name = :name, total_sample_size = :total_sample_size, 
                     number_of_males = :number_of_males, number_of_females = :number_of_females,
-                    cohort_metadata = :cohort_metadata, updated_at = CURRENT_TIMESTAMP
-                WHERE id = :id AND uploaded_by = :uploaded_by
+                    cohort_metadata = :cohort_metadata, validation_status = :validation_status, updated_at = CURRENT_TIMESTAMP
+                WHERE id = :id 
             """), {
                 'id': cohort_id,
                 'name': cohort.name,
-                'uploaded_by': cohort.uploaded_by,
                 'total_sample_size': cohort.total_sample_size,
                 'number_of_males': cohort.number_of_males,
                 'number_of_females': cohort.number_of_females,
-                'cohort_metadata': cohort_metadata_json
+                'cohort_metadata': cohort_metadata_json,
+                'validation_status': cohort.validation_status if cohort.validation_status is not None else False
             })
         else:
             # Insert new cohort
             cohort_id = str(uuid.uuid4()).replace('-', '')
             conn.execute(text("""
-                INSERT INTO sgc_cohorts (id, name, uploaded_by, total_sample_size, number_of_males, number_of_females, cohort_metadata)
-                VALUES (:id, :name, :uploaded_by, :total_sample_size, :number_of_males, :number_of_females, :cohort_metadata)
+                INSERT INTO sgc_cohorts (id, name, uploaded_by, total_sample_size, number_of_males, number_of_females, cohort_metadata, validation_status)
+                VALUES (:id, :name, :uploaded_by, :total_sample_size, :number_of_males, :number_of_females, :cohort_metadata, :validation_status)
             """), {
                 'id': cohort_id,
                 'name': cohort.name,
@@ -790,7 +790,8 @@ def upsert_sgc_cohort(engine, cohort) -> str:
                 'total_sample_size': cohort.total_sample_size,
                 'number_of_males': cohort.number_of_males,
                 'number_of_females': cohort.number_of_females,
-                'cohort_metadata': cohort_metadata_json
+                'cohort_metadata': cohort_metadata_json,
+                'validation_status': cohort.validation_status if cohort.validation_status is not None else False
             })
         
         conn.commit()
@@ -842,7 +843,7 @@ def get_sgc_cohort_by_id(engine, cohort_id: str):
         result = conn.execute(text("""
             SELECT 
                 c.id as cohort_id, c.name, c.uploaded_by, c.total_sample_size, 
-                c.number_of_males, c.number_of_females, c.cohort_metadata, c.created_at, c.updated_at,
+                c.number_of_males, c.number_of_females, c.cohort_metadata, c.validation_status, c.created_at, c.updated_at,
                 f.id as file_id, f.file_type, f.file_path, f.file_name, 
                 f.file_size, f.uploaded_at as file_uploaded_at
             FROM sgc_cohorts c
@@ -907,7 +908,7 @@ def get_sgc_cohorts_with_files(engine, uploaded_by: str = None):
         query = """
             SELECT 
                 c.id as cohort_id, c.name, c.uploaded_by, c.total_sample_size, 
-                c.number_of_males, c.number_of_females, c.cohort_metadata, c.created_at, c.updated_at,
+                c.number_of_males, c.number_of_females, c.cohort_metadata, c.validation_status, c.created_at, c.updated_at,
                 f.id as file_id, f.file_type, f.file_path, f.file_name, 
                 f.file_size, f.uploaded_at as file_uploaded_at
             FROM sgc_cohorts c
@@ -942,6 +943,7 @@ def get_sgc_cohorts_with_files(engine, uploaded_by: str = None):
                     'number_of_males': row['number_of_males'],
                     'number_of_females': row['number_of_females'],
                     'cohort_metadata': cohort_metadata,
+                    'validation_status': row['validation_status'],
                     'created_at': row['created_at'],
                     'updated_at': row['updated_at'],
                     'files': []
@@ -965,6 +967,21 @@ def get_sgc_cohorts_with_files(engine, uploaded_by: str = None):
             cohort['status'] = 'complete' if file_count == 3 else 'incomplete'
         
         return list(cohorts_dict.values())
+
+
+def update_sgc_cohort_validation_status(engine, cohort_id: str, validation_status: bool) -> bool:
+    """Update the validation status of an SGC cohort. Returns True if updated, False if not found."""
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+            UPDATE sgc_cohorts 
+            SET validation_status = :validation_status, updated_at = CURRENT_TIMESTAMP
+            WHERE id = :cohort_id
+        """), {
+            'cohort_id': cohort_id,
+            'validation_status': validation_status
+        })
+        conn.commit()
+        return result.rowcount > 0
 
 
 def insert_sgc_cases_controls_metadata(engine, metadata) -> str:
