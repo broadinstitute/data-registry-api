@@ -384,7 +384,9 @@ async def rerun_hermes_qc(request: QCScriptOptions, file_id, background_tasks: B
             's3-path': f"s3://{s3.BASE_BUCKET}/{s3_path}",
             'file-guid': file_id,
             'col-map': json.dumps(file_upload.metadata["column_map"]),
-            'script-options': json.dumps(script_options)
+            'script-options': json.dumps(script_options),
+            'genome-build': file_upload.metadata['referenceGenome'],
+            'ancestry': file_upload.metadata['ancestry']
         }}, query.update_file_upload_qc_log, file_id, True)
 
 
@@ -420,7 +422,9 @@ async def validate_hermes_csv(request: QCHermesFileRequest, background_tasks: Ba
             's3-path': f"s3://{s3.BASE_BUCKET}/{s3_path}",
             'file-guid': file_guid,
             'col-map': json.dumps(metadata["column_map"]),
-            'script-options': json.dumps(script_options)
+            'script-options': json.dumps(script_options),
+            'genome-build': metadata['referenceGenome'],
+            'ancestry': metadata['ancestry']
         }}, query.update_file_upload_qc_log, file_guid, True)
 
     return {"file_size": file_size, "s3_path": s3_path, "file_id": file_guid}
@@ -499,7 +503,9 @@ async def update_single_file_metadata(file_id: UUID, metadata: dict, background_
                 's3-path': f"s3://{s3.BASE_BUCKET}/{file_upload.s3_path}",
                 'file-guid': str(file_id),
                 'col-map': json.dumps(metadata["column_map"]),
-                'script-options': json.dumps(file_upload.qc_script_options)
+                'script-options': json.dumps(file_upload.qc_script_options),
+                'genome-build': metadata['referenceGenome'],
+                'ancestry': metadata['ancestry']
             }}, query.update_file_upload_qc_log, str(file_id), True)
             query.update_file_qc_status(engine, no_dashes_id, HermesFileStatus.SUBMITTED_TO_QC)
         except Exception as e:
