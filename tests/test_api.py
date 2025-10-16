@@ -235,6 +235,8 @@ def test_start_meta_analysis(mocker, api_client: TestClient):
     res = api_client.post('api/validate-hermes', headers={AUTHORIZATION: auth_token}, json={'file_name': 'foo.csv',
                                                          'dataset': 'unit-test-dataset',
                                                          'metadata': {'b': 1, 'phenotype': 'T2D',
+                                                                                 'referenceGenome': 'hg19',
+                                                                                 'ancestry': 'EU',
                                                                                  'column_map': {"chromosome": "CHR",
                                                                                                 "position": "BP",
                                                                                                 "eaf": "EAF",
@@ -276,6 +278,8 @@ def test_upload_hermes_csv(mocker, api_client: TestClient):
     res = api_client.post('api/validate-hermes', headers={AUTHORIZATION: auth_token}, json={'file_name': 'foo.csv',
                                                          'dataset': 'unit-test-dataset',
                                                          'metadata': {'b': 1, 'phenotype': 'T2D',
+                                                                                 'referenceGenome': 'hg19',
+                                                                                 'ancestry': 'EU',
                                                                                  'column_map': {"chromosome": "CHR",
                                                                                                 "position": "BP",
                                                                                                 "eaf": "EAF",
@@ -391,14 +395,16 @@ def test_download_all_hermes_metadata_csv(mocker, api_client: TestClient):
         'file_name': 'dataset1.csv',
         'dataset': 'test-dataset-1',
         'metadata': {'phenotype': 'T2D', 'ancestry': 'EUR', 'sample_size': 1000,
+                     'referenceGenome': 'hg19',
                      'column_map': {"chromosome": "CHR", "position": "BP", "eaf": "EAF", "beta": "BETA", "se": "SE", "pValue": "P"}},
         'qc_script_options': {'fd': 0.2, 'noind': True}
     })
-    
+
     res2 = api_client.post('api/validate-hermes', headers={AUTHORIZATION: auth_token}, json={
-        'file_name': 'dataset2.csv', 
+        'file_name': 'dataset2.csv',
         'dataset': 'test-dataset-2',
         'metadata': {'phenotype': 'T1D', 'ancestry': 'AFR', 'sample_size': 2000,
+                     'referenceGenome': 'hg38',
                      'column_map': {"chromosome": "CHR", "position": "BP", "eaf": "EAF", "beta": "BETA", "se": "SE", "pValue": "P"}},
         'qc_script_options': {'fd': 0.1, 'noind': False}
     })
