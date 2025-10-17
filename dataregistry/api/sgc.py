@@ -13,7 +13,7 @@ import httpx
 
 from dataregistry.api import file_utils, s3, query
 from dataregistry.api.db import DataRegistryReadWriteDB
-from dataregistry.api.model import SGCPhenotype, SGCCohort, SGCCohortFile, SGCCasesControlsMetadata, SGCCoOccurrenceMetadata, User, NewUserRequest
+from dataregistry.api.model import SGCPhenotype, SGCCohort, SGCCohortFile, SGCCasesControlsMetadata, SGCCoOccurrenceMetadata, SGCPhenotypeCaseTotals, User, NewUserRequest
 from dataregistry.api.api import get_current_user
 
 router = fastapi.APIRouter()
@@ -1254,6 +1254,22 @@ async def create_sgc_user(request: NewUserRequest, user: User = Depends(get_sgc_
         raise fastapi.HTTPException(
             status_code=500,
             detail=f"Error creating user: {str(e)}"
+        )
+
+
+@router.get("/sgc/phenotype-case-totals", response_model=List[SGCPhenotypeCaseTotals])
+async def get_sgc_phenotype_case_totals_endpoint(user: User = Depends(get_sgc_user)):
+    """
+    Get total cases and controls across all SGC cohorts aggregated by phenotype.
+    Returns statistics showing how many cases/controls exist for each phenotype across all cohorts.
+    """
+    try:
+        results = query.get_sgc_phenotype_case_totals(engine)
+        return results
+    except Exception as e:
+        raise fastapi.HTTPException(
+            status_code=500,
+            detail=f"Error retrieving phenotype case totals: {str(e)}"
         )
 
 

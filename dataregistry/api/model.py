@@ -321,6 +321,13 @@ class SGCCoOccurrenceMetadata(BaseModel):
     phenotype_pair_counts: Dict[str, int] = {}  # {"phenotype1|phenotype2": count}
 
 
+class SGCPhenotypeCaseTotals(BaseModel):
+    phenotype_code: str
+    total_cases_across_cohorts: int
+    total_controls_across_cohorts: int
+    num_cohorts: int
+
+
 class FileUpload(BaseModel):
     id: UUID
     dataset_name: str

@@ -1122,3 +1122,42 @@ def delete_sgc_cooccurrence_metadata(engine, file_id: str) -> bool:
         """), {"file_id": file_id})
         conn.commit()
         return result.rowcount > 0
+
+
+def get_sgc_phenotype_case_totals(engine):
+    """
+    Get total cases and controls across all SGC cohorts by phenotype.
+    Returns a list of phenotype statistics aggregated from all cohorts.
+    """
+    with engine.connect() as conn:
+        query = """
+            SELECT 
+                phenotype_code,
+                SUM(total_cases_for_phenotype) as total_cases_across_cohorts,
+                SUM(total_controls_for_phenotype) as total_controls_across_cohorts,
+                COUNT(DISTINCT cohort_id) as num_cohorts
+            FROM (
+                SELECT 
+                    c.id as cohort_id,
+                    c.name as cohort_name,
+                    CAST(JSON_UNQUOTE(JSON_EXTRACT(ccm.phenotype_counts, CONCAT('$.', phenotype_key, '.cases'))) AS UNSIGNED) as total_cases_for_phenotype,
+                    CAST(JSON_UNQUOTE(JSON_EXTRACT(ccm.phenotype_counts, CONCAT('$.', phenotype_key, '.controls'))) AS UNSIGNED) as total_controls_for_phenotype,
+                    phenotype_key as phenotype_code
+                FROM sgc_cohorts c
+                JOIN sgc_cohort_files cf ON c.id = cf.cohort_id 
+                JOIN sgc_cases_controls_metadata ccm ON cf.id = ccm.file_id
+                JOIN JSON_TABLE(
+                    JSON_KEYS(ccm.phenotype_counts),
+                    '$[*]' COLUMNS (
+                        phenotype_key VARCHAR(50) PATH '$'
+                    )
+                ) AS phenotype_keys
+                WHERE cf.file_type = 'cases_controls_both'
+            ) phenotype_data
+            WHERE total_cases_for_phenotype IS NOT NULL
+            GROUP BY phenotype_code
+            ORDER BY total_cases_across_cohorts DESC
+        """
+        
+        result = conn.execute(text(query)).mappings().all()
+        return [dict(row) for row in result]
