@@ -300,6 +300,7 @@ class SGCCohortFile(BaseModel):
     file_path: str
     file_name: str
     file_size: int
+    column_mapping: Union[Dict, None] = None
     uploaded_at: Union[datetime, None] = None
 
 
