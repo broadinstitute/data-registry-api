@@ -300,6 +300,7 @@ class SGCCohortFile(BaseModel):
     file_path: str
     file_name: str
     file_size: int
+    column_mapping: Union[Dict, None] = None
     uploaded_at: Union[datetime, None] = None
 
 
@@ -319,6 +320,13 @@ class SGCCoOccurrenceMetadata(BaseModel):
     total_pairs: int
     total_cooccurrence_count: int
     phenotype_pair_counts: Dict[str, int] = {}  # {"phenotype1|phenotype2": count}
+
+
+class SGCPhenotypeCaseTotals(BaseModel):
+    phenotype_code: str
+    total_cases_across_cohorts: int
+    total_controls_across_cohorts: int
+    num_cohorts: int
 
 
 class FileUpload(BaseModel):

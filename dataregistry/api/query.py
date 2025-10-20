@@ -809,16 +809,20 @@ def insert_sgc_cohort_file(engine, cohort_file) -> str:
         file_id = str(cohort_file.id).replace('-', '') if cohort_file.id else str(uuid.uuid4()).replace('-', '')
         cohort_id_hex = str(cohort_file.cohort_id).replace('-', '')
         
+        import json
+        column_mapping_json = json.dumps(cohort_file.column_mapping) if cohort_file.column_mapping else None
+        
         conn.execute(text("""
-            INSERT INTO sgc_cohort_files (id, cohort_id, file_type, file_path, file_name, file_size)
-            VALUES (:id, :cohort_id, :file_type, :file_path, :file_name, :file_size)
+            INSERT INTO sgc_cohort_files (id, cohort_id, file_type, file_path, file_name, file_size, column_mapping)
+            VALUES (:id, :cohort_id, :file_type, :file_path, :file_name, :file_size, :column_mapping)
         """), {
             'id': file_id,
             'cohort_id': cohort_id_hex,
             'file_type': cohort_file.file_type,
             'file_path': cohort_file.file_path,
             'file_name': cohort_file.file_name,
-            'file_size': cohort_file.file_size
+            'file_size': cohort_file.file_size,
+            'column_mapping': column_mapping_json
         })
         conn.commit()
         return file_id
@@ -845,7 +849,7 @@ def get_sgc_cohort_by_id(engine, cohort_id: str):
                 c.id as cohort_id, c.name, c.uploaded_by, c.total_sample_size, 
                 c.number_of_males, c.number_of_females, c.cohort_metadata, c.validation_status, c.created_at, c.updated_at,
                 f.id as file_id, f.file_type, f.file_path, f.file_name, 
-                f.file_size, f.uploaded_at as file_uploaded_at
+                f.file_size, f.column_mapping, f.uploaded_at as file_uploaded_at
             FROM sgc_cohorts c
             LEFT JOIN sgc_cohort_files f ON c.id = f.cohort_id
             WHERE c.id = :cohort_id
@@ -859,6 +863,8 @@ def get_sgc_cohort_by_id(engine, cohort_id: str):
                 row_dict = dict(row)
                 if row_dict['cohort_metadata']:
                     row_dict['cohort_metadata'] = json.loads(row_dict['cohort_metadata'])
+                if row_dict['column_mapping']:
+                    row_dict['column_mapping'] = json.loads(row_dict['column_mapping'])
                 parsed_result.append(row_dict)
             return parsed_result
         return None
@@ -1122,3 +1128,80 @@ def delete_sgc_cooccurrence_metadata(engine, file_id: str) -> bool:
         """), {"file_id": file_id})
         conn.commit()
         return result.rowcount > 0
+
+
+def get_sgc_phenotype_case_totals(engine):
+    """
+    Get total cases and controls across all SGC cohorts by phenotype.
+    Returns a list of phenotype statistics aggregated from all cohorts.
+    """
+    import json
+    
+    with engine.connect() as conn:
+        # First, get all the phenotype_counts data
+        query = """
+            SELECT 
+                c.id as cohort_id,
+                c.name as cohort_name,
+                ccm.phenotype_counts
+            FROM sgc_cohorts c
+            JOIN sgc_cohort_files cf ON c.id = cf.cohort_id 
+            JOIN sgc_cases_controls_metadata ccm ON cf.id = ccm.file_id
+            WHERE cf.file_type = 'cases_controls_both'
+            AND ccm.phenotype_counts IS NOT NULL
+        """
+        
+        result = conn.execute(text(query)).mappings().all()
+        
+        # Process the data in Python since JSON operations are complex in MySQL
+        phenotype_totals = {}
+        
+        for row in result:
+            cohort_id = row['cohort_id']
+            cohort_name = row['cohort_name']
+            
+            try:
+                phenotype_counts = json.loads(row['phenotype_counts'])
+                
+                # Iterate through each phenotype in this cohort
+                for phenotype_code, counts in phenotype_counts.items():
+                    if isinstance(counts, dict) and 'cases' in counts:
+                        cases = counts.get('cases', 0)
+                        controls = counts.get('controls', 0)
+                        
+                        # Initialize if this is the first time we see this phenotype
+                        if phenotype_code not in phenotype_totals:
+                            phenotype_totals[phenotype_code] = {
+                                'phenotype_code': phenotype_code,
+                                'total_cases_across_cohorts': 0,
+                                'total_controls_across_cohorts': 0,
+                                'cohorts': set()
+                            }
+                        
+                        # Add to totals
+                        if cases is not None:
+                            phenotype_totals[phenotype_code]['total_cases_across_cohorts'] += int(cases)
+                        if controls is not None:
+                            phenotype_totals[phenotype_code]['total_controls_across_cohorts'] += int(controls)
+                        
+                        phenotype_totals[phenotype_code]['cohorts'].add(cohort_id)
+                        
+            except (json.JSONDecodeError, TypeError) as e:
+                # Skip malformed JSON data
+                print(f"Error parsing phenotype_counts for cohort {cohort_id}: {e}")
+                continue
+        
+        # Convert to final format
+        results = []
+        for phenotype_code, data in phenotype_totals.items():
+            results.append({
+                'phenotype_code': data['phenotype_code'],
+                'total_cases_across_cohorts': data['total_cases_across_cohorts'],
+                'total_controls_across_cohorts': data['total_controls_across_cohorts'],
+                'num_cohorts': len(data['cohorts'])
+            })
+        
+        # Sort by total cases descending
+        results.sort(key=lambda x: x['total_cases_across_cohorts'], reverse=True)
+        
+        return results
