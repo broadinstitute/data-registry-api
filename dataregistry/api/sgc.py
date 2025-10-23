@@ -662,6 +662,40 @@ def validate_cohort_cross_file_consistency(cohort_id: str) -> Optional[str]:
                     if len(missing_phenotypes) > 5:
                         error_msg += f" (and {len(missing_phenotypes) - 5} more)"
                     return error_msg
+                
+                # Validate that co-occurrence counts don't exceed cases counts
+                cooccur_meta = cooccurrence_metadata[cooccur_type]
+                cases_meta = cases_controls_metadata[cases_type]
+                
+                phenotype_pair_counts = cooccur_meta.get('phenotype_pair_counts', {})
+                phenotype_counts = cases_meta.get('phenotype_counts', {})
+                
+                violations = []
+                
+                for pair_key, cooccur_count in phenotype_pair_counts.items():
+                    phenotypes = pair_key.split('|')
+                    if len(phenotypes) != 2:
+                        continue
+                    
+                    phenotype1, phenotype2 = phenotypes
+                    
+                    cases1 = phenotype_counts.get(phenotype1, {}).get('cases', 0)
+                    cases2 = phenotype_counts.get(phenotype2, {}).get('cases', 0)
+                    
+                    # Co-occurrence count cannot exceed the minimum of the two cases counts
+                    min_cases = min(cases1, cases2) if cases1 > 0 and cases2 > 0 else 0
+                    
+                    if min_cases > 0 and cooccur_count > min_cases:
+                        violations.append(
+                            f"({phenotype1}, {phenotype2}): cooccur={cooccur_count} > min(cases={cases1}, cases={cases2})"
+                        )
+                
+                if violations:
+                    sample_violations = violations[:5]
+                    error_msg = f"co-occurrence + cases/controls check: {cooccur_type} has counts exceeding cases: {sample_violations}"
+                    if len(violations) > 5:
+                        error_msg += f" (and {len(violations) - 5} more)"
+                    return error_msg
 
         return None
 

@@ -370,3 +370,100 @@ def test_sgc_cohort_file_foreign_key_constraint(api_client: TestClient):
     
     with pytest.raises(IntegrityError):
         query.insert_sgc_cohort_file(engine, cohort_file)
+
+
+def test_validate_cooccurrence_counts_vs_cases(api_client: TestClient):
+    """Test validation that co-occurrence counts don't exceed cases counts"""
+    from dataregistry.api.model import SGCCasesControlsMetadata, SGCCoOccurrenceMetadata
+    from dataregistry.api.sgc import validate_cohort_cross_file_consistency
+    
+    engine = DataRegistryReadWriteDB().get_engine()
+    
+    # Create a cohort
+    cohort = SGCCohort(
+        name="Test Cohort for Validation",
+        uploaded_by="testuser",
+        total_sample_size=1000,
+        number_of_males=500,
+        number_of_females=500
+    )
+    cohort_id = query.upsert_sgc_cohort(engine, cohort)
+    
+    # Create cases/controls file with specific phenotype counts
+    cc_file = SGCCohortFile(
+        cohort_id=cohort_id,
+        file_type="cases_controls_male",
+        file_path="/data/test/cases_controls_male.csv",
+        file_name="cases_controls_male.csv",
+        file_size=1024
+    )
+    cc_file_id = query.insert_sgc_cohort_file(engine, cc_file)
+    
+    # Insert cases/controls metadata
+    cc_metadata = SGCCasesControlsMetadata(
+        file_id=cc_file_id,
+        distinct_phenotypes=["PHENO_A", "PHENO_B"],
+        total_cases=300,
+        total_controls=200,
+        phenotype_counts={
+            "PHENO_A": {"cases": 100, "controls": 100},
+            "PHENO_B": {"cases": 200, "controls": 100}
+        }
+    )
+    query.insert_sgc_cases_controls_metadata(engine, cc_metadata)
+    
+    # Test case 1: Valid co-occurrence (count within bounds)
+    cooccur_file_valid = SGCCohortFile(
+        cohort_id=cohort_id,
+        file_type="cooccurrence_male",
+        file_path="/data/test/cooccurrence_male_valid.csv",
+        file_name="cooccurrence_male_valid.csv",
+        file_size=512
+    )
+    cooccur_file_valid_id = query.insert_sgc_cohort_file(engine, cooccur_file_valid)
+    
+    cooccur_metadata_valid = SGCCoOccurrenceMetadata(
+        file_id=cooccur_file_valid_id,
+        distinct_phenotypes=["PHENO_A", "PHENO_B"],
+        total_pairs=1,
+        total_cooccurrence_count=50,
+        phenotype_pair_counts={
+            "PHENO_A|PHENO_B": 50  # Valid: 50 <= min(100, 200) = 100
+        }
+    )
+    query.insert_sgc_cooccurrence_metadata(engine, cooccur_metadata_valid)
+    
+    # Validation should pass
+    error = validate_cohort_cross_file_consistency(cohort_id)
+    assert error is None, f"Expected no error for valid counts, but got: {error}"
+    
+    # Clean up the valid co-occurrence file
+    query.delete_sgc_cooccurrence_metadata(engine, cooccur_file_valid_id)
+    query.delete_sgc_cohort_file(engine, cooccur_file_valid_id)
+    
+    # Test case 2: Invalid co-occurrence (count exceeds minimum cases)
+    cooccur_file_invalid = SGCCohortFile(
+        cohort_id=cohort_id,
+        file_type="cooccurrence_male",
+        file_path="/data/test/cooccurrence_male_invalid.csv",
+        file_name="cooccurrence_male_invalid.csv",
+        file_size=512
+    )
+    cooccur_file_invalid_id = query.insert_sgc_cohort_file(engine, cooccur_file_invalid)
+    
+    cooccur_metadata_invalid = SGCCoOccurrenceMetadata(
+        file_id=cooccur_file_invalid_id,
+        distinct_phenotypes=["PHENO_A", "PHENO_B"],
+        total_pairs=1,
+        total_cooccurrence_count=150,
+        phenotype_pair_counts={
+            "PHENO_A|PHENO_B": 150  # Invalid: 150 > min(100, 200) = 100
+        }
+    )
+    query.insert_sgc_cooccurrence_metadata(engine, cooccur_metadata_invalid)
+    
+    # Validation should fail
+    error = validate_cohort_cross_file_consistency(cohort_id)
+    assert error is not None, "Expected validation error for invalid co-occurrence counts"
+    assert "cooccur=150" in error, f"Expected error message to contain count info, got: {error}"
+    assert "min(cases=100, cases=200)" in error, f"Expected error to show cases counts, got: {error}"
