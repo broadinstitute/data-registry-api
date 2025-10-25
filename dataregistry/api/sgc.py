@@ -13,7 +13,7 @@ import httpx
 
 from dataregistry.api import file_utils, s3, query
 from dataregistry.api.db import DataRegistryReadWriteDB
-from dataregistry.api.model import SGCPhenotype, SGCCohort, SGCCohortFile, SGCCasesControlsMetadata, SGCCoOccurrenceMetadata, SGCPhenotypeCaseTotals, User, NewUserRequest
+from dataregistry.api.model import SGCPhenotype, SGCCohort, SGCCohortFile, SGCCasesControlsMetadata, SGCCoOccurrenceMetadata, SGCPhenotypeCaseTotals, SGCPhenotypeCaseCountsBySex, User, NewUserRequest
 from dataregistry.api.api import get_current_user
 
 router = fastapi.APIRouter()
@@ -111,10 +111,7 @@ def validate_sgc_cases_controls(df: pd.DataFrame, header_mapping: Dict[str, str]
             invalid_phenotypes.append(phenotype)
     
     if invalid_phenotypes:
-        sample_invalid = invalid_phenotypes[:5]  # Show first 5
-        error_msg = f"Invalid phenotype codes: {sample_invalid}"
-        if len(invalid_phenotypes) > 5:
-            error_msg += f" (and {len(invalid_phenotypes) - 5} more)"
+        error_msg = f"Invalid phenotype codes: {invalid_phenotypes}"
         errors.append(error_msg)
     
     # Check for duplicate phenotypes
@@ -194,10 +191,7 @@ def validate_sgc_co_occurrence(df: pd.DataFrame, header_mapping: Dict[str, str])
             invalid_phenotypes1.append(phenotype)
     
     if invalid_phenotypes1:
-        sample_invalid = invalid_phenotypes1[:5]
-        error_msg = f"Invalid phenotype codes in {phenotype1_col}: {sample_invalid}"
-        if len(invalid_phenotypes1) > 5:
-            error_msg += f" (and {len(invalid_phenotypes1) - 5} more)"
+        error_msg = f"Invalid phenotype codes in {phenotype1_col}: {invalid_phenotypes1}"
         errors.append(error_msg)
     
     # Validate phenotype2 codes
@@ -207,10 +201,7 @@ def validate_sgc_co_occurrence(df: pd.DataFrame, header_mapping: Dict[str, str])
             invalid_phenotypes2.append(phenotype)
     
     if invalid_phenotypes2:
-        sample_invalid = invalid_phenotypes2[:5]
-        error_msg = f"Invalid phenotype codes in {phenotype2_col}: {sample_invalid}"
-        if len(invalid_phenotypes2) > 5:
-            error_msg += f" (and {len(invalid_phenotypes2) - 5} more)"
+        error_msg = f"Invalid phenotype codes in {phenotype2_col}: {invalid_phenotypes2}"
         errors.append(error_msg)
     
     # Check for duplicate phenotype pairs
@@ -1431,6 +1422,29 @@ async def get_sgc_phenotype_case_totals_endpoint(user: User = Depends(get_sgc_us
         raise fastapi.HTTPException(
             status_code=500,
             detail=f"Error retrieving phenotype case totals: {str(e)}"
+        )
+
+
+@router.get("/sgc/phenotype-case-counts-by-sex", response_model=List[SGCPhenotypeCaseCountsBySex])
+async def get_sgc_phenotype_case_counts_by_sex_endpoint(user: User = Depends(get_sgc_user)):
+    """
+    Get case and control counts by phenotype broken down by sex across all SGC cohorts.
+    Returns statistics showing how many male/female/both cases and controls exist for each phenotype.
+    Requires 'sgc-review-data' permission.
+    """
+    if not check_review_permissions(user):
+        raise fastapi.HTTPException(
+            status_code=403,
+            detail="You need 'sgc-review-data' permission to access phenotype case counts by sex"
+        )
+    
+    try:
+        results = query.get_sgc_phenotype_case_counts_by_sex(engine)
+        return results
+    except Exception as e:
+        raise fastapi.HTTPException(
+            status_code=500,
+            detail=f"Error retrieving phenotype case counts by sex: {str(e)}"
         )
 
 

@@ -1205,3 +1205,96 @@ def get_sgc_phenotype_case_totals(engine):
         results.sort(key=lambda x: x['total_cases_across_cohorts'], reverse=True)
         
         return results
+
+
+def get_sgc_phenotype_case_counts_by_sex(engine):
+    """
+    Get case and control counts by phenotype and sex across all SGC cohorts.
+    Returns a list of phenotype statistics broken down by sex (male, female, both).
+    """
+    import json
+    
+    with engine.connect() as conn:
+        # Get phenotype_counts data for all three file types (male, female, both)
+        query = """
+            SELECT 
+                c.id as cohort_id,
+                c.name as cohort_name,
+                cf.file_type,
+                ccm.phenotype_counts
+            FROM sgc_cohorts c
+            JOIN sgc_cohort_files cf ON c.id = cf.cohort_id 
+            JOIN sgc_cases_controls_metadata ccm ON cf.id = ccm.file_id
+            WHERE cf.file_type IN ('cases_controls_male', 'cases_controls_female', 'cases_controls_both')
+            AND ccm.phenotype_counts IS NOT NULL
+        """
+        
+        result = conn.execute(text(query)).mappings().all()
+        
+        # Process the data by phenotype and sex
+        # Structure: {phenotype_code: {sex: {cases: total, controls: total, cohorts: set}}}
+        phenotype_sex_totals = {}
+        
+        for row in result:
+            cohort_id = row['cohort_id']
+            file_type = row['file_type']
+            
+            # Extract sex from file_type (cases_controls_male -> male)
+            sex = file_type.replace('cases_controls_', '')
+            
+            try:
+                phenotype_counts = json.loads(row['phenotype_counts'])
+                
+                # Iterate through each phenotype in this cohort
+                for phenotype_code, counts in phenotype_counts.items():
+                    if isinstance(counts, dict) and 'cases' in counts:
+                        cases = counts.get('cases', 0)
+                        controls = counts.get('controls', 0)
+                        
+                        # Initialize nested structure if needed
+                        if phenotype_code not in phenotype_sex_totals:
+                            phenotype_sex_totals[phenotype_code] = {}
+                        
+                        if sex not in phenotype_sex_totals[phenotype_code]:
+                            phenotype_sex_totals[phenotype_code][sex] = {
+                                'cases': 0,
+                                'controls': 0,
+                                'cohorts': set()
+                            }
+                        
+                        # Add to totals for this phenotype and sex
+                        if cases is not None:
+                            phenotype_sex_totals[phenotype_code][sex]['cases'] += int(cases)
+                        if controls is not None:
+                            phenotype_sex_totals[phenotype_code][sex]['controls'] += int(controls)
+                        
+                        phenotype_sex_totals[phenotype_code][sex]['cohorts'].add(cohort_id)
+                        
+            except (json.JSONDecodeError, TypeError) as e:
+                # Skip malformed JSON data
+                print(f"Error parsing phenotype_counts for cohort {cohort_id}, file_type {file_type}: {e}")
+                continue
+        
+        # Convert to final format
+        results = []
+        for phenotype_code, sex_data in phenotype_sex_totals.items():
+            phenotype_entry = {'phenotype_code': phenotype_code}
+            
+            # Add data for each sex
+            for sex in ['male', 'female', 'both']:
+                if sex in sex_data:
+                    phenotype_entry[f'{sex}_cases'] = sex_data[sex]['cases']
+                    phenotype_entry[f'{sex}_controls'] = sex_data[sex]['controls']
+                    phenotype_entry[f'{sex}_num_cohorts'] = len(sex_data[sex]['cohorts'])
+                else:
+                    # Set to 0 if no data for this sex
+                    phenotype_entry[f'{sex}_cases'] = 0
+                    phenotype_entry[f'{sex}_controls'] = 0
+                    phenotype_entry[f'{sex}_num_cohorts'] = 0
+            
+            results.append(phenotype_entry)
+        
+        # Sort by total cases (both sexes) descending
+        results.sort(key=lambda x: x['both_cases'], reverse=True)
+        
+        return results

@@ -329,6 +329,19 @@ class SGCPhenotypeCaseTotals(BaseModel):
     num_cohorts: int
 
 
+class SGCPhenotypeCaseCountsBySex(BaseModel):
+    phenotype_code: str
+    male_cases: int
+    male_controls: int
+    male_num_cohorts: int
+    female_cases: int
+    female_controls: int
+    female_num_cohorts: int
+    both_cases: int
+    both_controls: int
+    both_num_cohorts: int
+
+
 class FileUpload(BaseModel):
     id: UUID
     dataset_name: str

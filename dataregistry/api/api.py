@@ -657,6 +657,31 @@ def get_all_hermes_metadata(user: User = Depends(get_current_user)):
     else:
         raise fastapi.HTTPException(status_code=403, detail="You need to be a reviewer")
 
+@router.get('/sgc/phenotypes/download')
+def download_sgc_phenotypes():
+    """Download all SGC phenotypes as a CSV file. This endpoint is public and does not require authentication."""
+    phenotypes = query.get_sgc_phenotypes(engine)
+    try:
+        import csv
+        from io import StringIO
+        
+        output = StringIO()
+        if phenotypes:
+            # Convert SGCPhenotype objects to dicts and exclude created_at
+            phenotype_dicts = [p.dict(exclude={'created_at'}) for p in phenotypes]
+            writer = csv.DictWriter(output, fieldnames=phenotype_dicts[0].keys())
+            writer.writeheader()
+            writer.writerows(phenotype_dicts)
+        
+        return StreamingResponse(
+            iter([output.getvalue()]),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=sgc_phenotypes.csv"}
+        )
+    except Exception as e:
+        logger.exception("Error generating SGC phenotypes CSV")
+        raise fastapi.HTTPException(status_code=500, detail=f"Error generating CSV: {str(e)}")
+
 @router.get("/{ft}/{file_id}", name="stream_file")
 async def stream_file(file_id: str, ft: str):
     no_dash_id = query.shortened_file_id_lookup(file_id, ft, engine)
