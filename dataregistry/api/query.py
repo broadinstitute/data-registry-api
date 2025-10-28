@@ -990,6 +990,15 @@ def update_sgc_cohort_validation_status(engine, cohort_id: str, validation_statu
         return result.rowcount > 0
 
 
+def delete_sgc_cohort(engine, cohort_id: str) -> bool:
+    """Delete an SGC cohort. Returns True if deleted, False if not found."""
+    with engine.connect() as conn:
+        result = conn.execute(text("DELETE FROM sgc_cohorts WHERE id = :cohort_id"), 
+                            {'cohort_id': cohort_id})
+        conn.commit()
+        return result.rowcount > 0
+
+
 def insert_sgc_cases_controls_metadata(engine, metadata) -> str:
     """
     Insert SGC cases/controls metadata record.

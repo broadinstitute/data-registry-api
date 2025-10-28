@@ -1127,6 +1127,37 @@ async def get_sgc_cohort_by_id(cohort_id: str, user: User = Depends(get_sgc_user
         raise fastapi.HTTPException(status_code=500, detail=f"Error retrieving cohort: {str(e)}")
 
 
+@router.delete("/sgc/cohorts/{cohort_id}")
+async def delete_sgc_cohort(cohort_id: str, user: User = Depends(get_sgc_user)):
+    """
+    Delete an SGC cohort and all associated files.
+    - Only users with 'sgc-review-data' permission can delete cohorts
+    """
+    try:
+        # Check permissions: only reviewers can delete cohorts
+        if not check_review_permissions(user):
+            raise fastapi.HTTPException(
+                status_code=403, 
+                detail="Only reviewers can delete cohorts"
+            )
+        
+        # Check if cohort exists
+        cohort_data = query.get_sgc_cohort_by_id(engine, cohort_id)
+        if not cohort_data:
+            raise fastapi.HTTPException(status_code=404, detail="Cohort not found")
+        
+        # Delete the cohort (CASCADE will handle associated files and metadata)
+        deleted = query.delete_sgc_cohort(engine, cohort_id)
+        if not deleted:
+            raise fastapi.HTTPException(status_code=404, detail="Cohort not found")
+        
+        return {"message": "Cohort deleted successfully", "cohort_id": cohort_id}
+    except fastapi.HTTPException:
+        raise
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Error deleting cohort: {str(e)}")
+
+
 @router.delete("/sgc/cohort-files/{file_id}")
 async def delete_sgc_cohort_file(file_id: str, user: User = Depends(get_sgc_user)):
     """
