@@ -447,7 +447,22 @@ async def combine_two_files(male_file_path: str, female_file_path: str, male_map
                     female_mapping['cooccurrence_count']: 'cooccurrence_count'
                 })
         
+        # Aggregate by phenotype (for cases_controls) or phenotype pair (for cooccurrence)
         combined_df = pd.concat([male_df, female_df], ignore_index=True)
+        
+        # Determine grouping columns based on file type
+        if 'phenotype' in combined_df.columns and 'cases' in combined_df.columns:
+            # Cases/controls file - group by phenotype and sum cases/controls
+            combined_df = combined_df.groupby('phenotype', as_index=False).agg({
+                'cases': 'sum',
+                'controls': 'sum'
+            })
+        elif 'phenotype1' in combined_df.columns and 'phenotype2' in combined_df.columns:
+            # Co-occurrence file - group by phenotype pair and sum cooccurrence_count
+            combined_df = combined_df.groupby(['phenotype1', 'phenotype2'], as_index=False).agg({
+                'cooccurrence_count': 'sum'
+            })
+        
         combined_content = combined_df.to_csv(sep='\t', index=False)
         
         return combined_content, 'tsv'
