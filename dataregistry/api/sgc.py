@@ -73,6 +73,7 @@ class SGCCasesControlsMapping(BaseModel):
     phenotype_column: str
     cases_column: str
     controls_column: str
+    breakdown_column: str
 
 
 class SGCCoOccurrenceMapping(BaseModel):
@@ -86,7 +87,8 @@ class SGCCoOccurrenceMapping(BaseModel):
 def validate_sgc_cases_controls(df: pd.DataFrame, header_mapping: Dict[str, str]) -> Optional[str]:
     required_cols = [header_mapping['phenotype'],
                     header_mapping['cases'],
-                    header_mapping['controls']]
+                    header_mapping['controls'],
+                    header_mapping['breakdown']]
     
     # Check required columns exist
     missing_cols = [col for col in required_cols if col not in df.columns]
@@ -240,6 +242,7 @@ def extract_cases_controls_metadata(df: pd.DataFrame, header_mapping: Dict[str, 
     phenotype_col = header_mapping['phenotype']
     cases_col = header_mapping['cases']
     controls_col = header_mapping['controls']
+    # Note: breakdown column is required to exist but we don't store its data
 
     # Get distinct phenotypes
     distinct_phenotypes = df[phenotype_col].dropna().unique().tolist()
@@ -420,20 +423,28 @@ async def combine_two_files(male_file_path: str, female_file_path: str, male_map
         
         # Standardize column names using the mappings if provided
         if male_mapping and female_mapping:
-            # For cases_controls files, expect: phenotype, cases, controls
+            # For cases_controls files, expect: phenotype, cases, controls, breakdown
             # For cooccurrence files, expect: phenotype1, phenotype2, cooccurrence_count
             if 'phenotype' in male_mapping and 'cases' in male_mapping:
                 # Cases/controls mapping
-                male_df = male_df.rename(columns={
+                male_rename = {
                     male_mapping['phenotype']: 'phenotype',
                     male_mapping['cases']: 'cases', 
                     male_mapping['controls']: 'controls'
-                })
-                female_df = female_df.rename(columns={
+                }
+                female_rename = {
                     female_mapping['phenotype']: 'phenotype',
                     female_mapping['cases']: 'cases',
                     female_mapping['controls']: 'controls'
-                })
+                }
+                # Add breakdown column if it exists in mapping
+                if 'breakdown' in male_mapping:
+                    male_rename[male_mapping['breakdown']] = 'breakdown'
+                if 'breakdown' in female_mapping:
+                    female_rename[female_mapping['breakdown']] = 'breakdown'
+                    
+                male_df = male_df.rename(columns=male_rename)
+                female_df = female_df.rename(columns=female_rename)
             elif 'phenotype1' in male_mapping and 'cooccurrence_count' in male_mapping:
                 # Co-occurrence mapping  
                 male_df = male_df.rename(columns={
@@ -453,10 +464,14 @@ async def combine_two_files(male_file_path: str, female_file_path: str, male_map
         # Determine grouping columns based on file type
         if 'phenotype' in combined_df.columns and 'cases' in combined_df.columns:
             # Cases/controls file - group by phenotype and sum cases/controls
-            combined_df = combined_df.groupby('phenotype', as_index=False).agg({
+            # Preserve breakdown column by concatenating values if present
+            agg_dict = {
                 'cases': 'sum',
                 'controls': 'sum'
-            })
+            }
+            if 'breakdown' in combined_df.columns:
+                agg_dict['breakdown'] = lambda x: ';'.join(x.dropna().astype(str))
+            combined_df = combined_df.groupby('phenotype', as_index=False).agg(agg_dict)
         elif 'phenotype1' in combined_df.columns and 'phenotype2' in combined_df.columns:
             # Co-occurrence file - group by phenotype pair and sum cooccurrence_count
             combined_df = combined_df.groupby(['phenotype1', 'phenotype2'], as_index=False).agg({
