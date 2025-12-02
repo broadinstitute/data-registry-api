@@ -219,7 +219,7 @@ def validate_sgc_co_occurrence(df: pd.DataFrame, header_mapping: Dict[str, str])
             error_msg += f" (and {len(duplicates) - 5} more)"
         errors.append(error_msg)
     
-    # Validate num_individuals column (positive integers)
+    # Validate num_individuals column (non-negative integers)
     if df[num_individuals_col].isna().any():
         errors.append(f"Column '{num_individuals_col}' contains empty values")
     else:
@@ -227,8 +227,8 @@ def validate_sgc_co_occurrence(df: pd.DataFrame, header_mapping: Dict[str, str])
             num_numeric = pd.to_numeric(df[num_individuals_col], errors='coerce')
             if num_numeric.isna().any():
                 errors.append(f"Column '{num_individuals_col}' contains non-numeric values")
-            elif (num_numeric <= 0).any():
-                errors.append(f"Column '{num_individuals_col}' must contain only positive integers")
+            elif (num_numeric < 0).any():
+                errors.append(f"Column '{num_individuals_col}' must contain only non-negative integers")
             elif not num_numeric.equals(num_numeric.astype(int)):
                 errors.append(f"Column '{num_individuals_col}' must contain integers, not decimals")
         except Exception:
