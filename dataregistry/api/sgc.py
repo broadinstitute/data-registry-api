@@ -84,7 +84,12 @@ class SGCCoOccurrenceMapping(BaseModel):
 
 
 
-def validate_sgc_cases_controls(df: pd.DataFrame, header_mapping: Dict[str, str]) -> Optional[str]:
+def validate_sgc_cases_controls(df: pd.DataFrame, header_mapping: Dict[str, str]) -> Tuple[Optional[str], Optional[str]]:
+    """Validate SGC cases/controls data.
+    
+    Returns:
+        Tuple of (errors, warnings) where each can be None or a string with messages
+    """
     required_cols = [header_mapping['phenotype'],
                     header_mapping['cases'],
                     header_mapping['controls']]
@@ -96,13 +101,15 @@ def validate_sgc_cases_controls(df: pd.DataFrame, header_mapping: Dict[str, str]
     # Check required columns exist
     missing_cols = [col for col in required_cols if col not in df.columns]
     if missing_cols:
-        return f"Missing required columns: {missing_cols}"
+        return f"Missing required columns: {missing_cols}", None
     
     phenotype_col = header_mapping['phenotype']
     cases_col = header_mapping['cases']
     controls_col = header_mapping['controls']
+    breakdown_col = header_mapping.get('breakdown')
     
     errors = []
+    warnings = []
     
     # Check phenotype column
     if df[phenotype_col].isna().any():
@@ -159,7 +166,86 @@ def validate_sgc_cases_controls(df: pd.DataFrame, header_mapping: Dict[str, str]
         except Exception:
             errors.append(f"Column '{controls_col}' validation failed")
     
-    return "; ".join(errors) if errors else None
+    # Validate breakdown column if present
+    if breakdown_col and breakdown_col in df.columns:
+        for idx, row in df.iterrows():
+            phenotype = row[phenotype_col]
+            cases_value = row[cases_col]
+            breakdown_value = row[breakdown_col]
+            
+            # Skip if breakdown is empty/NaN (it's optional)
+            if pd.isna(breakdown_value) or str(breakdown_value).strip() == '':
+                continue
+            
+            # Skip if cases is not a valid number
+            try:
+                cases_count = int(pd.to_numeric(cases_value))
+            except (ValueError, TypeError):
+                continue  # Already caught by cases column validation
+            
+            # Parse breakdown format: code:number pairs separated by semicolons
+            # Example: B361:12;B35:5
+            breakdown_str = str(breakdown_value).strip()
+            pairs = breakdown_str.split(';')
+            
+            breakdown_total = 0
+            invalid_format = False
+            
+            for pair in pairs:
+                pair = pair.strip()
+                if not pair:
+                    continue
+                    
+                if ':' not in pair:
+                    errors.append(f"Phenotype '{phenotype}' has invalid breakdown format: '{breakdown_str}'. Expected format: 'CODE1:NUM1;CODE2:NUM2'")
+                    invalid_format = True
+                    break
+                
+                parts = pair.split(':')
+                if len(parts) != 2:
+                    errors.append(f"Phenotype '{phenotype}' has invalid breakdown format: '{breakdown_str}'. Expected format: 'CODE1:NUM1;CODE2:NUM2'")
+                    invalid_format = True
+                    break
+                
+                code, count_str = parts
+                code = code.strip()
+                count_str = count_str.strip()
+                
+                if not code:
+                    errors.append(f"Phenotype '{phenotype}' has empty code in breakdown: '{breakdown_str}'")
+                    invalid_format = True
+                    break
+                
+                try:
+                    count = int(count_str)
+                    if count < 0:
+                        errors.append(f"Phenotype '{phenotype}' has negative count in breakdown for code '{code}': {count}")
+                        invalid_format = True
+                        break
+                    
+                    # Check that individual code count doesn't exceed total cases
+                    if count > cases_count:
+                        errors.append(f"Phenotype '{phenotype}' breakdown code '{code}' has count {count} which exceeds total cases {cases_count}")
+                        invalid_format = True
+                        break
+                    
+                    breakdown_total += count
+                    
+                except ValueError:
+                    errors.append(f"Phenotype '{phenotype}' has non-numeric count in breakdown for code '{code}': '{count_str}'")
+                    invalid_format = True
+                    break
+            
+            # Only check total if format was valid
+            if not invalid_format and breakdown_total > 0:
+                # Warning if breakdown total is less than cases
+                if breakdown_total < cases_count:
+                    warnings.append(f"Phenotype '{phenotype}' breakdown total ({breakdown_total}) is less than cases total ({cases_count})")
+    
+    error_str = "; ".join(errors) if errors else None
+    warning_str = "; ".join(warnings) if warnings else None
+    
+    return error_str, warning_str
 
 
 def validate_sgc_co_occurrence(df: pd.DataFrame, header_mapping: Dict[str, str]) -> Optional[str]:
@@ -742,7 +828,7 @@ async def preview_sgc_cases_controls(file: UploadFile, header_mapping: SGCCasesC
     df = await file_utils.parse_file(io.StringIO('\n'.join(sample_lines)), file.filename)
     
     # Validate using cases/controls rules
-    error_message = validate_sgc_cases_controls(df, header_mapping.dict())
+    error_message, warning_message = validate_sgc_cases_controls(df, header_mapping.dict())
     
     if error_message:
         raise fastapi.HTTPException(
@@ -753,7 +839,7 @@ async def preview_sgc_cases_controls(file: UploadFile, header_mapping: SGCCasesC
             }
         )
     
-    return {
+    response = {
         "valid": True,
         "columns": list(df.columns),
         "sample_row_count": len(sample_lines) - 1,
@@ -761,6 +847,11 @@ async def preview_sgc_cases_controls(file: UploadFile, header_mapping: SGCCasesC
         "header_mapping": header_mapping.dict(),
         "message": "File format is valid for SGC cases/controls requirements"
     }
+    
+    if warning_message:
+        response["warnings"] = warning_message
+    
+    return response
 
 
 @router.post("/sgc-preview-co-occurrence")
@@ -923,7 +1014,9 @@ async def upload_and_create_sgc_cohort_file(
         
         error_message = None
         if validation_type == "cases_controls" or file_type.startswith("cases_controls"):
-            error_message = validate_sgc_cases_controls(df, mapping)
+            error_message, validation_warnings = validate_sgc_cases_controls(df, mapping)
+            if validation_warnings:
+                warnings.append(validation_warnings)
         elif validation_type == "cooccurrence" or file_type.startswith("cooccurrence"):
             error_message = validate_sgc_co_occurrence(df, mapping)
 
