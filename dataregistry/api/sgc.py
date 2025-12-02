@@ -73,7 +73,7 @@ class SGCCasesControlsMapping(BaseModel):
     phenotype_column: str
     cases_column: str
     controls_column: str
-    breakdown_column: str
+    breakdown_column: Optional[str] = None
 
 
 class SGCCoOccurrenceMapping(BaseModel):
@@ -87,8 +87,11 @@ class SGCCoOccurrenceMapping(BaseModel):
 def validate_sgc_cases_controls(df: pd.DataFrame, header_mapping: Dict[str, str]) -> Optional[str]:
     required_cols = [header_mapping['phenotype'],
                     header_mapping['cases'],
-                    header_mapping['controls'],
-                    header_mapping['breakdown']]
+                    header_mapping['controls']]
+    
+    # Add breakdown column to required list only if it's provided in mapping
+    if 'breakdown' in header_mapping and header_mapping['breakdown']:
+        required_cols.append(header_mapping['breakdown'])
     
     # Check required columns exist
     missing_cols = [col for col in required_cols if col not in df.columns]
@@ -242,7 +245,7 @@ def extract_cases_controls_metadata(df: pd.DataFrame, header_mapping: Dict[str, 
     phenotype_col = header_mapping['phenotype']
     cases_col = header_mapping['cases']
     controls_col = header_mapping['controls']
-    # Note: breakdown column is required to exist but we don't store its data
+    # Note: breakdown column is optional and not used for metadata extraction
 
     # Get distinct phenotypes
     distinct_phenotypes = df[phenotype_col].dropna().unique().tolist()
