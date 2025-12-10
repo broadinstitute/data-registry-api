@@ -82,6 +82,33 @@ class SGCCoOccurrenceMapping(BaseModel):
     num_individuals_column: str
 
 
+def normalize_suppressed_values(series: pd.Series) -> pd.Series:
+    """Convert suppressed values like '<5', '<10', '< 5' to 0 for validation and calculations.
+    
+    This handles privacy-preserving representations where exact small counts cannot be reported.
+    
+    Args:
+        series: pandas Series with potential suppressed values
+        
+    Returns:
+        Series with suppressed values replaced by 0
+    """
+    def convert_value(val):
+        if pd.isna(val):
+            return val
+        
+        # Convert to string and strip whitespace
+        val_str = str(val).strip()
+        
+        # Check if it matches pattern like '<5', '<10', '< 5', etc.
+        if val_str.startswith('<'):
+            # It's a suppressed value, return 0
+            return 0
+        
+        # Otherwise return original value
+        return val
+    
+    return series.apply(convert_value)
 
 
 def validate_sgc_cases_controls(df: pd.DataFrame, header_mapping: Dict[str, str]) -> Tuple[Optional[str], Optional[str]]:
@@ -111,6 +138,10 @@ def validate_sgc_cases_controls(df: pd.DataFrame, header_mapping: Dict[str, str]
     errors = []
     warnings = []
     
+    # Normalize suppressed values (e.g., '<5', '<10') to 0
+    df[cases_col] = normalize_suppressed_values(df[cases_col])
+    df[controls_col] = normalize_suppressed_values(df[controls_col])
+    
     # Check phenotype column
     if df[phenotype_col].isna().any():
         errors.append(f"Column '{phenotype_col}' contains empty values")
@@ -136,7 +167,7 @@ def validate_sgc_cases_controls(df: pd.DataFrame, header_mapping: Dict[str, str]
             error_msg += f" (and {len(duplicates) - 5} more)"
         errors.append(error_msg)
     
-    # Validate cases column (positive integers)
+    # Validate cases column (non-negative integers, allowing 0 for suppressed values)
     if df[cases_col].isna().any():
         errors.append(f"Column '{cases_col}' contains empty values")
     else:
@@ -144,14 +175,14 @@ def validate_sgc_cases_controls(df: pd.DataFrame, header_mapping: Dict[str, str]
             cases_numeric = pd.to_numeric(df[cases_col], errors='coerce')
             if cases_numeric.isna().any():
                 errors.append(f"Column '{cases_col}' contains non-numeric values")
-            elif (cases_numeric <= 0).any():
-                errors.append(f"Column '{cases_col}' must contain only positive integers")
+            elif (cases_numeric < 0).any():
+                errors.append(f"Column '{cases_col}' must contain only non-negative integers")
             elif not cases_numeric.equals(cases_numeric.astype(int)):
                 errors.append(f"Column '{cases_col}' must contain integers, not decimals")
         except Exception:
             errors.append(f"Column '{cases_col}' validation failed")
     
-    # Validate controls column (positive integers)
+    # Validate controls column (non-negative integers, allowing 0 for suppressed values)
     if df[controls_col].isna().any():
         errors.append(f"Column '{controls_col}' contains empty values")
     else:
@@ -159,8 +190,8 @@ def validate_sgc_cases_controls(df: pd.DataFrame, header_mapping: Dict[str, str]
             controls_numeric = pd.to_numeric(df[controls_col], errors='coerce')
             if controls_numeric.isna().any():
                 errors.append(f"Column '{controls_col}' contains non-numeric values")
-            elif (controls_numeric <= 0).any():
-                errors.append(f"Column '{controls_col}' must contain only positive integers")
+            elif (controls_numeric < 0).any():
+                errors.append(f"Column '{controls_col}' must contain only non-negative integers")
             elif not controls_numeric.equals(controls_numeric.astype(int)):
                 errors.append(f"Column '{controls_col}' must contain integers, not decimals")
         except Exception:
@@ -264,6 +295,9 @@ def validate_sgc_co_occurrence(df: pd.DataFrame, header_mapping: Dict[str, str])
     
     errors = []
     
+    # Normalize suppressed values (e.g., '<5', '<10') to 0
+    df[num_individuals_col] = normalize_suppressed_values(df[num_individuals_col])
+    
     # Check phenotype1 column
     if df[phenotype1_col].isna().any():
         errors.append(f"Column '{phenotype1_col}' contains empty values")
@@ -332,6 +366,10 @@ def extract_cases_controls_metadata(df: pd.DataFrame, header_mapping: Dict[str, 
     cases_col = header_mapping['cases']
     controls_col = header_mapping['controls']
     # Note: breakdown column is optional and not used for metadata extraction
+    
+    # Normalize suppressed values (e.g., '<5', '<10') to 0
+    df[cases_col] = normalize_suppressed_values(df[cases_col])
+    df[controls_col] = normalize_suppressed_values(df[controls_col])
 
     # Get distinct phenotypes
     distinct_phenotypes = df[phenotype_col].dropna().unique().tolist()
@@ -368,6 +406,9 @@ def extract_cooccurrence_metadata(df: pd.DataFrame, header_mapping: Dict[str, st
     phenotype1_col = header_mapping['phenotype1']
     phenotype2_col = header_mapping['phenotype2']
     cooccurrence_count_col = header_mapping['cooccurrence_count']
+    
+    # Normalize suppressed values (e.g., '<5', '<10') to 0
+    df[cooccurrence_count_col] = normalize_suppressed_values(df[cooccurrence_count_col])
 
     # Get all distinct phenotypes from both columns
     phenotypes1 = set(df[phenotype1_col].dropna().unique())
