@@ -247,25 +247,28 @@ def validate_sgc_cases_controls(df: pd.DataFrame, header_mapping: Dict[str, str]
                     invalid_format = True
                     break
                 
-                try:
-                    count = int(count_str)
-                    if count < 0:
-                        errors.append(f"Phenotype '{phenotype}' has negative count in breakdown for code '{code}': {count}")
+                # Handle suppressed values in breakdown (e.g., '<5', '<10')
+                if count_str.startswith('<'):
+                    count = 0  # Treat suppressed values as 0
+                else:
+                    try:
+                        count = int(count_str)
+                        if count < 0:
+                            errors.append(f"Phenotype '{phenotype}' has negative count in breakdown for code '{code}': {count}")
+                            invalid_format = True
+                            break
+                    except ValueError:
+                        errors.append(f"Phenotype '{phenotype}' has non-numeric count in breakdown for code '{code}': '{count_str}'")
                         invalid_format = True
                         break
-                    
-                    # Check that individual code count doesn't exceed total cases
-                    if count > cases_count:
-                        errors.append(f"Phenotype '{phenotype}' breakdown code '{code}' has count {count} which exceeds total cases {cases_count}")
-                        invalid_format = True
-                        break
-                    
-                    breakdown_total += count
-                    
-                except ValueError:
-                    errors.append(f"Phenotype '{phenotype}' has non-numeric count in breakdown for code '{code}': '{count_str}'")
+                
+                # Check that individual code count doesn't exceed total cases
+                if count > cases_count:
+                    errors.append(f"Phenotype '{phenotype}' breakdown code '{code}' has count {count} which exceeds total cases {cases_count}")
                     invalid_format = True
                     break
+                
+                breakdown_total += count
             
             # Only check total if format was valid
             if not invalid_format and breakdown_total > 0:
