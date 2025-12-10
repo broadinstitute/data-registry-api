@@ -1436,9 +1436,16 @@ async def download_sgc_cohort_file(file_id: str, user: User = Depends(get_sgc_us
         
         # Get the S3 path and create a presigned URL
         s3_full_path = file_info['file_path']
-        # Strip s3://bucket/ prefix to get just the key
-        s3_path = s3_full_path.replace(f"s3://{s3.BASE_BUCKET}/", "")
-        presigned_url = s3.get_signed_url(s3.BASE_BUCKET, s3_path)
+        # Parse the bucket and key from the full S3 path
+        # Format: s3://bucket-name/key/path
+        if s3_full_path.startswith('s3://'):
+            s3_full_path_parts = s3_full_path[5:].split('/', 1)
+            bucket = s3_full_path_parts[0]
+            s3_path = s3_full_path_parts[1] if len(s3_full_path_parts) > 1 else ''
+        else:
+            raise ValueError(f"Invalid S3 path format: {s3_full_path}")
+        
+        presigned_url = s3.get_signed_url(bucket, s3_path)
         
         # Return the presigned URL in response payload
         return {
