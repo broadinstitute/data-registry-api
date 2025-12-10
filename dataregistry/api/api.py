@@ -32,7 +32,6 @@ from dataregistry.api.model import DataSet, Study, SavedDatasetInfo, SavedDatase
     QCScriptOptions, HermesPhenotype
 from dataregistry.api.phenotypes import get_phenotypes
 from dataregistry.api.validators import HermesValidator
-from dataregistry.api.vector_search import get_vector_search
 
 HERMES_VALIDATOR = HermesValidator()
 from dataregistry.pub_med import PubIdType, infer_id_type, format_authors, get_elocation_id
@@ -580,49 +579,6 @@ async def stream_ma(ma_id: str):
                              headers={"Content-Disposition": f"attachment; filename={name}"})
 
 
-@router.get('/search/phenotypes', response_class=fastapi.responses.ORJSONResponse)
-async def search_phenotypes(
-        q: str = Query(..., description="Search query text"),
-        group: Optional[str] = Query(None, description="Filter by phenotype group"),
-        similarity_threshold: Optional[float] = Query(0.25, description="Minimum similarity threshold for results")
-):
-    try:
-        vector_search = get_vector_search()
-        results = vector_search.search(
-            query=q,
-            similarity_threshold=similarity_threshold,
-            group_filter=group
-        )
-    except Exception as e:
-        logger.error(f"Vector search error: {str(e)}")
-        raise fastapi.HTTPException(status_code=500, detail=f'Search failed: {str(e)}')
-
-    logger.info(f"Search completed. Found {len(results)} results.")
-    return {
-        "data": results,
-        "total_results": len(results)
-    }
-
-@router.get('/search/terms', response_class=fastapi.responses.ORJSONResponse)
-async def search_terms(
-        q: str = Query(..., description="Search query text"),
-        similarity_threshold: Optional[float] = Query(-0.2, description="Minimum similarity threshold for results")
-):
-    try:
-        vector_search = get_vector_search()
-        results = vector_search.search_terms(
-            query=q,
-            similarity_threshold=similarity_threshold
-        )
-    except Exception as e:
-        logger.error(f"Terms search error: {str(e)}")
-        raise fastapi.HTTPException(status_code=500, detail=f'Terms search failed: {str(e)}')
-
-    logger.info(f"Terms search completed. Found {len(results)} results.")
-    return {
-        "data": results,
-        "total_results": len(results)
-    }
 
 @router.get('/hermes/metadata/{ds_id}')
 def get_hermes_metadata(ds_id, user: User = Depends(get_current_user)):
