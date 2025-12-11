@@ -522,9 +522,23 @@ def derive_both_cooccurrence_metadata(male_metadata: dict, female_metadata: dict
     )
 
 
+def _parse_s3_uri(uri: str) -> Tuple[str, str]:
+    """Extract S3 key and always pair it with the environment bucket.
+    Assumes a single-bucket deployment: the active bucket is os.getenv('S3_BUCKET') or s3.BASE_BUCKET.
+    Accepts either full s3://bucket/key URIs or bare keys and returns (env_bucket, key).
+    """
+    env_bucket = os.getenv('S3_BUCKET') or s3.BASE_BUCKET
+    if isinstance(uri, str) and uri.startswith('s3://'):
+        parts = uri[5:].split('/', 1)
+        key = parts[1] if len(parts) == 2 else ''
+        return env_bucket, key
+    return env_bucket, uri.lstrip('/')
+
+
 async def combine_two_files(male_file_path: str, female_file_path: str, male_mapping: dict = None, female_mapping: dict = None) -> Tuple[str, str]:
-    male_key = male_file_path.replace(f"s3://{s3.BASE_BUCKET}/", "")
-    female_key = female_file_path.replace(f"s3://{s3.BASE_BUCKET}/", "")
+      # Parse S3 URIs robustly and do not assume a fixed bucket
+    male_bucket, male_key = _parse_s3_uri(male_file_path)
+    female_bucket, female_key = _parse_s3_uri(female_file_path)
     
     male_ext = male_key.split('.')[-1].lower()
     female_ext = female_key.split('.')[-1].lower()
@@ -545,10 +559,10 @@ async def combine_two_files(male_file_path: str, female_file_path: str, male_map
         female_separator = ','
     
     try:
-        male_response = s3.get_file_obj(male_key, s3.BASE_BUCKET)
+        male_response = s3.get_file_obj(male_key, male_bucket)
         male_content = male_response['Body'].read().decode('utf-8')
         
-        female_response = s3.get_file_obj(female_key, s3.BASE_BUCKET)
+        female_response = s3.get_file_obj(female_key, female_bucket)
         female_content = female_response['Body'].read().decode('utf-8')
         
         male_df = pd.read_csv(io.StringIO(male_content), sep=male_separator)
@@ -616,7 +630,7 @@ async def combine_two_files(male_file_path: str, female_file_path: str, male_map
         return combined_content, 'tsv'
         
     except Exception as e:
-        raise Exception(f"Error combining files {male_key} and {female_key}: {str(e)}")
+        raise Exception(f"Error combining files {male_file_path} and {female_file_path}: {str(e)}")
 
 
 async def generate_both_file_from_male_female(
@@ -653,15 +667,15 @@ async def generate_both_file_from_male_female(
     separator = '\t'
     file_ext = 'tsv'
     
-    # Upload combined file to S3 using existing utilities
+    # Upload combined file to the environment bucket
+    upload_bucket = os.getenv('S3_BUCKET') or s3.BASE_BUCKET
     s3_path = f"sgc/{cohort_id}/{both_type}/combined_{both_type}.{file_ext}"
-    bucket = s3.BASE_BUCKET
     
     # Use boto3 directly since s3 module doesn't have a put_object wrapper
     import boto3
     s3_client = boto3.client('s3', region_name=s3.S3_REGION)
     s3_client.put_object(
-        Bucket=bucket,
+        Bucket=upload_bucket,
         Key=s3_path,
         Body=combined_content.encode('utf-8'),
         ContentType=content_type
@@ -671,7 +685,7 @@ async def generate_both_file_from_male_female(
     cohort_file = SGCCohortFile(
         cohort_id=cohort_id,
         file_type=both_type,
-        file_path=f"s3://{bucket}/{s3_path}",
+        file_path=f"s3://{upload_bucket}/{s3_path}",
         file_name=f"combined_{both_type}.{file_ext}",
         file_size=len(combined_content.encode('utf-8'))
     )
