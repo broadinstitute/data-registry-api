@@ -604,6 +604,15 @@ async def combine_two_files(male_file_path: str, female_file_path: str, male_map
                     female_mapping['cooccurrence_count']: 'cooccurrence_count'
                 })
         
+        # Normalize numeric columns before grouping to treat '<N' as 0 and avoid str+int issues
+        if all(col in male_df.columns for col in ['phenotype', 'cases', 'controls']):
+            for df_ in (male_df, female_df):
+                df_['cases'] = pd.to_numeric(normalize_suppressed_values(df_['cases']), errors='coerce').fillna(0).astype(int)
+                df_['controls'] = pd.to_numeric(normalize_suppressed_values(df_['controls']), errors='coerce').fillna(0).astype(int)
+        elif all(col in male_df.columns for col in ['phenotype1', 'phenotype2', 'cooccurrence_count']):
+            for df_ in (male_df, female_df):
+                df_['cooccurrence_count'] = pd.to_numeric(normalize_suppressed_values(df_['cooccurrence_count']), errors='coerce').fillna(0).astype(int)
+        
         # Aggregate by phenotype (for cases_controls) or phenotype pair (for cooccurrence)
         combined_df = pd.concat([male_df, female_df], ignore_index=True)
         
