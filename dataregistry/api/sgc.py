@@ -522,23 +522,21 @@ def derive_both_cooccurrence_metadata(male_metadata: dict, female_metadata: dict
     )
 
 
-def _parse_s3_uri(uri: str) -> Tuple[str, str]:
-    """Extract S3 key and always pair it with the environment bucket.
-    Assumes a single-bucket deployment: the active bucket is os.getenv('S3_BUCKET') or s3.BASE_BUCKET.
-    Accepts either full s3://bucket/key URIs or bare keys and returns (env_bucket, key).
+def _parse_s3_uri(uri: str) -> str:
+    """Extract the S3 key from either a full s3://bucket/key URI or a bare key.
+    Bucket selection is centralized to s3.BASE_BUCKET elsewhere.
     """
-    env_bucket = os.getenv('S3_BUCKET') or s3.BASE_BUCKET
     if isinstance(uri, str) and uri.startswith('s3://'):
         parts = uri[5:].split('/', 1)
         key = parts[1] if len(parts) == 2 else ''
-        return env_bucket, key
-    return env_bucket, uri.lstrip('/')
+        return key
+    return uri.lstrip('/')
 
 
 async def combine_two_files(male_file_path: str, female_file_path: str, male_mapping: dict = None, female_mapping: dict = None) -> Tuple[str, str]:
       # Parse S3 URIs robustly and do not assume a fixed bucket
-    male_bucket, male_key = _parse_s3_uri(male_file_path)
-    female_bucket, female_key = _parse_s3_uri(female_file_path)
+    male_key = _parse_s3_uri(male_file_path)
+    female_key = _parse_s3_uri(female_file_path)
     
     male_ext = male_key.split('.')[-1].lower()
     female_ext = female_key.split('.')[-1].lower()
@@ -559,10 +557,11 @@ async def combine_two_files(male_file_path: str, female_file_path: str, male_map
         female_separator = ','
     
     try:
-        male_response = s3.get_file_obj(male_key, male_bucket)
+        bucket = s3.BASE_BUCKET
+        male_response = s3.get_file_obj(male_key, bucket)
         male_content = male_response['Body'].read().decode('utf-8')
         
-        female_response = s3.get_file_obj(female_key, female_bucket)
+        female_response = s3.get_file_obj(female_key, bucket)
         female_content = female_response['Body'].read().decode('utf-8')
         
         male_df = pd.read_csv(io.StringIO(male_content), sep=male_separator)
@@ -667,8 +666,8 @@ async def generate_both_file_from_male_female(
     separator = '\t'
     file_ext = 'tsv'
     
-    # Upload combined file to the environment bucket
-    upload_bucket = os.getenv('S3_BUCKET') or s3.BASE_BUCKET
+    # Upload combined file to the configured SGC bucket
+    upload_bucket = s3.BASE_BUCKET
     s3_path = f"sgc/{cohort_id}/{both_type}/combined_{both_type}.{file_ext}"
     
     # Use boto3 directly since s3 module doesn't have a put_object wrapper
@@ -1193,8 +1192,8 @@ async def upload_and_create_sgc_cohort_file(
         
         # Upload to S3 using boto3
         import boto3
-        s3_client = boto3.client('s3', region_name=os.getenv('AWS_DEFAULT_REGION', 'us-east-1'))
-        bucket = os.getenv('S3_BUCKET', 'dig-data-registry-qa')
+        s3_client = boto3.client('s3', region_name=s3.S3_REGION)
+        bucket = s3.BASE_BUCKET
         
         s3_client.put_object(
             Bucket=bucket,
@@ -1492,18 +1491,16 @@ async def download_sgc_cohort_file(file_id: str, user: User = Depends(get_sgc_us
                 detail="You can only download files from cohorts you uploaded"
             )
         
-        # Get the S3 path and create a presigned URL
+        # Get the S3 path and create a presigned URL using the configured bucket
         s3_full_path = file_info['file_path']
-        # Parse the bucket and key from the full S3 path
-        # Format: s3://bucket-name/key/path
+        # Derive key from stored path (accept full URI or bare key)
         if s3_full_path.startswith('s3://'):
-            s3_full_path_parts = s3_full_path[5:].split('/', 1)
-            bucket = s3_full_path_parts[0]
-            s3_path = s3_full_path_parts[1] if len(s3_full_path_parts) > 1 else ''
+            parts = s3_full_path[5:].split('/', 1)
+            s3_path = parts[1] if len(parts) == 2 else ''
         else:
-            raise ValueError(f"Invalid S3 path format: {s3_full_path}")
+            s3_path = s3_full_path.lstrip('/')
         
-        presigned_url = s3.get_signed_url(bucket, s3_path)
+        presigned_url = s3.get_signed_url(s3.BASE_BUCKET, s3_path)
         
         # Return the presigned URL in response payload
         return {
