@@ -1307,3 +1307,139 @@ def get_sgc_phenotype_case_counts_by_sex(engine):
         results.sort(key=lambda x: x['both_cases'], reverse=True)
         
         return results
+
+
+# ============================================================================
+# PEG (Prioritized Evidence Gene) Functions
+# ============================================================================
+
+def create_peg_study(engine, name: str, created_by: str, metadata: dict) -> str:
+    """Create a new PEG study. Returns the study ID (as hex string without dashes)."""
+    with engine.connect() as conn:
+        study_id = str(uuid.uuid4()).replace('-', '')
+        conn.execute(text("""
+            INSERT INTO peg_studies (id, name, created_by, metadata, created_at, updated_at)
+            VALUES (:id, :name, :created_by, :metadata, NOW(), NOW())
+        """), {
+            'id': study_id,
+            'name': name,
+            'created_by': created_by,
+            'metadata': json.dumps(metadata)
+        })
+        conn.commit()
+        return study_id
+
+
+def get_peg_studies(engine) -> list:
+    """Get all PEG studies."""
+    with engine.connect() as conn:
+        results = conn.execute(text("""
+            SELECT id, name, created_by, metadata, created_at, updated_at
+            FROM peg_studies
+            ORDER BY created_at DESC
+        """)).mappings().all()
+        
+        studies = []
+        for row in results:
+            study = dict(row)
+            study['metadata'] = json.loads(row['metadata']) if row['metadata'] else {}
+            studies.append(study)
+        
+        return studies
+
+
+def get_peg_study(engine, study_id: str) -> Optional[dict]:
+    """Get a specific PEG study by ID."""
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+            SELECT id, name, created_by, metadata, created_at, updated_at
+            FROM peg_studies
+            WHERE id = :study_id
+        """), {'study_id': str(study_id).replace('-', '')}).mappings().first()
+        
+        if result:
+            study = dict(result)
+            study['metadata'] = json.loads(result['metadata']) if result['metadata'] else {}
+            return study
+        return None
+
+
+def update_peg_study(engine, study_id: str, name: str, metadata: dict):
+    """Update a PEG study's metadata."""
+    with engine.connect() as conn:
+        conn.execute(text("""
+            UPDATE peg_studies
+            SET name = :name, metadata = :metadata, updated_at = NOW()
+            WHERE id = :study_id
+        """), {
+            'study_id': str(study_id).replace('-', ''),
+            'name': name,
+            'metadata': json.dumps(metadata)
+        })
+        conn.commit()
+
+
+def delete_peg_study(engine, study_id: str):
+    """Delete a PEG study and all associated files."""
+    with engine.connect() as conn:
+        study_id_hex = str(study_id).replace('-', '')
+        # Delete files first
+        conn.execute(text("DELETE FROM peg_files WHERE study_id = :study_id"), 
+                    {'study_id': study_id_hex})
+        # Delete study
+        conn.execute(text("DELETE FROM peg_studies WHERE id = :study_id"), 
+                    {'study_id': study_id_hex})
+        conn.commit()
+
+
+def create_peg_file(engine, study_id: str, file_type: str, file_name: str, 
+                    file_path: str, file_size: int) -> str:
+    """Create a PEG file record. Returns the file ID (as hex string without dashes)."""
+    with engine.connect() as conn:
+        file_id = str(uuid.uuid4()).replace('-', '')
+        conn.execute(text("""
+            INSERT INTO peg_files (id, study_id, file_type, file_name, file_path, file_size, uploaded_at)
+            VALUES (:id, :study_id, :file_type, :file_name, :file_path, :file_size, NOW())
+        """), {
+            'id': file_id,
+            'study_id': str(study_id).replace('-', ''),
+            'file_type': file_type,
+            'file_name': file_name,
+            'file_path': file_path,
+            'file_size': file_size
+        })
+        conn.commit()
+        return file_id
+
+
+def get_peg_files(engine, study_id: str) -> list:
+    """Get all files for a PEG study."""
+    with engine.connect() as conn:
+        results = conn.execute(text("""
+            SELECT id, study_id, file_type, file_name, file_path, file_size, uploaded_at
+            FROM peg_files
+            WHERE study_id = :study_id
+            ORDER BY uploaded_at DESC
+        """), {'study_id': str(study_id).replace('-', '')}).mappings().all()
+
+        return [dict(row) for row in results]
+
+
+def get_peg_file(engine, file_id: str):
+    """Get a single PEG file by ID."""
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+            SELECT id, study_id, file_type, file_name, file_path, file_size, uploaded_at
+            FROM peg_files
+            WHERE id = :file_id
+        """), {'file_id': str(file_id).replace('-', '')}).mappings().first()
+
+        return dict(result) if result else None
+
+
+def delete_peg_file(engine, file_id: str):
+    """Delete a PEG file."""
+    with engine.connect() as conn:
+        conn.execute(text("DELETE FROM peg_files WHERE id = :file_id"), 
+                    {'file_id': str(file_id).replace('-', '')})
+        conn.commit()

@@ -2,7 +2,7 @@ import fastapi
 from fastapi import Depends
 from fastapi.middleware.cors import CORSMiddleware
 
-from dataregistry.api import api, sgc
+from dataregistry.api import api, sgc, peg
 from dataregistry.api.api import get_current_user
 from dataregistry.api.sgc import get_sgc_user
 
@@ -22,6 +22,7 @@ for route in sgc.router.routes:
         route.dependencies.append(Depends(get_sgc_user))
 
 # all the various routers for each api
+app.include_router(peg.router, prefix='/api', tags=['peg'])
 app.include_router(sgc.router, prefix='/api', tags=['sgc'])
 app.include_router(api.router, prefix='/api', tags=['api'])
 
