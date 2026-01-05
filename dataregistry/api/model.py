@@ -364,3 +364,18 @@ class FileUpload(BaseModel):
         d['status'] = d.get('qc_status', None)
         d['log'] = d.get('qc_log', None)
         return d
+
+
+class SGCGWASFile(BaseModel):
+    id: Union[UUID, None] = None
+    cohort_id: UUID
+    dataset: str
+    phenotype: str
+    ancestry: str
+    file_name: str
+    file_size: int
+    s3_path: str
+    uploaded_at: Union[datetime, None] = None
+    uploaded_by: str
+    column_mapping: Dict[str, str]
+    metadata: Union[Dict, None] = None

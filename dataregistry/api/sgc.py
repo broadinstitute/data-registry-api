@@ -10,10 +10,12 @@ from pydantic import BaseModel
 from starlette.requests import Request
 
 import httpx
+import boto3
+from botocore.exceptions import ClientError
 
 from dataregistry.api import file_utils, s3, query
 from dataregistry.api.db import DataRegistryReadWriteDB
-from dataregistry.api.model import SGCPhenotype, SGCCohort, SGCCohortFile, SGCCasesControlsMetadata, SGCCoOccurrenceMetadata, SGCPhenotypeCaseTotals, SGCPhenotypeCaseCountsBySex, User, NewUserRequest
+from dataregistry.api.model import SGCPhenotype, SGCCohort, SGCCohortFile, SGCCasesControlsMetadata, SGCCoOccurrenceMetadata, SGCPhenotypeCaseTotals, SGCPhenotypeCaseCountsBySex, User, NewUserRequest, SGCGWASFile
 from dataregistry.api.api import get_current_user
 
 router = fastapi.APIRouter()
@@ -1680,5 +1682,204 @@ async def get_sgc_phenotype_case_counts_by_sex_endpoint(user: User = Depends(get
             status_code=500,
             detail=f"Error retrieving phenotype case counts by sex: {str(e)}"
         )
+
+
+class GWASUploadInitRequest(BaseModel):
+    cohort_id: str
+    dataset: str
+    phenotype: str
+    ancestry: str
+    filename: str
+    column_mapping: Dict[str, str]
+    metadata: Optional[Dict] = None
+
+
+class GWASUploadConfirmRequest(BaseModel):
+    cohort_id: str
+    dataset: str
+    phenotype: str
+    ancestry: str
+    filename: str
+    file_size: int
+    s3_key: str
+    column_mapping: Dict[str, str]
+    metadata: Optional[Dict] = None
+
+
+@router.post("/sgc/gwas-upload-url")
+async def generate_gwas_upload_url(request: GWASUploadInitRequest, user: User = Depends(get_sgc_user)):
+    try:
+        cohort_data = query.get_sgc_cohort_by_id(engine, request.cohort_id)
+        if not cohort_data:
+            raise fastapi.HTTPException(status_code=404, detail=f"Cohort {request.cohort_id} not found")
+        
+        cohort_owner = cohort_data[0]['uploaded_by']
+        if not (cohort_owner == user.user_name or check_review_permissions(user)):
+            raise fastapi.HTTPException(status_code=403, detail="You can only upload files to cohorts you own")
+        
+        s3_key = f"sgc/gwas/{request.cohort_id}/{request.dataset}/{request.phenotype}/{request.filename}"
+        
+        presigned_url = s3.generate_presigned_url(
+            'put_object',
+            params={'Bucket': s3.BASE_BUCKET, 'Key': s3_key},
+            expires_in=7200
+        )
+        
+        return {
+            "presigned_url": presigned_url,
+            "s3_key": s3_key,
+            "s3_path": f"s3://{s3.BASE_BUCKET}/{s3_key}",
+            "expires_in_seconds": 7200
+        }
+    except fastapi.HTTPException:
+        raise
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Error generating upload URL: {str(e)}")
+
+
+@router.post("/sgc/confirm-gwas-upload")
+async def confirm_gwas_upload(request: GWASUploadConfirmRequest, user: User = Depends(get_sgc_user)):
+    try:
+        cohort_data = query.get_sgc_cohort_by_id(engine, request.cohort_id)
+        if not cohort_data:
+            raise fastapi.HTTPException(status_code=404, detail=f"Cohort {request.cohort_id} not found")
+        
+        cohort_owner = cohort_data[0]['uploaded_by']
+        if not (cohort_owner == user.user_name or check_review_permissions(user)):
+            raise fastapi.HTTPException(status_code=403, detail="You can only upload files to cohorts you own")
+        
+        s3_client = boto3.client('s3', region_name=s3.S3_REGION)
+        try:
+            s3_client.head_object(Bucket=s3.BASE_BUCKET, Key=request.s3_key)
+        except ClientError as e:
+            if e.response['Error']['Code'] == '404':
+                raise fastapi.HTTPException(status_code=404, detail=f"File not found in S3. Please upload the file first.")
+            raise
+        
+        full_metadata = request.metadata or {}
+        
+        gwas_file = SGCGWASFile(
+            cohort_id=request.cohort_id,
+            dataset=request.dataset,
+            phenotype=request.phenotype,
+            ancestry=request.ancestry,
+            file_name=request.filename,
+            file_size=request.file_size,
+            s3_path=request.s3_key,
+            uploaded_by=user.user_name,
+            column_mapping=request.column_mapping,
+            metadata=full_metadata
+        )
+        
+        file_id = query.insert_sgc_gwas_file(engine, gwas_file)
+        
+        return {
+            "message": "GWAS file upload confirmed",
+            "file_id": file_id,
+            "cohort_id": request.cohort_id,
+            "dataset": request.dataset,
+            "phenotype": request.phenotype,
+            "ancestry": request.ancestry,
+            "file_name": request.filename,
+            "file_size": request.file_size,
+            "s3_path": f"s3://{s3.BASE_BUCKET}/{request.s3_key}",
+            "uploaded_by": user.user_name
+        }
+    except fastapi.HTTPException:
+        raise
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Error confirming upload: {str(e)}")
+
+
+@router.post("/sgc/upload-gwas-stream")
+async def upload_gwas_stream(
+    file: UploadFile,
+    cohort_id: str = Form(...),
+    dataset: str = Form(...),
+    phenotype: str = Form(...),
+    ancestry: str = Form(...),
+    column_mapping: str = Form(...),
+    metadata: Optional[str] = Form(None),
+    user: User = Depends(get_sgc_user)
+):
+    try:
+        cohort_data = query.get_sgc_cohort_by_id(engine, cohort_id)
+        if not cohort_data:
+            raise fastapi.HTTPException(status_code=404, detail=f"Cohort {cohort_id} not found")
+        
+        cohort_owner = cohort_data[0]['uploaded_by']
+        if not (cohort_owner == user.user_name or check_review_permissions(user)):
+            raise fastapi.HTTPException(status_code=403, detail="You can only upload files to cohorts you own")
+        
+        try:
+            col_map = json.loads(column_mapping)
+        except json.JSONDecodeError as e:
+            raise fastapi.HTTPException(status_code=400, detail=f"Invalid column_mapping JSON: {str(e)}")
+        
+        meta_dict = {}
+        if metadata:
+            try:
+                meta_dict = json.loads(metadata)
+            except json.JSONDecodeError as e:
+                raise fastapi.HTTPException(status_code=400, detail=f"Invalid metadata JSON: {str(e)}")
+        
+        s3_key = f"sgc/gwas/{cohort_id}/{dataset}/{phenotype}/{file.filename}"
+        
+        presigned_url = s3.generate_presigned_url(
+            'put_object',
+            params={'Bucket': s3.BASE_BUCKET, 'Key': s3_key},
+            expires_in=3600
+        )
+        
+        file_content = await file.read()
+        file_size = len(file_content)
+        
+        if file_size == 0:
+            raise fastapi.HTTPException(status_code=400, detail="File is empty")
+        
+        async with httpx.AsyncClient(timeout=3600.0) as client:
+            response = await client.put(
+                presigned_url,
+                content=file_content,
+                headers={'Content-Type': file.content_type or 'application/octet-stream'}
+            )
+            
+            if response.status_code not in (200, 201, 204):
+                raise fastapi.HTTPException(
+                    status_code=500,
+                    detail=f"S3 upload failed with status {response.status_code}"
+                )
+        
+        gwas_file = SGCGWASFile(
+            cohort_id=cohort_id,
+            dataset=dataset,
+            phenotype=phenotype,
+            ancestry=ancestry,
+            file_name=file.filename,
+            file_size=file_size,
+            s3_path=s3_key,
+            uploaded_by=user.user_name,
+            column_mapping=col_map,
+            metadata=meta_dict or None
+        )
+        
+        file_id = query.insert_sgc_gwas_file(engine, gwas_file)
+        
+        return {
+            "message": "GWAS file uploaded successfully",
+            "file_id": file_id,
+            "cohort_id": cohort_id,
+            "dataset": dataset,
+            "phenotype": phenotype,
+            "ancestry": ancestry,
+            "file_name": file.filename,
+            "file_size": file_size,
+            "s3_path": f"s3://{s3.BASE_BUCKET}/{s3_key}",
+            "uploaded_by": user.user_name
+        }
+    except fastapi.HTTPException:
+        raise
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Error uploading file: {str(e)}")
 
 

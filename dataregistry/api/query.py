@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 
 from dataregistry.api.model import SavedDataset, DataSet, Study, SavedStudy, SavedPhenotypeDataSet, SavedCredibleSet, \
     CsvBioIndexRequest, SavedCsvBioIndexRequest, User, FileUpload, NewUserRequest, HermesUser, MetaAnalysisRequest, \
-    HermesMetaAnalysisStatus, SavedMetaAnalysisRequest, HermesPhenotype, SGCPhenotype
+    HermesMetaAnalysisStatus, SavedMetaAnalysisRequest, HermesPhenotype, SGCPhenotype, SGCGWASFile
 from dataregistry.id_shortener import shorten_uuid
 
 
@@ -1443,3 +1443,35 @@ def delete_peg_file(engine, file_id: str):
         conn.execute(text("DELETE FROM peg_files WHERE id = :file_id"), 
                     {'file_id': str(file_id).replace('-', '')})
         conn.commit()
+
+
+def insert_sgc_gwas_file(engine, gwas_file) -> str:
+    with engine.connect() as conn:
+        file_id = str(uuid.uuid4()).replace('-', '')
+        cohort_id_hex = str(gwas_file.cohort_id).replace('-', '')
+        
+        column_mapping_json = json.dumps(gwas_file.column_mapping)
+        metadata_json = json.dumps(gwas_file.metadata) if gwas_file.metadata else None
+        
+        conn.execute(text("""
+            INSERT INTO sgc_gwas_files 
+            (id, cohort_id, dataset, phenotype, ancestry, file_name, file_size, s3_path, 
+             uploaded_by, column_mapping, metadata)
+            VALUES 
+            (:id, :cohort_id, :dataset, :phenotype, :ancestry, :file_name, :file_size, :s3_path,
+             :uploaded_by, :column_mapping, :metadata)
+        """), {
+            'id': file_id,
+            'cohort_id': cohort_id_hex,
+            'dataset': gwas_file.dataset,
+            'phenotype': gwas_file.phenotype,
+            'ancestry': gwas_file.ancestry,
+            'file_name': gwas_file.file_name,
+            'file_size': gwas_file.file_size,
+            's3_path': gwas_file.s3_path,
+            'uploaded_by': gwas_file.uploaded_by,
+            'column_mapping': column_mapping_json,
+            'metadata': metadata_json
+        })
+        conn.commit()
+        return file_id
