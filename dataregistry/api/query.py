@@ -548,6 +548,81 @@ def get_file_owner(engine, file_id):
     return result[0] if result else None
 
 
+def save_mskkp_dataset(engine, dataset_id: str, name: str, metadata: dict, s3_path: str, 
+                       filename: str, file_size: int, uploader: str) -> str:
+    """Save MSKKP dataset information to the database."""
+    status = 'uploaded' if file_size > 0 else 'pending'
+    with engine.connect() as conn:
+        conn.execute(text("""
+            INSERT INTO mskkp_datasets(
+                id, name, phenotype, ancestry, genome_build, effective_n,
+                file_name, file_size, s3_path, uploaded_at, uploaded_by,
+                column_map, metadata, status
+            ) VALUES(
+                :id, :name, :phenotype, :ancestry, :genome_build, :effective_n,
+                :file_name, :file_size, :s3_path, NOW(), :uploaded_by,
+                :column_map, :metadata, :status
+            )
+        """), {
+            'id': dataset_id.replace('-', ''),
+            'name': name,
+            'phenotype': metadata.get('phenotype'),
+            'ancestry': metadata['ancestry'],
+            'genome_build': metadata['genome_build'],
+            'effective_n': metadata.get('effective_n'),
+            'file_name': filename,
+            'file_size': file_size,
+            's3_path': s3_path,
+            'uploaded_by': uploader,
+            'column_map': json.dumps(metadata['column_map']),
+            'metadata': json.dumps(metadata),
+            'status': status
+        })
+        conn.commit()
+    return dataset_id
+
+
+def fetch_mskkp_dataset_by_id(engine, dataset_id: str):
+    """Fetch an MSKKP dataset by ID."""
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+            SELECT id, name, phenotype, ancestry, genome_build, effective_n,
+                   file_name, file_size, s3_path, uploaded_at, uploaded_by, 
+                   column_map, metadata, status
+            FROM mskkp_datasets
+            WHERE id = :id
+        """), {'id': dataset_id.replace('-', '')}).first()
+        
+        if result:
+            row_dict = result._asdict()
+            # Parse JSON fields
+            if row_dict.get('column_map'):
+                row_dict['column_map'] = json.loads(row_dict['column_map'])
+            if row_dict.get('metadata'):
+                row_dict['metadata'] = json.loads(row_dict['metadata'])
+            return row_dict
+        return None
+
+
+def update_mskkp_dataset_file_info(engine, dataset_id: str, s3_path: str, filename: str, file_size: int):
+    """Update file information for an MSKKP dataset after upload."""
+    with engine.connect() as conn:
+        conn.execute(text("""
+            UPDATE mskkp_datasets
+            SET file_name = :filename, 
+                file_size = :file_size, 
+                s3_path = :s3_path,
+                status = 'uploaded'
+            WHERE id = :id
+        """), {
+            'filename': filename,
+            'file_size': file_size,
+            's3_path': s3_path,
+            'id': dataset_id.replace('-', '')
+        })
+        conn.commit()
+
+
 def update_file_qc_status(engine, file_id, qc_status):
     with engine.connect() as conn:
         conn.execute(text("UPDATE file_uploads set qc_status = :qc_status where id = :file_id"),
