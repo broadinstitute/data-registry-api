@@ -1825,30 +1825,30 @@ async def upload_gwas_stream(
         
         s3_key = f"sgc/gwas/{cohort_id}/{dataset}/{phenotype}/{file.filename}"
         
-        presigned_url = s3.generate_presigned_url(
-            'put_object',
-            params={'Bucket': s3.BASE_BUCKET, 'Key': s3_key},
-            expires_in=3600
-        )
+        # Stream file directly to S3 using boto3's upload_fileobj
+        # This avoids loading the entire file into memory
+        s3_client = boto3.client('s3', region_name=s3.S3_REGION)
         
-        file_content = await file.read()
-        file_size = len(file_content)
+        # Seek to beginning in case file was partially read
+        await file.seek(0)
+        
+        # Calculate file size by seeking to end and back
+        await file.seek(0, 2)  # Seek to end
+        file_size = await file.tell()
+        await file.seek(0)  # Seek back to beginning
         
         if file_size == 0:
             raise fastapi.HTTPException(status_code=400, detail="File is empty")
         
-        async with httpx.AsyncClient(timeout=3600.0) as client:
-            response = await client.put(
-                presigned_url,
-                content=file_content,
-                headers={'Content-Type': file.content_type or 'application/octet-stream'}
-            )
-            
-            if response.status_code not in (200, 201, 204):
-                raise fastapi.HTTPException(
-                    status_code=500,
-                    detail=f"S3 upload failed with status {response.status_code}"
-                )
+        # Upload file to S3 using streaming upload
+        s3_client.upload_fileobj(
+            file.file,
+            s3.BASE_BUCKET,
+            s3_key,
+            ExtraArgs={
+                'ContentType': file.content_type or 'application/octet-stream'
+            }
+        )
         
         gwas_file = SGCGWASFile(
             cohort_id=cohort_id,
