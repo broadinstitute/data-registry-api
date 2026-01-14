@@ -17,6 +17,7 @@ def cli(ctx, env_file):
 @click.option('--port', '-p', type=int, default=5000)
 def cli_serve(port):
     defaultpy37 = "DEFAULT:!aNULL:!eNULL:!MD5:!3DES:!DES:!RC4:!IDEA:!SEED:!aDSS:!SRP:!PSK"
+    os.environ['UVICORN_LIMIT_MAX_REQUEST_SIZE'] = str(3 * 1024 * 1024 * 1024)
     uvicorn.run(
         'dataregistry.server:app',
         host='0.0.0.0',
