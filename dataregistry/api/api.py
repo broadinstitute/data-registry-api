@@ -638,7 +638,7 @@ def download_sgc_phenotypes():
         logger.exception("Error generating SGC phenotypes CSV")
         raise fastapi.HTTPException(status_code=500, detail=f"Error generating CSV: {str(e)}")
 
-@router.get("/files/{ft}/{file_id}", name="stream_file")
+@router.get("/{ft}/{file_id}", name="stream_file")
 async def stream_file(file_id: str, ft: str):
     no_dash_id = query.shortened_file_id_lookup(file_id, ft, engine)
     try:
