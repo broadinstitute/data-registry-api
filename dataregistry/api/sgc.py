@@ -1802,6 +1802,7 @@ async def upload_gwas_stream(
     metadata: Optional[str] = Form(None),
     user: User = Depends(get_sgc_user)
 ):
+    print(f"[DEBUG] upload_gwas_stream called: cohort={cohort_id}, file={file.filename}")
     try:
         cohort_data = query.get_sgc_cohort_by_id(engine, cohort_id)
         if not cohort_data:
