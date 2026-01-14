@@ -1829,20 +1829,23 @@ async def upload_gwas_stream(
         # This avoids loading the entire file into memory
         s3_client = boto3.client('s3', region_name=s3.S3_REGION)
         
+        # Get the underlying file object (SpooledTemporaryFile)
+        file_obj = file.file
+        
         # Seek to beginning in case file was partially read
-        await file.seek(0)
+        file_obj.seek(0)
         
         # Calculate file size by seeking to end and back
-        await file.seek(0, 2)  # Seek to end
-        file_size = await file.tell()
-        await file.seek(0)  # Seek back to beginning
+        file_obj.seek(0, 2)  # Seek to end
+        file_size = file_obj.tell()
+        file_obj.seek(0)  # Seek back to beginning
         
         if file_size == 0:
             raise fastapi.HTTPException(status_code=400, detail="File is empty")
         
         # Upload file to S3 using streaming upload
         s3_client.upload_fileobj(
-            file.file,
+            file_obj,
             s3.BASE_BUCKET,
             s3_key,
             ExtraArgs={
