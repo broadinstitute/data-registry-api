@@ -4,10 +4,13 @@ import os
 import fastapi
 import pandas as pd
 import io
+import smart_open
 from typing import Dict, List, Optional, Tuple
-from fastapi import UploadFile, Body, Query, Form, Depends, Header
+from fastapi import UploadFile, Body, Form, Depends, Header
 from pydantic import BaseModel
 from starlette.requests import Request
+from streaming_form_data import StreamingFormDataParser
+from streaming_form_data.targets import  S3Target
 
 import httpx
 import boto3
@@ -20,6 +23,19 @@ from dataregistry.api.api import get_current_user
 
 router = fastapi.APIRouter()
 engine = DataRegistryReadWriteDB().get_engine()
+
+
+class GzipS3Target(S3Target):
+    def __init__(self, path, mode='wb', transport_params=None):
+        super().__init__(path, mode, transport_params)
+
+    def on_start(self):
+        self._fd = smart_open.open(
+            self._file_path,
+            self._mode,
+            compression='disable',
+            transport_params=self._transport_params,
+        )
 
 USER_SERVICE_URL = os.getenv('USER_SERVICE_URL', 'https://users.kpndataregistry.org')
 UPLOADER_TOKEN = os.getenv('SGC_UPLOADER_TOKEN')
@@ -1789,6 +1805,119 @@ async def confirm_gwas_upload(request: GWASUploadConfirmRequest, user: User = De
         raise
     except Exception as e:
         raise fastapi.HTTPException(status_code=500, detail=f"Error confirming upload: {str(e)}")
+
+
+@router.post("/sgc/upload-gwas-stream-direct")
+async def upload_gwas_stream_direct(
+    request: Request,
+    user: User = Depends(get_sgc_user)
+):
+    """Stream upload GWAS file directly to S3 without writing to disk.
+    
+    This endpoint uses StreamingFormDataParser to stream the file directly to S3
+    without buffering the entire file in memory or on disk.
+    
+    Required headers:
+    - cohort_id: Cohort ID
+    - dataset: Dataset name
+    - phenotype: Phenotype code
+    - ancestry: Ancestry code
+    - column_mapping: JSON string of column mappings
+    - filename: Name of the file being uploaded
+    
+    Optional headers:
+    - metadata: JSON string of additional metadata
+    """
+    try:
+        # Extract metadata from headers
+        cohort_id = request.headers.get('cohort_id')
+        dataset = request.headers.get('dataset')
+        phenotype = request.headers.get('phenotype')
+        ancestry = request.headers.get('ancestry')
+        column_mapping_str = request.headers.get('column_mapping')
+        filename = request.headers.get('filename')
+        metadata_str = request.headers.get('metadata')
+        
+        # Validate required fields
+        if not all([cohort_id, dataset, phenotype, ancestry, column_mapping_str, filename]):
+            raise fastapi.HTTPException(
+                status_code=400,
+                detail="Missing required headers: cohort_id, dataset, phenotype, ancestry, column_mapping, filename"
+            )
+        
+        # Validate cohort access
+        cohort_data = query.get_sgc_cohort_by_id(engine, cohort_id)
+        if not cohort_data:
+            raise fastapi.HTTPException(status_code=404, detail=f"Cohort {cohort_id} not found")
+        
+        cohort_owner = cohort_data[0]['uploaded_by']
+        if not (cohort_owner == user.user_name or check_review_permissions(user)):
+            raise fastapi.HTTPException(status_code=403, detail="You can only upload files to cohorts you own")
+        
+        # Parse JSON fields
+        try:
+            col_map = json.loads(column_mapping_str)
+        except json.JSONDecodeError as e:
+            raise fastapi.HTTPException(status_code=400, detail=f"Invalid column_mapping JSON: {str(e)}")
+        
+        meta_dict = {}
+        if metadata_str:
+            try:
+                meta_dict = json.loads(metadata_str)
+            except json.JSONDecodeError as e:
+                raise fastapi.HTTPException(status_code=400, detail=f"Invalid metadata JSON: {str(e)}")
+        
+        # Construct S3 path
+        s3_key = f"sgc/gwas/{cohort_id}/{dataset}/{phenotype}/{filename}"
+        s3_path = f"s3://{s3.BASE_BUCKET}/{s3_key}"
+        
+        # Create GzipS3Target for streaming directly to S3 with compression
+        parser = StreamingFormDataParser(request.headers)
+        s3_target = GzipS3Target(s3_path, mode='wb')
+        parser.register('file', s3_target)
+        
+        # Stream the file directly to S3
+        file_size = 0
+        async for chunk in request.stream():
+            file_size += len(chunk)
+            parser.data_received(chunk)
+        
+        if file_size == 0:
+            raise fastapi.HTTPException(status_code=400, detail="File is empty")
+        
+        # Save to database
+        gwas_file = SGCGWASFile(
+            cohort_id=cohort_id,
+            dataset=dataset,
+            phenotype=phenotype,
+            ancestry=ancestry,
+            file_name=filename,
+            file_size=file_size,
+            s3_path=s3_key,
+            uploaded_by=user.user_name,
+            column_mapping=col_map,
+            metadata=meta_dict or None
+        )
+        
+        file_id = query.insert_sgc_gwas_file(engine, gwas_file)
+        
+        return {
+            "message": "GWAS file uploaded successfully",
+            "file_id": file_id,
+            "cohort_id": cohort_id,
+            "dataset": dataset,
+            "phenotype": phenotype,
+            "ancestry": ancestry,
+            "file_name": filename,
+            "file_size": file_size,
+            "s3_path": f"s3://{s3.BASE_BUCKET}/{s3_key}",
+            "uploaded_by": user.user_name
+        }
+        
+    except fastapi.HTTPException:
+        raise
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Error uploading file: {str(e)}")
 
 
 @router.post("/sgc/upload-gwas-stream")
