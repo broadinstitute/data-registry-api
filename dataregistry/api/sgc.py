@@ -1920,5 +1920,36 @@ async def upload_gwas_stream(
         raise fastapi.HTTPException(status_code=500, detail=f"Error uploading file: {str(e)}")
 
 
+@router.get("/sgc/gwas-files/{cohort_id}")
+async def get_sgc_gwas_files_by_cohort_endpoint(cohort_id: str, user: User = Depends(get_sgc_user)):
+    """
+    Get all GWAS files for a specific SGC cohort.
+    - Users with 'sgc-review-data' permission can see files for any cohort
+    - Other users can only see files for cohorts they uploaded
+    """
+    try:
+        # Get cohort to check permissions
+        cohort_data = query.get_sgc_cohort_by_id(engine, cohort_id)
+        if not cohort_data:
+            raise fastapi.HTTPException(status_code=404, detail="Cohort not found")
+        
+        # Check permissions: either the user owns the cohort or has review permissions
+        cohort_owner = cohort_data[0]['uploaded_by']
+        if not (cohort_owner == user.user_name or check_review_permissions(user)):
+            raise fastapi.HTTPException(
+                status_code=403, 
+                detail="You can only view GWAS files for cohorts you uploaded"
+            )
+        
+        # Get GWAS files for the cohort
+        gwas_files = query.get_sgc_gwas_files_by_cohort(engine, cohort_id)
+        
+        return gwas_files
+    except fastapi.HTTPException:
+        raise
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Error retrieving GWAS files: {str(e)}")
+
+
 
 
