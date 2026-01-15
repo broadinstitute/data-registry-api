@@ -1388,8 +1388,8 @@ def get_sgc_phenotype_case_counts_by_sex(engine):
 # PEG (Prioritized Evidence Gene) Functions
 # ============================================================================
 
-def create_peg_study(engine, name: str, created_by: str, metadata: dict) -> str:
-    """Create a new PEG study. Returns the study ID (as hex string without dashes)."""
+def create_peg_study(engine, name: str, created_by: str, metadata: dict) -> dict:
+    """Create a new PEG study. Returns a dict with study ID and accession_id."""
     with engine.connect() as conn:
         study_id = str(uuid.uuid4()).replace('-', '')
         conn.execute(text("""
@@ -1402,14 +1402,26 @@ def create_peg_study(engine, name: str, created_by: str, metadata: dict) -> str:
             'metadata': json.dumps(metadata)
         })
         conn.commit()
-        return study_id
+        
+        # Fetch the accession_number that was auto-generated
+        result = conn.execute(text("""
+            SELECT accession_number FROM peg_studies WHERE id = :id
+        """), {'id': study_id}).first()
+        
+        accession_number = result[0]
+        accession_id = f"PEGSt{accession_number:05d}"
+        
+        return {
+            'id': study_id,
+            'accession_id': accession_id
+        }
 
 
 def get_peg_studies(engine) -> list:
     """Get all PEG studies."""
     with engine.connect() as conn:
         results = conn.execute(text("""
-            SELECT id, name, created_by, metadata, created_at, updated_at
+            SELECT id, name, created_by, metadata, created_at, updated_at, accession_number
             FROM peg_studies
             ORDER BY created_at DESC
         """)).mappings().all()
@@ -1418,6 +1430,8 @@ def get_peg_studies(engine) -> list:
         for row in results:
             study = dict(row)
             study['metadata'] = json.loads(row['metadata']) if row['metadata'] else {}
+            study['accession_id'] = f"PEGSt{row['accession_number']:05d}"
+            del study['accession_number']  # Remove raw accession_number from response
             studies.append(study)
         
         return studies
@@ -1427,7 +1441,7 @@ def get_peg_study(engine, study_id: str) -> Optional[dict]:
     """Get a specific PEG study by ID."""
     with engine.connect() as conn:
         result = conn.execute(text("""
-            SELECT id, name, created_by, metadata, created_at, updated_at
+            SELECT id, name, created_by, metadata, created_at, updated_at, accession_number
             FROM peg_studies
             WHERE id = :study_id
         """), {'study_id': str(study_id).replace('-', '')}).mappings().first()
@@ -1435,6 +1449,8 @@ def get_peg_study(engine, study_id: str) -> Optional[dict]:
         if result:
             study = dict(result)
             study['metadata'] = json.loads(result['metadata']) if result['metadata'] else {}
+            study['accession_id'] = f"PEGSt{result['accession_number']:05d}"
+            del study['accession_number']  # Remove raw accession_number from response
             return study
         return None
 

@@ -25,6 +25,7 @@ class PEGStudyMetadata(BaseModel):
 class PEGStudy(BaseModel):
     """PEG Study response model"""
     id: UUID
+    accession_id: str
     name: str
     created_by: str
     created_at: datetime
@@ -53,14 +54,18 @@ class CreatePEGStudyRequest(BaseModel):
 async def create_peg_study(request: CreatePEGStudyRequest):
     """Create a new PEG study"""
     try:
-        study_id = query.create_peg_study(
+        result = query.create_peg_study(
             engine=engine,
             name=request.name,
             created_by="anonymous",  # TODO: Add auth later
             metadata=request.metadata.dict()
         )
 
-        return {"id": study_id, "message": "PEG study created successfully"}
+        return {
+            "id": result['id'],
+            "accession_id": result['accession_id'],
+            "message": "PEG study created successfully"
+        }
     except Exception as e:
         # Check for duplicate key error
         if "Duplicate entry" in str(e) and "idx_unique_name" in str(e):
