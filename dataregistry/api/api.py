@@ -165,6 +165,8 @@ async def preview_files(file: UploadFile):
     await check_column_counts(sample_lines)
     df = await file_utils.parse_file(io.StringIO('\n'.join(sample_lines)), file.filename)
     dupes = find_dupe_cols(sample_lines[0], ".csv" in file.filename, df.columns)
+    # Filter out Unnamed columns - these are from missing headers and we don't need to validate them
+    dupes = [col for col in dupes if not col.startswith('Unnamed:')]
     if len(dupes) > 0:
         duped_col_str = ', '.join(set([re.sub(r"\.\d+$", '', dupe) for dupe in dupes]))
         raise fastapi.HTTPException(detail=f"{duped_col_str} specified more than once", status_code=400)
