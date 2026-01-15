@@ -1951,5 +1951,53 @@ async def get_sgc_gwas_files_by_cohort_endpoint(cohort_id: str, user: User = Dep
         raise fastapi.HTTPException(status_code=500, detail=f"Error retrieving GWAS files: {str(e)}")
 
 
+@router.get("/sgc/gwas-file/{file_id}/download")
+async def download_sgc_gwas_file(file_id: str, user: User = Depends(get_sgc_user)):
+    """
+    Download an SGC GWAS file using a presigned S3 URL.
+    - Users can download files from cohorts they uploaded
+    - Users with 'sgc-review-data' permission can download any file
+    Returns a presigned S3 URL for the file download.
+    """
+    try:
+        # Get the GWAS file information
+        gwas_file = query.get_sgc_gwas_file_by_id(engine, file_id)
+        if not gwas_file:
+            raise fastapi.HTTPException(status_code=404, detail="GWAS file not found")
+        
+        # Get the cohort to check permissions
+        cohort_id = gwas_file['cohort_id']
+        cohort_data = query.get_sgc_cohort_by_id(engine, cohort_id)
+        if not cohort_data:
+            raise fastapi.HTTPException(status_code=404, detail="Associated cohort not found")
+        
+        # Check permissions: either the user owns the cohort or has review permissions
+        cohort_owner = cohort_data[0]['uploaded_by']
+        if not (cohort_owner == user.user_name or check_review_permissions(user)):
+            raise fastapi.HTTPException(
+                status_code=403,
+                detail="You can only download GWAS files from cohorts you uploaded"
+            )
+        
+        # Generate presigned URL for the S3 file
+        s3_key = gwas_file['s3_path']
+        presigned_url = s3.get_signed_url(s3.BASE_BUCKET, s3_key)
+        
+        return {
+            "presigned_url": presigned_url,
+            "file_name": gwas_file['file_name'],
+            "file_size": gwas_file['file_size'],
+            "cohort_id": cohort_id,
+            "dataset": gwas_file['dataset'],
+            "phenotype": gwas_file['phenotype'],
+            "ancestry": gwas_file['ancestry']
+        }
+        
+    except fastapi.HTTPException:
+        raise
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Error downloading GWAS file: {str(e)}")
+
+
 
 

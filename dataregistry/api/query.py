@@ -1568,6 +1568,31 @@ def insert_sgc_gwas_file(engine, gwas_file) -> str:
         return file_id
 
 
+def get_sgc_gwas_file_by_id(engine, file_id: str):
+    """Get a single SGC GWAS file by ID."""
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+            SELECT 
+                id, cohort_id, dataset, phenotype, ancestry, 
+                file_name, file_size, s3_path, uploaded_at, uploaded_by, 
+                column_mapping, metadata
+            FROM sgc_gwas_files
+            WHERE id = :file_id
+        """), {'file_id': str(file_id).replace('-', '')}).mappings().first()
+        
+        if not result:
+            return None
+        
+        row_dict = dict(result)
+        # Parse JSON fields
+        if row_dict.get('column_mapping'):
+            row_dict['column_mapping'] = json.loads(row_dict['column_mapping'])
+        if row_dict.get('metadata'):
+            row_dict['metadata'] = json.loads(row_dict['metadata'])
+        
+        return row_dict
+
+
 def get_sgc_gwas_files_by_cohort(engine, cohort_id: str):
     """Get all GWAS files for a specific SGC cohort."""
     with engine.connect() as conn:

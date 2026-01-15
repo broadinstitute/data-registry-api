@@ -10,7 +10,7 @@ from sqlalchemy import text
 
 # revision identifiers, used by Alembic.
 revision = 'add_peg_accession'
-down_revision = '2026_01_07_1200'
+down_revision = 'add_qc_job_timing_columns'
 branch_labels = None
 depends_on = None
 
