@@ -1417,14 +1417,27 @@ def create_peg_study(engine, name: str, created_by: str, metadata: dict) -> dict
         }
 
 
-def get_peg_studies(engine) -> list:
-    """Get all PEG studies."""
+def get_peg_studies(engine, created_by: Optional[str] = None) -> list:
+    """Get PEG studies, optionally filtered by created_by.
+    
+    Args:
+        engine: Database engine
+        created_by: Optional username to filter studies. If None, returns all studies.
+    """
     with engine.connect() as conn:
-        results = conn.execute(text("""
-            SELECT id, name, created_by, metadata, created_at, updated_at, accession_number
-            FROM peg_studies
-            ORDER BY created_at DESC
-        """)).mappings().all()
+        if created_by:
+            results = conn.execute(text("""
+                SELECT id, name, created_by, metadata, created_at, updated_at, accession_number
+                FROM peg_studies
+                WHERE created_by = :created_by
+                ORDER BY created_at DESC
+            """), {'created_by': created_by}).mappings().all()
+        else:
+            results = conn.execute(text("""
+                SELECT id, name, created_by, metadata, created_at, updated_at, accession_number
+                FROM peg_studies
+                ORDER BY created_at DESC
+            """)).mappings().all()
         
         studies = []
         for row in results:

@@ -1,20 +1,64 @@
 import io
+import os
 from datetime import datetime
 from typing import Dict, List, Optional
 from uuid import UUID
 
 import boto3
 import fastapi
+import httpx
 import pandas as pd
-from fastapi import UploadFile, File
+from fastapi import UploadFile, File, Depends, Header
 from pydantic import BaseModel
 
 from dataregistry.api import query
 from dataregistry.api import s3
 from dataregistry.api.db import DataRegistryReadWriteDB
+from dataregistry.api.model import User
 
 router = fastapi.APIRouter()
 engine = DataRegistryReadWriteDB().get_engine()
+
+USER_SERVICE_URL = os.getenv('USER_SERVICE_URL', 'https://users.kpndataregistry.org')
+
+
+def check_review_permissions(user: User):
+    """Check if user has PEG review permissions."""
+    return user.permissions and "peg-review-data" in user.permissions
+
+
+async def get_peg_user(authorization: Optional[str] = Header(None)):
+    """Verify PEG user authentication via Bearer token."""
+    if not authorization:
+        raise fastapi.HTTPException(status_code=401, detail='Authorization header required')
+    
+    schema, _, token = authorization.partition(' ')
+    if schema.lower() != 'bearer' or not token:
+        raise fastapi.HTTPException(status_code=401, detail='Bearer token required')
+    
+    peg_user_group = os.getenv('PEG_USER_GROUP', 'peg')
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{USER_SERVICE_URL}/api/auth/verify/",
+                params={"group": peg_user_group},
+                headers={"Authorization": f"Bearer {token}"}
+            )
+            if response.status_code == 200:
+                user_data = response.json()
+                user = user_data.get('user')
+                return User(
+                    id=user.get('id'),
+                    user_name=user.get('username'),
+                    email=user.get('email'),
+                    roles=user.get('roles', []),
+                    permissions=user.get('permissions', [])
+                )
+            else:
+                raise fastapi.HTTPException(status_code=401, detail='Invalid token')
+    except httpx.RequestError:
+        raise fastapi.HTTPException(status_code=503, detail='User service unavailable')
 
 
 class PEGStudyMetadata(BaseModel):
@@ -50,14 +94,23 @@ class CreatePEGStudyRequest(BaseModel):
     metadata: PEGStudyMetadata
 
 
+@router.get("/peg/is-logged-in")
+async def peg_is_logged_in(user: User = Depends(get_peg_user)):
+    """Check if the user is logged in to PEG."""
+    if user:
+        return user
+    else:
+        raise fastapi.HTTPException(status_code=401, detail='Not logged in')
+
+
 @router.post("/peg/studies")
-async def create_peg_study(request: CreatePEGStudyRequest):
+async def create_peg_study(request: CreatePEGStudyRequest, user: User = Depends(get_peg_user)):
     """Create a new PEG study"""
     try:
         result = query.create_peg_study(
             engine=engine,
             name=request.name,
-            created_by="anonymous",  # TODO: Add auth later
+            created_by=user.user_name,
             metadata=request.metadata.dict()
         )
 
@@ -77,38 +130,103 @@ async def create_peg_study(request: CreatePEGStudyRequest):
 
 
 @router.get("/peg/studies")
-async def list_peg_studies():
-    """List all PEG studies"""
-    studies = query.get_peg_studies(engine)
-    return studies
+async def list_peg_studies(user: User = Depends(get_peg_user)):
+    """List PEG studies.
+    - Users with 'peg-review-data' permission can see all studies
+    - Other users can only see studies they created
+    """
+    try:
+        if check_review_permissions(user):
+            # Reviewer can see all studies
+            studies = query.get_peg_studies(engine, created_by=None)
+        else:
+            # Regular user can only see their own studies
+            studies = query.get_peg_studies(engine, created_by=user.user_name)
+        
+        return studies
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Error retrieving studies: {str(e)}")
 
 
 @router.get("/peg/studies/{study_id}")
-async def get_peg_study(study_id: UUID):
-    """Get a specific PEG study"""
-    study = query.get_peg_study(engine, study_id)
-    if not study:
-        raise fastapi.HTTPException(status_code=404, detail="Study not found")
-    return study
+async def get_peg_study(study_id: UUID, user: User = Depends(get_peg_user)):
+    """Get a specific PEG study.
+    - Users with 'peg-review-data' permission can see any study
+    - Other users can only see studies they created
+    """
+    try:
+        study = query.get_peg_study(engine, study_id)
+        if not study:
+            raise fastapi.HTTPException(status_code=404, detail="Study not found")
+        
+        # Check permissions: either the user owns the study or has review permissions
+        if not (study['created_by'] == user.user_name or check_review_permissions(user)):
+            raise fastapi.HTTPException(
+                status_code=403,
+                detail="You can only view studies you created"
+            )
+        
+        return study
+    except fastapi.HTTPException:
+        raise
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Error retrieving study: {str(e)}")
 
 
 @router.patch("/peg/studies/{study_id}")
-async def update_peg_study(study_id: UUID, request: CreatePEGStudyRequest):
-    """Update a PEG study's metadata"""
-    query.update_peg_study(
-        engine=engine,
-        study_id=study_id,
-        name=request.name,
-        metadata=request.metadata.dict()
-    )
-    return {"message": "PEG study updated successfully"}
+async def update_peg_study(study_id: UUID, request: CreatePEGStudyRequest, user: User = Depends(get_peg_user)):
+    """Update a PEG study's metadata.
+    - Users can only update studies they created
+    - Users with 'peg-review-data' permission can update any study
+    """
+    try:
+        study = query.get_peg_study(engine, study_id)
+        if not study:
+            raise fastapi.HTTPException(status_code=404, detail="Study not found")
+        
+        # Check permissions: either the user owns the study or has review permissions
+        if not (study['created_by'] == user.user_name or check_review_permissions(user)):
+            raise fastapi.HTTPException(
+                status_code=403,
+                detail="You can only update studies you created"
+            )
+        
+        query.update_peg_study(
+            engine=engine,
+            study_id=study_id,
+            name=request.name,
+            metadata=request.metadata.dict()
+        )
+        return {"message": "PEG study updated successfully"}
+    except fastapi.HTTPException:
+        raise
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Error updating study: {str(e)}")
 
 
 @router.delete("/peg/studies/{study_id}")
-async def delete_peg_study(study_id: UUID):
-    """Delete a PEG study and all its files"""
-    query.delete_peg_study(engine, study_id)
-    return {"message": "PEG study deleted successfully"}
+async def delete_peg_study(study_id: UUID, user: User = Depends(get_peg_user)):
+    """Delete a PEG study and all its files.
+    - Only users with 'peg-review-data' permission can delete studies
+    """
+    try:
+        # Check permissions: only reviewers can delete studies
+        if not check_review_permissions(user):
+            raise fastapi.HTTPException(
+                status_code=403,
+                detail="Only reviewers can delete studies"
+            )
+        
+        study = query.get_peg_study(engine, study_id)
+        if not study:
+            raise fastapi.HTTPException(status_code=404, detail="Study not found")
+        
+        query.delete_peg_study(engine, study_id)
+        return {"message": "PEG study deleted successfully"}
+    except fastapi.HTTPException:
+        raise
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Error deleting study: {str(e)}")
 
 
 @router.post("/peg/studies/{study_id}/peg-list")
