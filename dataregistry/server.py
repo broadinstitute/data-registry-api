@@ -3,7 +3,7 @@ from fastapi import Depends
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.formparsers import MultiPartParser
 
-from dataregistry.api import api, sgc, peg, mskkp
+from dataregistry.api import api, sgc, peg, mskkp, calr
 from dataregistry.api.api import get_current_user
 from dataregistry.api.sgc import get_sgc_user
 
@@ -27,6 +27,7 @@ for route in sgc.router.routes:
 app.include_router(peg.router, prefix='/api', tags=['peg'])
 app.include_router(sgc.router, prefix='/api', tags=['sgc'])
 app.include_router(mskkp.router, prefix='/api', tags=['mskkp'])
+app.include_router(calr.router, prefix='/api', tags=['calr'])
 app.include_router(api.router, prefix='/api', tags=['api'])
 
 origins = [
