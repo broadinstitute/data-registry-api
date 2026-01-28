@@ -379,3 +379,13 @@ class SGCGWASFile(BaseModel):
     uploaded_by: str
     column_mapping: Dict[str, str]
     metadata: Union[Dict, None] = None
+
+
+class CALRFile(BaseModel):
+    id: Union[UUID, None] = None
+    name: str
+    file_name: str
+    file_size: int
+    s3_path: str
+    uploaded_at: Union[datetime, None] = None
+    uploaded_by: str
