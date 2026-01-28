@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 
 from dataregistry.api.model import SavedDataset, DataSet, Study, SavedStudy, SavedPhenotypeDataSet, SavedCredibleSet, \
     CsvBioIndexRequest, SavedCsvBioIndexRequest, User, FileUpload, NewUserRequest, HermesUser, MetaAnalysisRequest, \
-    HermesMetaAnalysisStatus, SavedMetaAnalysisRequest, HermesPhenotype, SGCPhenotype, SGCGWASFile
+    HermesMetaAnalysisStatus, SavedMetaAnalysisRequest, HermesPhenotype, SGCPhenotype, SGCGWASFile, CALRFile
 from dataregistry.id_shortener import shorten_uuid
 
 
@@ -1610,15 +1610,15 @@ def get_sgc_gwas_files_by_cohort(engine, cohort_id: str):
     """Get all GWAS files for a specific SGC cohort."""
     with engine.connect() as conn:
         result = conn.execute(text("""
-            SELECT 
-                id, cohort_id, dataset, phenotype, ancestry, 
-                file_name, file_size, s3_path, uploaded_at, uploaded_by, 
+            SELECT
+                id, cohort_id, dataset, phenotype, ancestry,
+                file_name, file_size, s3_path, uploaded_at, uploaded_by,
                 column_mapping, metadata
             FROM sgc_gwas_files
             WHERE cohort_id = :cohort_id
             ORDER BY uploaded_at DESC
         """), {'cohort_id': str(cohort_id).replace('-', '')}).mappings().all()
-        
+
         # Parse JSON fields
         parsed_results = []
         for row in result:
@@ -1628,5 +1628,63 @@ def get_sgc_gwas_files_by_cohort(engine, cohort_id: str):
             if row_dict.get('metadata'):
                 row_dict['metadata'] = json.loads(row_dict['metadata'])
             parsed_results.append(row_dict)
-        
+
         return parsed_results
+
+
+# =============================================================================
+# CALR Functions
+# =============================================================================
+
+def insert_calr_file(engine, calr_file: CALRFile) -> str:
+    """Insert a new CALR file record. Returns the file ID."""
+    with engine.connect() as conn:
+        file_id = str(calr_file.id).replace('-', '') if calr_file.id else str(uuid.uuid4()).replace('-', '')
+
+        conn.execute(text("""
+            INSERT INTO calr_files (id, name, file_name, file_size, s3_path, uploaded_by)
+            VALUES (:id, :name, :file_name, :file_size, :s3_path, :uploaded_by)
+        """), {
+            'id': file_id,
+            'name': calr_file.name,
+            'file_name': calr_file.file_name,
+            'file_size': calr_file.file_size,
+            's3_path': calr_file.s3_path,
+            'uploaded_by': calr_file.uploaded_by
+        })
+        conn.commit()
+        return file_id
+
+
+def get_calr_files_by_user(engine, uploaded_by: str):
+    """Get all CALR files uploaded by a specific user."""
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+            SELECT id, name, file_name, file_size, s3_path, uploaded_at, uploaded_by
+            FROM calr_files
+            WHERE uploaded_by = :uploaded_by
+            ORDER BY uploaded_at DESC
+        """), {'uploaded_by': uploaded_by}).mappings().all()
+
+        return [dict(row) for row in result]
+
+
+def get_calr_file_by_id(engine, file_id: str):
+    """Get a single CALR file by ID."""
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+            SELECT id, name, file_name, file_size, s3_path, uploaded_at, uploaded_by
+            FROM calr_files
+            WHERE id = :file_id
+        """), {'file_id': file_id}).mappings().first()
+
+        return dict(result) if result else None
+
+
+def delete_calr_file(engine, file_id: str) -> bool:
+    """Delete a CALR file by ID. Returns True if deleted, False if not found."""
+    with engine.connect() as conn:
+        result = conn.execute(text("DELETE FROM calr_files WHERE id = :file_id"),
+                            {'file_id': file_id})
+        conn.commit()
+        return result.rowcount > 0

@@ -3,9 +3,10 @@ from fastapi import Depends
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.formparsers import MultiPartParser
 
-from dataregistry.api import api, sgc, peg, mskkp
+from dataregistry.api import api, sgc, peg, mskkp, calr
 from dataregistry.api.api import get_current_user
 from dataregistry.api.sgc import get_sgc_user
+from dataregistry.api.calr import get_calr_user
 
 MultiPartParser.max_part_size = 5 * 1024 * 1024 * 1024  # 5GB
 
@@ -23,9 +24,13 @@ for route in sgc.router.routes:
     if route.name not in SGC_ROUTES_WITHOUT_AUTH:
         route.dependencies.append(Depends(get_sgc_user))
 
+for route in calr.router.routes:
+    route.dependencies.append(Depends(get_calr_user))
+
 # all the various routers for each api
 app.include_router(peg.router, prefix='/api', tags=['peg'])
 app.include_router(sgc.router, prefix='/api', tags=['sgc'])
+app.include_router(calr.router, prefix='/api', tags=['calr'])
 app.include_router(mskkp.router, prefix='/api', tags=['mskkp'])
 app.include_router(api.router, prefix='/api', tags=['api'])
 
