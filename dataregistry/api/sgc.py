@@ -1707,6 +1707,8 @@ class GWASUploadInitRequest(BaseModel):
     ancestry: str
     filename: str
     column_mapping: Dict[str, str]
+    cases: Optional[int] = None
+    controls: Optional[int] = None
     metadata: Optional[Dict] = None
 
 
@@ -1719,6 +1721,8 @@ class GWASUploadConfirmRequest(BaseModel):
     file_size: int
     s3_key: str
     column_mapping: Dict[str, str]
+    cases: Optional[int] = None
+    controls: Optional[int] = None
     metadata: Optional[Dict] = None
 
 
@@ -1766,10 +1770,19 @@ async def confirm_gwas_upload(request: GWASUploadConfirmRequest, user: User = De
         
         s3_client = boto3.client('s3', region_name=s3.S3_REGION)
         try:
-            s3_client.head_object(Bucket=s3.BASE_BUCKET, Key=request.s3_key)
+            response = s3_client.get_object(Bucket=s3.BASE_BUCKET, Key=request.s3_key)
+            # Read first chunk to validate format
+            file_chunk = response['Body'].read(8192)  # Read first 8KB for validation
+            
+            is_valid, error_msg = await file_utils.validate_tab_delimited_format(file_chunk)
+            if not is_valid:
+                raise fastapi.HTTPException(status_code=400, detail=f"Invalid file format: {error_msg}")
+                
         except ClientError as e:
             if e.response['Error']['Code'] == '404':
                 raise fastapi.HTTPException(status_code=404, detail=f"File not found in S3. Please upload the file first.")
+            raise
+        except fastapi.HTTPException:
             raise
         
         full_metadata = request.metadata or {}
@@ -1784,6 +1797,8 @@ async def confirm_gwas_upload(request: GWASUploadConfirmRequest, user: User = De
             s3_path=request.s3_key,
             uploaded_by=user.user_name,
             column_mapping=request.column_mapping,
+            cases=request.cases,
+            controls=request.controls,
             metadata=full_metadata
         )
         
@@ -1826,6 +1841,8 @@ async def upload_gwas_stream(
     - filename: Name of the file being uploaded
     
     Optional headers:
+    - cases: Number of cases (integer)
+    - controls: Number of controls (integer)
     - metadata: JSON string of additional metadata
     """
     try:
@@ -1837,6 +1854,22 @@ async def upload_gwas_stream(
         column_mapping_str = request.headers.get('column_mapping')
         filename = request.headers.get('filename')
         metadata_str = request.headers.get('metadata')
+        cases_str = request.headers.get('cases')
+        controls_str = request.headers.get('controls')
+        
+        # Parse optional cases and controls
+        cases = None
+        controls = None
+        if cases_str:
+            try:
+                cases = int(cases_str)
+            except ValueError:
+                raise fastapi.HTTPException(status_code=400, detail="cases header must be an integer")
+        if controls_str:
+            try:
+                controls = int(controls_str)
+            except ValueError:
+                raise fastapi.HTTPException(status_code=400, detail="controls header must be an integer")
         
         # Validate required fields
         if not all([cohort_id, dataset, phenotype, ancestry, column_mapping_str, filename]):
@@ -1871,19 +1904,36 @@ async def upload_gwas_stream(
         s3_key = f"sgc/gwas/{cohort_id}/{dataset}/{phenotype}/{filename}"
         s3_path = f"s3://{s3.BASE_BUCKET}/{s3_key}"
         
-        # Create GzipS3Target for streaming directly to S3 with compression
+        # Validate file format by reading first chunk
+        first_chunk = b""
+        file_size = 0
+        chunks = []
+        validation_done = False
+        
+        async for chunk in request.stream():
+            if not validation_done:
+                first_chunk += chunk
+                # Validate after collecting enough bytes to inspect (at least 1KB or full chunk if smaller)
+                if len(first_chunk) >= 1024 or not chunk:
+                    is_valid, error_msg = await file_utils.validate_tab_delimited_format(first_chunk)
+                    if not is_valid:
+                        raise fastapi.HTTPException(status_code=400, detail=f"Invalid file format: {error_msg}")
+                    validation_done = True
+            
+            chunks.append(chunk)
+            file_size += len(chunk)
+        
+        if file_size == 0:
+            raise fastapi.HTTPException(status_code=400, detail="File is empty")
+        
+        # Reconstruct stream for streaming parser
+        # Now stream the file to S3
         parser = StreamingFormDataParser(request.headers)
         s3_target = GzipS3Target(s3_path, mode='wb')
         parser.register('file', s3_target)
         
-        # Stream the file directly to S3
-        file_size = 0
-        async for chunk in request.stream():
-            file_size += len(chunk)
+        for chunk in chunks:
             parser.data_received(chunk)
-        
-        if file_size == 0:
-            raise fastapi.HTTPException(status_code=400, detail="File is empty")
         
         # Save to database
         gwas_file = SGCGWASFile(
@@ -1896,6 +1946,8 @@ async def upload_gwas_stream(
             s3_path=s3_key,
             uploaded_by=user.user_name,
             column_mapping=col_map,
+            cases=cases,
+            controls=controls,
             metadata=meta_dict or None
         )
         
@@ -1949,6 +2001,27 @@ async def get_sgc_gwas_files_by_cohort_endpoint(cohort_id: str, user: User = Dep
         raise
     except Exception as e:
         raise fastapi.HTTPException(status_code=500, detail=f"Error retrieving GWAS files: {str(e)}")
+
+
+@router.get("/sgc/gwas-summary")
+async def get_gwas_summary(user: User = Depends(get_sgc_user)):
+    """
+    Get summary of all GWAS files for reviewers.
+    Returns phenotype, ancestry, cases, and controls for each file.
+    Requires 'sgc-review-data' permission.
+    """
+    if not check_review_permissions(user):
+        raise fastapi.HTTPException(
+            status_code=403,
+            detail="You need 'sgc-review-data' permission to access GWAS summary"
+        )
+    
+    try:
+        # Get all GWAS files with their metadata
+        gwas_files = query.get_all_sgc_gwas_files(engine)
+        return gwas_files
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Error retrieving GWAS summary: {str(e)}")
 
 
 @router.get("/sgc/gwas-file/{file_id}/download")

@@ -1560,10 +1560,10 @@ def insert_sgc_gwas_file(engine, gwas_file) -> str:
         conn.execute(text("""
             INSERT INTO sgc_gwas_files 
             (id, cohort_id, dataset, phenotype, ancestry, file_name, file_size, s3_path, 
-             uploaded_by, column_mapping, metadata)
+             uploaded_by, column_mapping, cases, controls, metadata)
             VALUES 
             (:id, :cohort_id, :dataset, :phenotype, :ancestry, :file_name, :file_size, :s3_path,
-             :uploaded_by, :column_mapping, :metadata)
+             :uploaded_by, :column_mapping, :cases, :controls, :metadata)
         """), {
             'id': file_id,
             'cohort_id': cohort_id_hex,
@@ -1575,6 +1575,8 @@ def insert_sgc_gwas_file(engine, gwas_file) -> str:
             's3_path': gwas_file.s3_path,
             'uploaded_by': gwas_file.uploaded_by,
             'column_mapping': column_mapping_json,
+            'cases': gwas_file.cases,
+            'controls': gwas_file.controls,
             'metadata': metadata_json
         })
         conn.commit()
@@ -1588,7 +1590,7 @@ def get_sgc_gwas_file_by_id(engine, file_id: str):
             SELECT 
                 id, cohort_id, dataset, phenotype, ancestry, 
                 file_name, file_size, s3_path, uploaded_at, uploaded_by, 
-                column_mapping, metadata
+                column_mapping, cases, controls, metadata
             FROM sgc_gwas_files
             WHERE id = :file_id
         """), {'file_id': str(file_id).replace('-', '')}).mappings().first()
@@ -1606,6 +1608,31 @@ def get_sgc_gwas_file_by_id(engine, file_id: str):
         return row_dict
 
 
+def get_all_sgc_gwas_files(engine):
+    """Get all GWAS files across all cohorts."""
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+            SELECT
+                id, cohort_id, dataset, phenotype, ancestry,
+                file_name, file_size, s3_path, uploaded_at, uploaded_by,
+                column_mapping, cases, controls, metadata
+            FROM sgc_gwas_files
+            ORDER BY phenotype ASC, ancestry ASC, uploaded_at DESC
+        """)).mappings().all()
+
+        # Parse JSON fields
+        parsed_results = []
+        for row in result:
+            row_dict = dict(row)
+            if row_dict.get('column_mapping'):
+                row_dict['column_mapping'] = json.loads(row_dict['column_mapping'])
+            if row_dict.get('metadata'):
+                row_dict['metadata'] = json.loads(row_dict['metadata'])
+            parsed_results.append(row_dict)
+
+        return parsed_results
+
+
 def get_sgc_gwas_files_by_cohort(engine, cohort_id: str):
     """Get all GWAS files for a specific SGC cohort."""
     with engine.connect() as conn:
@@ -1613,7 +1640,7 @@ def get_sgc_gwas_files_by_cohort(engine, cohort_id: str):
             SELECT
                 id, cohort_id, dataset, phenotype, ancestry,
                 file_name, file_size, s3_path, uploaded_at, uploaded_by,
-                column_mapping, metadata
+                column_mapping, cases, controls, metadata
             FROM sgc_gwas_files
             WHERE cohort_id = :cohort_id
             ORDER BY uploaded_at DESC

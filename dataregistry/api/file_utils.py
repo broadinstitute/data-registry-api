@@ -90,6 +90,59 @@ async def decompress_gzip(stream: bytes) -> bytes:
         return gz.read()
 
 
+async def validate_tab_delimited_format(file_bytes: bytes) -> tuple:
+    """
+    Validate that the file is tab-delimited (compressed or uncompressed).
+    
+    Args:
+        file_bytes: First chunk of file bytes to inspect
+        
+    Returns:
+        (is_valid, error_message) tuple. error_message is None if valid.
+    """
+    try:
+        # Detect and decompress if needed
+        if await is_gzip(file_bytes):
+            try:
+                file_bytes = await decompress_gzip(file_bytes)
+            except Exception as e:
+                return False, f"Failed to decompress gzip file: {str(e)}"
+        
+        # Decode the bytes
+        try:
+            text_content = file_bytes.decode('utf-8')
+        except UnicodeDecodeError:
+            return False, "File is not valid UTF-8 text"
+        
+        # Split into lines
+        lines = text_content.strip().split('\n')
+        if not lines:
+            return False, "File is empty"
+        
+        # Check first line has tab separator
+        first_line = lines[0]
+        if '\t' not in first_line:
+            return False, "File does not appear to be tab-delimited (no tabs found in header)"
+        
+        # Count tabs in first line
+        first_line_tabs = first_line.count('\t')
+        if first_line_tabs < 1:
+            return False, "File header must have at least 2 tab-separated columns"
+        
+        # Verify following lines have consistent tab count (check first few lines)
+        lines_to_check = min(10, len(lines))
+        for i in range(1, lines_to_check):
+            if lines[i].strip():  # Skip empty lines
+                line_tabs = lines[i].count('\t')
+                if line_tabs != first_line_tabs:
+                    return False, f"Inconsistent column count: header has {first_line_tabs + 1} columns but line {i + 1} has {line_tabs + 1} columns"
+        
+        return True, None
+        
+    except Exception as e:
+        return False, f"Error validating file format: {str(e)}"
+
+
 async def get_text_sample(file: UploadFile) -> list:
     text_bytes = b""
     while True:

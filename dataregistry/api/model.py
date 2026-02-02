@@ -342,6 +342,12 @@ class SGCPhenotypeCaseCountsBySex(BaseModel):
     both_num_cohorts: int
 
 
+class SGCGWASSummary(BaseModel):
+    phenotype: str
+    ancestry: Union[str, None] = None  # None indicates a total row
+    num_files: int
+
+
 class FileUpload(BaseModel):
     id: UUID
     dataset_name: str
@@ -378,6 +384,8 @@ class SGCGWASFile(BaseModel):
     uploaded_at: Union[datetime, None] = None
     uploaded_by: str
     column_mapping: Dict[str, str]
+    cases: Union[int, None] = None
+    controls: Union[int, None] = None
     metadata: Union[Dict, None] = None
 
 
