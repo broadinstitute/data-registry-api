@@ -29,7 +29,7 @@ from dataregistry.api.jwt_utils import get_encoded_jwt_data, get_decoded_jwt_dat
 from dataregistry.api.model import DataSet, Study, SavedDatasetInfo, SavedDataset, UserCredentials, User, SavedStudy, \
     CreateBiondexRequest, CsvBioIndexRequest, BioIndexCreationStatus, SavedCsvBioIndexRequest, HermesFileStatus, \
     HermesUploadStatus, NewUserRequest, StartAggregatorRequest, MetaAnalysisRequest, QCHermesFileRequest, \
-    QCScriptOptions, HermesPhenotype
+    QCScriptOptions, HermesPhenotype, FileType
 from dataregistry.api.phenotypes import get_phenotypes
 from dataregistry.api.validators import HermesValidator
 
@@ -641,15 +641,13 @@ def download_sgc_phenotypes():
         raise fastapi.HTTPException(status_code=500, detail=f"Error generating CSV: {str(e)}")
 
 @router.get("/{ft}/{file_id}", name="stream_file")
-async def stream_file(file_id: str, ft: str):
-    no_dash_id = query.shortened_file_id_lookup(file_id, ft, engine)
+async def stream_file(file_id: str, ft: FileType):
+    no_dash_id = query.shortened_file_id_lookup(file_id, ft.value, engine)
     try:
-        if ft == "cs":
+        if ft == FileType.CS:
             s3_path = query.get_credible_set_file(engine, no_dash_id)
-        elif ft == "d":
+        elif ft == FileType.D:
             s3_path = query.get_phenotype_file(engine, no_dash_id)
-        else:
-            raise fastapi.HTTPException(status_code=404, detail=f'Invalid file type: {ft}')
     except ValueError:
         raise fastapi.HTTPException(status_code=404, detail=f'Invalid file: {file_id}')
     split = s3_path[5:].split('/')

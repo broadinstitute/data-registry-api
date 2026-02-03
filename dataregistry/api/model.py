@@ -144,6 +144,12 @@ class HermesMetaAnalysisStatus(str, Enum):
     READY_FOR_REVIEW = "READY FOR REVIEW"
 
 
+class FileType(str, Enum):
+    """File types for stream_file endpoint - constrains /{ft}/{file_id} route."""
+    CS = "cs"
+    D = "d"
+
+
 class HermesUploadStatus(BaseModel):
     status: HermesFileStatus
 
