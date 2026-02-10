@@ -1659,6 +1659,30 @@ def get_sgc_gwas_files_by_cohort(engine, cohort_id: str):
         return parsed_results
 
 
+def get_all_sgc_cohort_files_with_cohort_names(engine):
+    """Get all SGC cohort files joined with cohort names for archive building."""
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+            SELECT f.file_path, f.file_name, f.file_type, c.name as cohort_name
+            FROM sgc_cohort_files f
+            JOIN sgc_cohorts c ON f.cohort_id = c.id
+            ORDER BY c.name, f.file_type
+        """)).mappings().all()
+        return [dict(row) for row in result]
+
+
+def get_all_sgc_gwas_files_with_cohort_names(engine):
+    """Get all SGC GWAS files joined with cohort names for archive building."""
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+            SELECT g.s3_path, g.file_name, g.dataset, g.phenotype, c.name as cohort_name
+            FROM sgc_gwas_files g
+            JOIN sgc_cohorts c ON g.cohort_id = c.id
+            ORDER BY c.name, g.dataset, g.phenotype
+        """)).mappings().all()
+        return [dict(row) for row in result]
+
+
 # =============================================================================
 # CALR Functions
 # =============================================================================
