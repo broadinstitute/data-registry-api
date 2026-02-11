@@ -2106,5 +2106,55 @@ async def download_sgc_gwas_file(file_id: str, user: User = Depends(get_sgc_user
         raise fastapi.HTTPException(status_code=500, detail=f"Error downloading GWAS file: {str(e)}")
 
 
+@router.delete("/sgc/gwas-file/{file_id}")
+async def delete_sgc_gwas_file(file_id: str, user: User = Depends(get_sgc_user)):
+    """
+    Delete an SGC GWAS file.
+    - Users can delete GWAS files from cohorts they uploaded
+    - Users with 'sgc-review-data' permission can delete any GWAS file
+    Removes both the S3 object and the database record.
+    """
+    try:
+        # Get the GWAS file information
+        gwas_file = query.get_sgc_gwas_file_by_id(engine, file_id)
+        if not gwas_file:
+            raise fastapi.HTTPException(status_code=404, detail="GWAS file not found")
+
+        # Get the cohort to check permissions
+        cohort_id = gwas_file['cohort_id']
+        cohort_data = query.get_sgc_cohort_by_id(engine, cohort_id)
+        if not cohort_data:
+            raise fastapi.HTTPException(status_code=404, detail="Associated cohort not found")
+
+        # Check permissions: either the user owns the cohort or has review permissions
+        cohort_owner = cohort_data[0]['uploaded_by']
+        if not (cohort_owner == user.user_name or check_review_permissions(user)):
+            raise fastapi.HTTPException(
+                status_code=403,
+                detail="You can only delete GWAS files from cohorts you uploaded"
+            )
+
+        # Delete from S3
+        s3_client = boto3.client('s3', region_name=s3.S3_REGION)
+        s3_key = gwas_file['s3_path']
+        try:
+            s3_client.delete_object(Bucket=s3.BASE_BUCKET, Key=s3_key)
+        except Exception:
+            # Log but don't fail if S3 delete fails
+            pass
+
+        # Delete from database
+        deleted = query.delete_sgc_gwas_file(engine, file_id)
+        if not deleted:
+            raise fastapi.HTTPException(status_code=404, detail="GWAS file not found")
+
+        return {"message": "GWAS file deleted successfully", "file_id": file_id}
+
+    except fastapi.HTTPException:
+        raise
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Error deleting GWAS file: {str(e)}")
+
+
 
 

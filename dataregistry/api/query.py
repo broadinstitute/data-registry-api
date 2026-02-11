@@ -1633,6 +1633,15 @@ def get_all_sgc_gwas_files(engine):
         return parsed_results
 
 
+def delete_sgc_gwas_file(engine, file_id: str) -> bool:
+    """Delete an SGC GWAS file by file_id. Returns True if deleted, False if not found."""
+    with engine.connect() as conn:
+        result = conn.execute(text("DELETE FROM sgc_gwas_files WHERE id = :file_id"),
+                            {'file_id': str(file_id).replace('-', '')})
+        conn.commit()
+        return result.rowcount > 0
+
+
 def get_sgc_gwas_files_by_cohort(engine, cohort_id: str):
     """Get all GWAS files for a specific SGC cohort."""
     with engine.connect() as conn:
