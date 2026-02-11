@@ -1954,36 +1954,18 @@ async def upload_gwas_stream(
                 detail=f"A GWAS file already exists at this path. Delete the existing file (id: {existing['id']}) before uploading a new one."
             )
 
-        # Validate file format by reading first chunk
-        first_chunk = b""
+        # Stream the file to S3
         file_size = 0
-        chunks = []
-        validation_done = False
-        
-        async for chunk in request.stream():
-            if not validation_done:
-                first_chunk += chunk
-                # Validate after collecting enough bytes to inspect (at least 1KB or full chunk if smaller)
-                if len(first_chunk) >= 1024 or not chunk:
-                    is_valid, error_msg = await file_utils.validate_tab_delimited_format(first_chunk)
-                    if not is_valid:
-                        raise fastapi.HTTPException(status_code=400, detail=f"Invalid file format: {error_msg}")
-                    validation_done = True
-            
-            chunks.append(chunk)
-            file_size += len(chunk)
-        
-        if file_size == 0:
-            raise fastapi.HTTPException(status_code=400, detail="File is empty")
-        
-        # Reconstruct stream for streaming parser
-        # Now stream the file to S3
         parser = StreamingFormDataParser(request.headers)
         s3_target = GzipS3Target(s3_path, mode='wb')
         parser.register('file', s3_target)
-        
-        for chunk in chunks:
+
+        async for chunk in request.stream():
             parser.data_received(chunk)
+            file_size += len(chunk)
+
+        if file_size == 0:
+            raise fastapi.HTTPException(status_code=400, detail="File is empty")
         
         # Save to database
         gwas_file = SGCGWASFile(
