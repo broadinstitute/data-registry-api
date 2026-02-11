@@ -1549,6 +1549,18 @@ def delete_peg_file(engine, file_id: str):
         conn.commit()
 
 
+def get_sgc_gwas_file_by_s3_path(engine, s3_path: str):
+    """Get an SGC GWAS file by its S3 path. Returns the file dict or None."""
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+            SELECT id, cohort_id, dataset, phenotype, ancestry,
+                   file_name, file_size, s3_path, uploaded_at, uploaded_by
+            FROM sgc_gwas_files
+            WHERE s3_path = :s3_path
+        """), {'s3_path': s3_path}).mappings().first()
+        return dict(result) if result else None
+
+
 def insert_sgc_gwas_file(engine, gwas_file) -> str:
     with engine.connect() as conn:
         file_id = str(uuid.uuid4()).replace('-', '')

@@ -1802,6 +1802,14 @@ async def confirm_gwas_upload(request: GWASUploadConfirmRequest, user: User = De
         if not (cohort_owner == user.user_name or check_review_permissions(user)):
             raise fastapi.HTTPException(status_code=403, detail="You can only upload files to cohorts you own")
         
+        # Check for duplicate GWAS file
+        existing = query.get_sgc_gwas_file_by_s3_path(engine, request.s3_key)
+        if existing:
+            raise fastapi.HTTPException(
+                status_code=409,
+                detail=f"A GWAS file already exists at this path. Delete the existing file (id: {existing['id']}) before uploading a new one."
+            )
+
         s3_client = boto3.client('s3', region_name=s3.S3_REGION)
         try:
             response = s3_client.get_object(Bucket=s3.BASE_BUCKET, Key=request.s3_key)
@@ -1937,7 +1945,15 @@ async def upload_gwas_stream(
         # Construct S3 path
         s3_key = f"sgc/gwas/{cohort_id}/{dataset}/{phenotype}/{filename}"
         s3_path = f"s3://{s3.BASE_BUCKET}/{s3_key}"
-        
+
+        # Check for duplicate GWAS file
+        existing = query.get_sgc_gwas_file_by_s3_path(engine, s3_key)
+        if existing:
+            raise fastapi.HTTPException(
+                status_code=409,
+                detail=f"A GWAS file already exists at this path. Delete the existing file (id: {existing['id']}) before uploading a new one."
+            )
+
         # Validate file format by reading first chunk
         first_chunk = b""
         file_size = 0
