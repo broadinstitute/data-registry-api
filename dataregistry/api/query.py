@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 
 from dataregistry.api.model import SavedDataset, DataSet, Study, SavedStudy, SavedPhenotypeDataSet, SavedCredibleSet, \
     CsvBioIndexRequest, SavedCsvBioIndexRequest, User, FileUpload, NewUserRequest, HermesUser, MetaAnalysisRequest, \
-    HermesMetaAnalysisStatus, SavedMetaAnalysisRequest, HermesPhenotype, SGCPhenotype, SGCGWASFile, CALRFile
+    HermesMetaAnalysisStatus, SavedMetaAnalysisRequest, HermesPhenotype, SGCPhenotype, SGCGWASFile, CALRFile, SGCGWASCohort
 from dataregistry.id_shortener import shorten_uuid
 
 
@@ -1760,3 +1760,87 @@ def delete_calr_file(engine, file_id: str) -> bool:
                             {'file_id': file_id})
         conn.commit()
         return result.rowcount > 0
+
+
+# SGC GWAS Cohort (Phase 1) queries
+
+def insert_sgc_gwas_cohort(engine, cohort) -> str:
+    """Insert a new SGC GWAS cohort. Returns the cohort ID as a hex string."""
+    with engine.connect() as conn:
+        cohort_id = str(uuid.uuid4()).replace('-', '')
+        conn.execute(text("""
+            INSERT INTO sgc_gwas_cohorts (id, name, submitted_by, metadata)
+            VALUES (:id, :name, :submitted_by, :metadata)
+        """), {
+            'id': cohort_id,
+            'name': cohort.name,
+            'submitted_by': cohort.submitted_by,
+            'metadata': json.dumps(cohort.metadata)
+        })
+        conn.commit()
+        return cohort_id
+
+
+def update_sgc_gwas_cohort(engine, cohort_id: str, cohort) -> bool:
+    """Update an existing SGC GWAS cohort. Returns True if updated, False if not found."""
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+            UPDATE sgc_gwas_cohorts
+            SET name = :name, metadata = :metadata, updated_at = CURRENT_TIMESTAMP
+            WHERE id = :id
+        """), {
+            'id': cohort_id,
+            'name': cohort.name,
+            'metadata': json.dumps(cohort.metadata)
+        })
+        conn.commit()
+        return result.rowcount > 0
+
+
+def get_sgc_gwas_cohorts(engine, submitted_by: str = None) -> list:
+    """Get all SGC GWAS cohorts, optionally filtered by submitter."""
+    with engine.connect() as conn:
+        if submitted_by:
+            rows = conn.execute(text("""
+                SELECT id, name, submitted_by, metadata, created_at, updated_at
+                FROM sgc_gwas_cohorts
+                WHERE submitted_by = :submitted_by
+                ORDER BY created_at DESC
+            """), {'submitted_by': submitted_by}).mappings().all()
+        else:
+            rows = conn.execute(text("""
+                SELECT id, name, submitted_by, metadata, created_at, updated_at
+                FROM sgc_gwas_cohorts
+                ORDER BY created_at DESC
+            """)).mappings().all()
+        return [_format_sgc_gwas_cohort_row(row) for row in rows]
+
+
+def get_sgc_gwas_cohort_by_id(engine, cohort_id: str) -> Optional[dict]:
+    """Get a single SGC GWAS cohort by ID."""
+    with engine.connect() as conn:
+        row = conn.execute(text("""
+            SELECT id, name, submitted_by, metadata, created_at, updated_at
+            FROM sgc_gwas_cohorts
+            WHERE id = :id
+        """), {'id': cohort_id}).mappings().first()
+        return _format_sgc_gwas_cohort_row(row) if row else None
+
+
+def delete_sgc_gwas_cohort(engine, cohort_id: str) -> bool:
+    """Delete an SGC GWAS cohort by ID. Returns True if deleted, False if not found."""
+    with engine.connect() as conn:
+        result = conn.execute(text("DELETE FROM sgc_gwas_cohorts WHERE id = :id"),
+                              {'id': cohort_id})
+        conn.commit()
+        return result.rowcount > 0
+
+
+def _format_sgc_gwas_cohort_row(row) -> dict:
+    """Format a raw DB row into a clean dict, parsing the JSON metadata field."""
+    d = dict(row)
+    if isinstance(d.get('id'), (bytes, bytearray)):
+        d['id'] = d['id'].hex()
+    if isinstance(d.get('metadata'), str):
+        d['metadata'] = json.loads(d['metadata'])
+    return d

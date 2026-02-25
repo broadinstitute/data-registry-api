@@ -18,7 +18,7 @@ from botocore.exceptions import ClientError
 
 from dataregistry.api import file_utils, s3, query
 from dataregistry.api.db import DataRegistryReadWriteDB
-from dataregistry.api.model import SGCPhenotype, SGCCohort, SGCCohortFile, SGCCasesControlsMetadata, SGCCoOccurrenceMetadata, SGCPhenotypeCaseTotals, SGCPhenotypeCaseCountsBySex, User, NewUserRequest, SGCGWASFile
+from dataregistry.api.model import SGCPhenotype, SGCCohort, SGCCohortFile, SGCCasesControlsMetadata, SGCCoOccurrenceMetadata, SGCPhenotypeCaseTotals, SGCPhenotypeCaseCountsBySex, User, NewUserRequest, SGCGWASFile, SGCGWASCohort
 from dataregistry.api.api import get_current_user
 
 router = fastapi.APIRouter()
@@ -2156,3 +2156,74 @@ async def delete_sgc_gwas_file(file_id: str, user: User = Depends(get_sgc_user))
 
 
 
+
+
+# ---------------------------------------------------------------------------
+# SGC GWAS Cohort (Phase 1) endpoints
+# ---------------------------------------------------------------------------
+
+@router.post("/sgc/gwas-cohorts")
+async def create_sgc_gwas_cohort(cohort: SGCGWASCohort, user: User = Depends(get_sgc_user)):
+    from sqlalchemy.exc import IntegrityError
+    try:
+        cohort.submitted_by = user.user_name
+        cohort_id = query.insert_sgc_gwas_cohort(engine, cohort)
+        return {"message": "GWAS cohort created successfully", "cohort_id": cohort_id}
+    except IntegrityError:
+        raise fastapi.HTTPException(
+            status_code=409,
+            detail=f"A GWAS cohort named '{cohort.name}' already exists for this user"
+        )
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Error saving GWAS cohort: {str(e)}")
+
+
+@router.get("/sgc/gwas-cohorts")
+async def list_sgc_gwas_cohorts(user: User = Depends(get_sgc_user)):
+    try:
+        # Reviewers see all cohorts; regular users see only their own
+        submitted_by = None if check_review_permissions(user) else user.user_name
+        return query.get_sgc_gwas_cohorts(engine, submitted_by=submitted_by)
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Error fetching GWAS cohorts: {str(e)}")
+
+
+@router.get("/sgc/gwas-cohorts/{cohort_id}")
+async def get_sgc_gwas_cohort(cohort_id: str, user: User = Depends(get_sgc_user)):
+    cohort = query.get_sgc_gwas_cohort_by_id(engine, cohort_id)
+    if not cohort:
+        raise fastapi.HTTPException(status_code=404, detail="GWAS cohort not found")
+    if cohort['submitted_by'] != user.user_name and not check_review_permissions(user):
+        raise fastapi.HTTPException(status_code=403, detail="Access denied")
+    return cohort
+
+
+@router.put("/sgc/gwas-cohorts/{cohort_id}")
+async def update_sgc_gwas_cohort(cohort_id: str, cohort: SGCGWASCohort, user: User = Depends(get_sgc_user)):
+    from sqlalchemy.exc import IntegrityError
+    existing = query.get_sgc_gwas_cohort_by_id(engine, cohort_id)
+    if not existing:
+        raise fastapi.HTTPException(status_code=404, detail="GWAS cohort not found")
+    if existing['submitted_by'] != user.user_name and not check_review_permissions(user):
+        raise fastapi.HTTPException(status_code=403, detail="Access denied")
+    try:
+        query.update_sgc_gwas_cohort(engine, cohort_id, cohort)
+        return query.get_sgc_gwas_cohort_by_id(engine, cohort_id)
+    except IntegrityError:
+        raise fastapi.HTTPException(
+            status_code=409,
+            detail=f"A GWAS cohort named '{cohort.name}' already exists for this user"
+        )
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Error updating GWAS cohort: {str(e)}")
+
+
+@router.delete("/sgc/gwas-cohorts/{cohort_id}")
+async def delete_sgc_gwas_cohort(cohort_id: str, user: User = Depends(get_sgc_user)):
+    existing = query.get_sgc_gwas_cohort_by_id(engine, cohort_id)
+    if not existing:
+        raise fastapi.HTTPException(status_code=404, detail="GWAS cohort not found")
+    if existing['submitted_by'] != user.user_name and not check_review_permissions(user):
+        raise fastapi.HTTPException(status_code=403, detail="Access denied")
+    query.delete_sgc_gwas_cohort(engine, cohort_id)
+    return {"message": "GWAS cohort deleted successfully"}

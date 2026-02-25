@@ -395,6 +395,15 @@ class SGCGWASFile(BaseModel):
     metadata: Union[Dict, None] = None
 
 
+class SGCGWASCohort(BaseModel):
+    id: Union[UUID, None] = None
+    name: str
+    submitted_by: Union[str, None] = None
+    metadata: Dict
+    created_at: Union[datetime, None] = None
+    updated_at: Union[datetime, None] = None
+
+
 class CALRFile(BaseModel):
     id: Union[UUID, None] = None
     name: str
