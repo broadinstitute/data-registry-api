@@ -24,7 +24,7 @@ NEW_PHENOTYPES = [
 
 def upgrade() -> None:
     conn = op.get_bind()
-    insert_query = "INSERT INTO `sgc_phenotypes` (phenotype_code, description) VALUES (:phenotype_code, :description)"
+    insert_query = "INSERT IGNORE INTO `sgc_phenotypes` (phenotype_code, description) VALUES (:phenotype_code, :description)"
     for phenotype_code, description in NEW_PHENOTYPES:
         conn.execute(text(insert_query), {'phenotype_code': phenotype_code, 'description': description})
     conn.commit()

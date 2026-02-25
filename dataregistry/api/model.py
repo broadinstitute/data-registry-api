@@ -397,7 +397,7 @@ class SGCGWASFile(BaseModel):
 
 class SGCGWASCohort(BaseModel):
     id: Union[UUID, None] = None
-    name: str
+    cohort_id: Union[UUID, None] = None
     submitted_by: Union[str, None] = None
     metadata: Dict
     created_at: Union[datetime, None] = None
