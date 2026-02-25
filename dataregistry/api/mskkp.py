@@ -1,6 +1,7 @@
 """MSKKP GWAS Upload API endpoints"""
 import io
 import json
+from difflib import SequenceMatcher
 from datetime import datetime
 from typing import Dict, List, Optional
 from uuid import UUID, uuid4
@@ -18,6 +19,103 @@ from dataregistry.api.db import DataRegistryReadWriteDB
 
 router = fastapi.APIRouter()
 engine = DataRegistryReadWriteDB().get_engine()
+
+# Common GWAS column name aliases mapped to canonical target field names
+COLUMN_ALIASES = {
+    # chromosome
+    "chr": "chromosome",
+    "chrom": "chromosome",
+    "#chrom": "chromosome",
+    "#chr": "chromosome",
+    "chromosome": "chromosome",
+    # position
+    "bp": "position",
+    "pos": "position",
+    "position": "position",
+    "base_pair_location": "position",
+    "bp_pos": "position",
+    # reference allele
+    "ref": "reference",
+    "a1": "reference",
+    "reference": "reference",
+    "effect_allele": "reference",
+    "allele1": "reference",
+    # alt allele
+    "alt": "alt",
+    "a2": "alt",
+    "other_allele": "alt",
+    "non_effect_allele": "alt",
+    "allele2": "alt",
+    # p-value
+    "p": "pValue",
+    "pval": "pValue",
+    "pvalue": "pValue",
+    "p_value": "pValue",
+    "p-value": "pValue",
+    "p_val": "pValue",
+    # beta
+    "beta": "beta",
+    "effect": "beta",
+    "effect_size": "beta",
+    # odds ratio
+    "or": "oddsRatio",
+    "odds_ratio": "oddsRatio",
+    "oddsratio": "oddsRatio",
+    # sample size
+    "n": "n",
+    "n_total": "n",
+    "sample_size": "n",
+    "samplesize": "n",
+    "neff": "n",
+}
+
+SIMILARITY_THRESHOLD = 0.6
+
+
+def suggest_column_map(columns: List[str], target_fields: List[str]) -> Dict[str, str]:
+    """Suggest mappings from file columns to target fields using aliases and string similarity."""
+    suggested = {}
+    matched_targets = set()
+
+    # Pass 1: exact match (case-insensitive) and alias lookup
+    for col in columns:
+        col_lower = col.lower().strip()
+
+        # Check exact match against target fields
+        for target in target_fields:
+            if target in matched_targets:
+                continue
+            if col_lower == target.lower():
+                suggested[col] = target
+                matched_targets.add(target)
+                break
+        else:
+            # Check alias dict
+            alias_target = COLUMN_ALIASES.get(col_lower)
+            if alias_target and alias_target in target_fields and alias_target not in matched_targets:
+                suggested[col] = alias_target
+                matched_targets.add(alias_target)
+
+    # Pass 2: fuzzy match remaining columns against remaining targets
+    unmatched_cols = [c for c in columns if c not in suggested]
+    unmatched_targets = [t for t in target_fields if t not in matched_targets]
+
+    for col in unmatched_cols:
+        best_score = 0
+        best_target = None
+        col_lower = col.lower().strip()
+
+        for target in unmatched_targets:
+            score = SequenceMatcher(None, col_lower, target.lower()).ratio()
+            if score > best_score:
+                best_score = score
+                best_target = target
+
+        if best_target and best_score >= SIMILARITY_THRESHOLD:
+            suggested[col] = best_target
+            unmatched_targets.remove(best_target)
+
+    return suggested
 
 
 class MSKKPDatasetMetadata(BaseModel):
@@ -45,6 +143,18 @@ class MSKKPDatasetCreateRequest(BaseModel):
     effective_n: Optional[int] = None
     genome_build: str
     column_map: Dict[str, str]
+
+
+class ColumnMapSuggestionRequest(BaseModel):
+    """Request to suggest column mappings based on file columns"""
+    columns: List[str]
+    target_fields: List[str]
+
+
+@router.post("/mskkp/suggest-column-map")
+async def suggest_column_mapping(request: ColumnMapSuggestionRequest):
+    """Suggest mappings from file column names to target field names using aliases and string similarity."""
+    return {"suggested_map": suggest_column_map(request.columns, request.target_fields)}
 
 
 @router.post("/mskkp/datasets")
