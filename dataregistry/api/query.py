@@ -1782,15 +1782,16 @@ def insert_sgc_gwas_cohort(engine, cohort) -> str:
         return record_id
 
 
-def update_sgc_gwas_cohort(engine, record_id: str, cohort) -> bool:
+def update_sgc_gwas_cohort(engine, cohort_id: str, cohort) -> bool:
     """Update an existing SGC GWAS cohort record. Returns True if updated, False if not found."""
     with engine.connect() as conn:
+        cohort_id_hex = cohort_id.replace('-', '')
         result = conn.execute(text("""
             UPDATE sgc_gwas_cohorts
             SET metadata = :metadata, updated_at = CURRENT_TIMESTAMP
-            WHERE id = :id
+            WHERE cohort_id = :cohort_id
         """), {
-            'id': record_id,
+            'cohort_id': cohort_id_hex,
             'metadata': json.dumps(cohort.metadata)
         })
         conn.commit()

@@ -2168,7 +2168,7 @@ async def delete_sgc_gwas_file(file_id: str, user: User = Depends(get_sgc_user))
 async def get_sgc_gwas_metadata(cohort_id: str, user: User = Depends(get_sgc_user)):
     record = query.get_sgc_gwas_cohort_by_cohort_id(engine, cohort_id)
     if not record:
-        raise fastapi.HTTPException(status_code=404, detail="GWAS metadata not found")
+        return None
     if record['submitted_by'] != user.user_name and not check_review_permissions(user):
         raise fastapi.HTTPException(status_code=403, detail="Access denied")
     return record
@@ -2196,7 +2196,7 @@ async def update_sgc_gwas_metadata(cohort_id: str, cohort: SGCGWASCohort, user: 
     if existing['submitted_by'] != user.user_name and not check_review_permissions(user):
         raise fastapi.HTTPException(status_code=403, detail="Access denied")
     try:
-        query.update_sgc_gwas_cohort(engine, existing['id'], cohort)
+        query.update_sgc_gwas_cohort(engine, cohort_id, cohort)
         return query.get_sgc_gwas_cohort_by_cohort_id(engine, cohort_id)
     except Exception as e:
         raise fastapi.HTTPException(status_code=500, detail=f"Error updating GWAS metadata: {str(e)}")
