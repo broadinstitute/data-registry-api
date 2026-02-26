@@ -5,6 +5,8 @@ Upload GWAS file via streaming endpoint (/api/sgc/upload-gwas-stream).
 - Filename extension does not matter; file content is validated to ensure tab-delimited format
 - Logs into user service to obtain a JWT access token.
 - Sends metadata in headers; file is streamed as multipart/form-data.
+- Column mapping is pulled automatically from the cohort's saved GWAS metadata.
+  Upload is rejected if no GWAS metadata has been saved for the cohort.
 
 Authentication:
   By default, the script will prompt for username and password. To skip the
@@ -21,7 +23,6 @@ Usage examples:
     --dataset test_curl \
     --phenotype acne \
     --ancestry EUR \
-    --column-mapping /tmp/col_map.json \
     --metadata /tmp/metadata.json \
     /path/to/gwas_file.tsv.gz
 
@@ -29,11 +30,12 @@ Usage examples:
   ./scripts/upload_gwas_stream.py \
     --api-base-url https://api.kpndataregistry.org \
     --user-service-url https://users.kpndataregistry.org \
-    --cohort-name ... --dataset ... --phenotype ... --column-mapping colmap.json file.txt
+    --cohort-name ... --dataset ... --phenotype ... file.txt
 """
 
 import argparse
 import getpass
+import gzip
 import json
 import os
 import sys
@@ -42,6 +44,12 @@ from typing import Dict, Optional
 import requests
 from requests_toolbelt import MultipartEncoder, MultipartEncoderMonitor
 from tqdm import tqdm
+
+# Required col_* fields that must be present in GWAS metadata (col_variant_id is optional)
+REQUIRED_COL_FIELDS = [
+    'col_chromosome', 'col_position', 'col_effect_allele', 'col_non_effect_allele',
+    'col_beta', 'col_se', 'col_pvalue', 'col_effect_allele_freq', 'col_imputation_quality',
+]
 
 DEFAULT_API_BY_ENV = {
     "qa": "https://api.kpndataregistry.org:8000",
@@ -100,9 +108,55 @@ def lookup_cohort_id(api_base: str, token: str, cohort_name: str) -> Optional[st
         return None
 
 
-def load_json_file(path: str) -> Dict:
-    with open(path, "r") as f:
-        return json.load(f)
+def fetch_gwas_metadata(api_base: str, token: str, cohort_id: str) -> Optional[Dict]:
+    """Fetch GWAS metadata for a cohort. Returns None if not saved yet."""
+    try:
+        resp = requests.get(
+            f"{api_base}/api/sgc/cohorts/{cohort_id}/gwas-metadata",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.json()
+    except requests.RequestException as e:
+        sys.stderr.write(f"Error fetching GWAS metadata: {e}\n")
+        return None
+
+
+def extract_column_mapping(gwas_metadata: Dict) -> Dict[str, str]:
+    """Extract col_* fields from GWAS metadata as the column mapping.
+
+    The metadata dict contains fields like col_chromosome, col_position, etc.
+    whose values are the actual column header names expected in the GWAS file.
+    """
+    meta = gwas_metadata.get('metadata') or {}
+    return {k: v for k, v in meta.items() if k.startswith('col_') and v}
+
+
+def read_first_line(file_path: str) -> str:
+    """Read the first line of a file, handling gzip compression via magic bytes."""
+    with open(file_path, 'rb') as raw:
+        magic = raw.read(2)
+    if magic == b'\x1f\x8b':
+        with gzip.open(file_path, 'rt') as f:
+            return f.readline().strip()
+    else:
+        with open(file_path, 'r') as f:
+            return f.readline().strip()
+
+
+def validate_file_headers(file_path: str, column_mapping: Dict[str, str]) -> tuple:
+    """Check that the file's TSV header row contains all required column names.
+
+    Returns (is_valid, missing) where missing is a list of (field, expected_header) tuples.
+    """
+    file_headers = set(read_first_line(file_path).split('\t'))
+    missing = [
+        (field, header)
+        for field, header in column_mapping.items()
+        if field in REQUIRED_COL_FIELDS and header not in file_headers
+    ]
+    return len(missing) == 0, missing
 
 
 def main():
@@ -119,12 +173,23 @@ def main():
     p.add_argument("--dataset", required=True)
     p.add_argument("--phenotype", required=True)
 
-    # Optional metadata
+    # Dataset-level metadata
     p.add_argument("--ancestry", default="EUR")
-    p.add_argument("--column-mapping", required=True, help="Path to JSON for column mapping")
-    p.add_argument("--cases", type=int, help="Number of cases (optional)")
-    p.add_argument("--controls", type=int, help="Number of controls (optional)")
-    p.add_argument("--metadata", help="Path to JSON for optional metadata")
+    p.add_argument("--sex", required=True,
+                   choices=["Not sex stratified", "Male only", "Female only"],
+                   help="Sex stratification of this dataset")
+    p.add_argument("--codes-used", required=True,
+                   help="Diagnosis codes used for case definition (e.g. 'L20, L21')")
+    p.add_argument("--cases", type=int, required=True, help="Number of cases")
+    p.add_argument("--controls", type=int, required=True, help="Number of controls")
+    p.add_argument("--male-proportion-cases", type=float, required=True,
+                   help="Proportion of cases that are male (0-1)")
+    p.add_argument("--male-proportion-controls", type=float, required=True,
+                   help="Proportion of controls that are male (0-1)")
+    p.add_argument("--assoc-test-software", required=True,
+                   help="Association testing software and version (e.g. 'regenie v4.1')")
+    p.add_argument("--assoc-test-model", required=True,
+                   help="Association testing model and settings")
 
     args = p.parse_args()
 
@@ -143,8 +208,14 @@ def main():
         sys.stderr.write(f"File not found: {args.file}\n")
         sys.exit(1)
 
-    column_mapping = load_json_file(args.column_mapping)
-    metadata = load_json_file(args.metadata) if args.metadata else None
+    metadata = {
+        "sex": args.sex,
+        "codes_used": args.codes_used,
+        "male_proportion_cases": args.male_proportion_cases,
+        "male_proportion_controls": args.male_proportion_controls,
+        "assoc_test_software_and_version": args.assoc_test_software,
+        "assoc_test_model_and_settings": args.assoc_test_model,
+    }
 
     # Credentials
     creds = load_credentials()
@@ -167,6 +238,36 @@ def main():
         sys.exit(1)
     print(f"Found cohort '{args.cohort_name}' -> {cohort_id}")
 
+    # Fetch GWAS metadata and extract column mapping
+    print("Fetching GWAS metadata for cohort...")
+    gwas_metadata = fetch_gwas_metadata(api_base, token, cohort_id)
+    if not gwas_metadata:
+        sys.stderr.write(
+            "No GWAS metadata found for this cohort. "
+            "Please save GWAS metadata (including column headings) before uploading files.\n"
+        )
+        sys.exit(1)
+
+    column_mapping = extract_column_mapping(gwas_metadata)
+    if not column_mapping:
+        sys.stderr.write(
+            "GWAS metadata exists but contains no column headings. "
+            "Please complete the column headings in the GWAS metadata before uploading.\n"
+        )
+        sys.exit(1)
+
+    print(f"Column mapping from GWAS metadata: {json.dumps(column_mapping, indent=2)}")
+
+    # Validate file headers against the cohort's column mapping
+    print("Validating file headers against GWAS metadata column mapping...")
+    is_valid, missing = validate_file_headers(args.file, column_mapping)
+    if not is_valid:
+        sys.stderr.write("File headers do not match the cohort's GWAS metadata column mapping:\n")
+        for field, expected in missing:
+            sys.stderr.write(f"  {field}: expected column '{expected}' not found in file\n")
+        sys.exit(1)
+    print("File headers validated successfully.")
+
     filename = os.path.basename(args.file)
 
     headers = {
@@ -178,12 +279,9 @@ def main():
         "filename": filename,
         "column_mapping": json.dumps(column_mapping),
     }
-    if args.cases is not None:
-        headers["cases"] = str(args.cases)
-    if args.controls is not None:
-        headers["controls"] = str(args.controls)
-    if metadata is not None:
-        headers["metadata"] = json.dumps(metadata)
+    headers["cases"] = str(args.cases)
+    headers["controls"] = str(args.controls)
+    headers["metadata"] = json.dumps(metadata)
 
     url = f"{api_base}/api/sgc/upload-gwas-stream"
 
