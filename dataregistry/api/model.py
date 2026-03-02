@@ -404,11 +404,20 @@ class SGCGWASCohort(BaseModel):
     updated_at: Union[datetime, None] = None
 
 
-class CALRFile(BaseModel):
+class CALRSubmission(BaseModel):
     id: Union[UUID, None] = None
     name: str
+    description: Union[str, None] = None
+    public: bool = False
+    uploaded_by: str
+    uploaded_at: Union[datetime, None] = None
+
+
+class CALRFile(BaseModel):
+    id: Union[UUID, None] = None
+    submission_id: str
+    file_type: str  # 'standard' or 'session'
     file_name: str
     file_size: int
     s3_path: str
     uploaded_at: Union[datetime, None] = None
-    uploaded_by: str

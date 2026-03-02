@@ -11,6 +11,7 @@ from dataregistry.api.calr import get_calr_user
 MultiPartParser.max_part_size = 5 * 1024 * 1024 * 1024  # 5GB
 
 SGC_ROUTES_WITHOUT_AUTH = {'hello_sgc'}
+CALR_ROUTES_WITHOUT_AUTH = {'download_calr_file', 'get_calr_file_info', 'list_public_calr_submissions'}
 ROUTES_WITHOUT_AUTH = {'stream_file', 'version', 'login', 'google_login', 'start_aggregator', 'search_phenotypes', 'search_terms', 'preview_files', 'download_sgc_phenotypes'}
 
 # create web server
@@ -25,7 +26,8 @@ for route in sgc.router.routes:
         route.dependencies.append(Depends(get_sgc_user))
 
 for route in calr.router.routes:
-    route.dependencies.append(Depends(get_calr_user))
+    if route.name not in CALR_ROUTES_WITHOUT_AUTH:
+        route.dependencies.append(Depends(get_calr_user))
 
 # all the various routers for each api
 app.include_router(peg.router, prefix='/api', tags=['peg'])
