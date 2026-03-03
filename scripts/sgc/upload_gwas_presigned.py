@@ -20,19 +20,30 @@ Authentication:
 
 Usage examples:
   # QA
-  ./scripts/upload_gwas_presigned.py \
+  ./upload_gwas_presigned.py \
     --env qa \
     --cohort-name "My Cohort" \
     --dataset test_presigned \
     --phenotype acne \
     --ancestry EUR \
-    --metadata /tmp/metadata.json \
+    --sex "Male only" \
+    --codes-used "L20, L21" \
+    --cases 1000 \
+    --controls 10000 \
+    --male-proportion-cases 1.0 \
+    --male-proportion-controls 0.5 \
+    --assoc-test-software "regenie v4.1" \
+    --assoc-test-model "mixed model logistic" \
     /path/to/gwas_file.tsv.gz
 
   # PRD (file can have any extension, will be validated as tab-delimited)
-  ./scripts/upload_gwas_presigned.py \
+  ./upload_gwas_presigned.py \
     --env prd \
-    --cohort-name ... --dataset ... --phenotype ... file.txt
+    --cohort-name ... --dataset ... --phenotype ... \
+    --sex ... --codes-used ... --cases ... --controls ... \
+    --male-proportion-cases ... --male-proportion-controls ... \
+    --assoc-test-software ... --assoc-test-model ... \
+    file.txt
 """
 
 import argparse
