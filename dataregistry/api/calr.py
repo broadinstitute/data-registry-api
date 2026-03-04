@@ -1,16 +1,27 @@
+import io
 import os
 import uuid
+import tempfile
+from pathlib import Path
+from typing import List, Optional
 
 import fastapi
 import httpx
 import boto3
-from typing import Optional
 from fastapi import UploadFile, Form, Depends, Header
 from fastapi.responses import StreamingResponse
 
 from dataregistry.api import s3, query
 from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api.model import CALRFile, CALRSubmission, User
+
+# Import CalR conversion functions
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+from calr.loaders import detect_format, load_cal_file
+from calr.oxymax_loader import load_oxymax_file, convert_oxymax
+from calr.sable_loader import load_sable_file, convert_sable
+from calr.tse_loader import load_tse_file, convert_tse
 
 router = fastapi.APIRouter()
 engine = DataRegistryReadWriteDB().get_engine()
@@ -219,6 +230,102 @@ async def get_calr_file_info(file_id: str):
         raise
     except Exception as e:
         raise fastapi.HTTPException(status_code=500, detail=f"Error retrieving file info: {str(e)}")
+
+
+@router.post("/calr/convert")
+async def convert_calr_files(files: List[UploadFile]):
+    """
+    Convert one or more calorimetry files to standard CalR format.
+
+    Accepts files in vendor formats (Oxymax/CLAMS, TSE, Sable) and streams
+    back a single CSV in standard CalR format. No authentication required.
+
+    For Oxymax/CLAMS, multiple files are supported (one per cage) and will
+    be combined into a single output. For TSE and Sable, only the first
+    file is processed.
+
+    Returns the converted data as a streaming CSV response.
+    """
+    temp_paths = []
+    try:
+        if not files:
+            raise fastapi.HTTPException(
+                status_code=400, detail="At least one file is required"
+            )
+
+        # Save all uploaded files to temp directory
+        for upload_file in files:
+            content = await upload_file.read()
+            with tempfile.NamedTemporaryFile(
+                mode='wb', delete=False, suffix='.csv'
+            ) as tmp:
+                tmp.write(content)
+                temp_paths.append(tmp.name)
+
+        # Detect format from first file
+        try:
+            detected_format = detect_format(temp_paths[0])
+        except ValueError as e:
+            raise fastapi.HTTPException(
+                status_code=400,
+                detail=f"Unrecognized file format: {str(e)}"
+            )
+
+        # Convert based on detected format
+        import pandas as pd
+
+        if detected_format == 'oxymax':
+            # Oxymax supports multiple files (one per cage)
+            raw_data_list = [load_oxymax_file(p) for p in temp_paths]
+            converted_df = convert_oxymax(raw_data_list)
+
+        elif detected_format == 'tse':
+            raw_data = load_tse_file(temp_paths[0])
+            converted_df = convert_tse(raw_data)
+
+        elif detected_format == 'sable':
+            raw_data = load_sable_file(temp_paths[0])
+            converted_df = convert_sable(raw_data)
+
+        elif detected_format == 'calr':
+            # Already standard format, just return it
+            converted_df = pd.read_csv(temp_paths[0])
+
+        else:
+            raise fastapi.HTTPException(
+                status_code=400,
+                detail=f"Unsupported format: {detected_format}"
+            )
+
+        # Stream back as CSV
+        csv_buffer = io.StringIO()
+        converted_df.to_csv(csv_buffer, index=False)
+        csv_bytes = csv_buffer.getvalue().encode('utf-8')
+
+        return StreamingResponse(
+            io.BytesIO(csv_bytes),
+            media_type='text/csv',
+            headers={
+                "Content-Disposition": 'attachment; filename="calr_converted.csv"',
+                "Content-Length": str(len(csv_bytes)),
+            }
+        )
+
+    except fastapi.HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise fastapi.HTTPException(
+            status_code=500,
+            detail=f"Error converting file: {str(e)}"
+        )
+    finally:
+        for p in temp_paths:
+            try:
+                os.unlink(p)
+            except Exception:
+                pass
 
 
 @router.delete("/calr/files/{submission_id}")

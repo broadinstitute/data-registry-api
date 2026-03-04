@@ -11,7 +11,7 @@ from dataregistry.api.calr import get_calr_user
 MultiPartParser.max_part_size = 5 * 1024 * 1024 * 1024  # 5GB
 
 SGC_ROUTES_WITHOUT_AUTH = {'hello_sgc'}
-CALR_ROUTES_WITHOUT_AUTH = {'download_calr_file', 'get_calr_file_info', 'list_public_calr_submissions'}
+CALR_ROUTES_WITHOUT_AUTH = {'download_calr_file', 'get_calr_file_info', 'list_public_calr_submissions', 'convert_calr_files'}
 ROUTES_WITHOUT_AUTH = {'stream_file', 'version', 'login', 'google_login', 'start_aggregator', 'search_phenotypes', 'search_terms', 'preview_files', 'download_sgc_phenotypes'}
 
 # create web server
