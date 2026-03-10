@@ -18,6 +18,21 @@ Authentication:
     Line 1: username
     Line 2: password
 
+Metadata JSON file:
+  The --metadata flag points to a JSON file containing dataset-level metadata.
+  All fields below are required. Additional fields may be included and will be
+  stored alongside the required metadata.
+    {
+      "sex": "All",                        # or "Male" or "Female"
+      "codes_used": "L20, L21",           # diagnosis codes for case definition
+      "cases": 1000,                       # number of cases (integer)
+      "controls": 10000,                   # number of controls (integer)
+      "male_proportion_cases": 0.5,        # proportion of cases that are male (0-1)
+      "male_proportion_controls": 0.5,     # proportion of controls that are male (0-1)
+      "assoc_test_software_and_version": "regenie v4.1",
+      "assoc_test_model_and_settings": "mixed model logistic"
+    }
+
 Usage examples:
   # QA
   ./upload_gwas_presigned.py \
@@ -26,23 +41,14 @@ Usage examples:
     --dataset test_presigned \
     --phenotype acne \
     --ancestry EUR \
-    --sex "Male only" \
-    --codes-used "L20, L21" \
-    --cases 1000 \
-    --controls 10000 \
-    --male-proportion-cases 1.0 \
-    --male-proportion-controls 0.5 \
-    --assoc-test-software "regenie v4.1" \
-    --assoc-test-model "mixed model logistic" \
+    --metadata /path/to/metadata.json \
     /path/to/gwas_file.tsv.gz
 
   # PRD (file can have any extension, will be validated as tab-delimited)
   ./upload_gwas_presigned.py \
     --env prd \
     --cohort-name ... --dataset ... --phenotype ... \
-    --sex ... --codes-used ... --cases ... --controls ... \
-    --male-proportion-cases ... --male-proportion-controls ... \
-    --assoc-test-software ... --assoc-test-model ... \
+    --metadata metadata.json \
     file.txt
 """
 
@@ -93,6 +99,10 @@ DEFAULT_API_BY_ENV = {
     "qa": "https://api.kpndataregistry.org:8000",
     "prd": "https://api.kpndataregistry.org",
 }
+DEFAULT_UI_BY_ENV = {
+    "qa": "https://kpndataregistry.org:8000",
+    "prd": "https://kpndataregistry.org",
+}
 DEFAULT_USER_SERVICE_URL = "https://users.kpndataregistry.org"
 
 
@@ -126,6 +136,51 @@ def load_credentials() -> Optional[tuple]:
         if len(lines) >= 2:
             return lines[0].strip(), lines[1].strip()
     return None
+
+
+def fetch_valid_sex_values(api_base: str, token: str) -> list:
+    """Fetch the list of valid sex stratification values from the API."""
+    try:
+        resp = requests.get(
+            f"{api_base}/api/sgc/gwas-sex-values",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.json()
+    except requests.RequestException as e:
+        sys.stderr.write(f"Error fetching sex values: {e}\n")
+        return []
+
+
+def fetch_valid_ancestries(api_base: str, token: str) -> list:
+    """Fetch the list of valid ancestry codes from the API."""
+    try:
+        resp = requests.get(
+            f"{api_base}/api/sgc/gwas-ancestries",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.json()
+    except requests.RequestException as e:
+        sys.stderr.write(f"Error fetching ancestries: {e}\n")
+        return []
+
+
+def fetch_valid_phenotypes(api_base: str, token: str) -> set:
+    """Fetch the set of valid phenotype codes from the API."""
+    try:
+        resp = requests.get(
+            f"{api_base}/api/sgc/phenotypes",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return {p["phenotype_code"] for p in resp.json()}
+    except requests.RequestException as e:
+        sys.stderr.write(f"Error fetching phenotypes: {e}\n")
+        return set()
 
 
 def lookup_cohort_id(api_base: str, token: str, cohort_name: str) -> Optional[str]:
@@ -183,6 +238,64 @@ def read_first_line(file_path: str) -> str:
             return f.readline().strip()
 
 
+# Required metadata fields and their expected types
+REQUIRED_METADATA_FIELDS = {
+    'sex': str,
+    'codes_used': str,
+    'cases': int,
+    'controls': int,
+    'male_proportion_cases': (int, float),
+    'male_proportion_controls': (int, float),
+    'assoc_test_software_and_version': str,
+    'assoc_test_model_and_settings': str,
+}
+
+
+def validate_metadata(metadata: Dict, valid_sex_values: list) -> list:
+    """Validate that the metadata dict contains all required fields with correct types.
+
+    Returns a list of error messages (empty if valid).
+    """
+    errors = []
+    for field, expected_type in REQUIRED_METADATA_FIELDS.items():
+        if field not in metadata:
+            errors.append(f"Missing required field: '{field}'")
+        elif not isinstance(metadata[field], expected_type):
+            errors.append(
+                f"Field '{field}' must be {expected_type.__name__ if isinstance(expected_type, type) else ' or '.join(t.__name__ for t in expected_type)}, "
+                f"got {type(metadata[field]).__name__}"
+            )
+    if 'sex' in metadata and metadata['sex'] not in valid_sex_values:
+        errors.append(f"Field 'sex' must be one of: {valid_sex_values}")
+
+    # Cross-field validation: sex vs male_proportion_cases/controls
+    sex = metadata.get('sex')
+    mpc = metadata.get('male_proportion_cases')
+    mpctrl = metadata.get('male_proportion_controls')
+    if sex == 'Male':
+        if mpc is not None and mpc != 1:
+            errors.append("male_proportion_cases must be 1 for sex='Male'")
+        if mpctrl is not None and mpctrl != 1:
+            errors.append("male_proportion_controls must be 1 for sex='Male'")
+    elif sex == 'Female':
+        if mpc is not None and mpc != 0:
+            errors.append("male_proportion_cases must be 0 for sex='Female'")
+        if mpctrl is not None and mpctrl != 0:
+            errors.append("male_proportion_controls must be 0 for sex='Female'")
+    elif sex == 'All':
+        if mpc is not None and mpc in (0, 1):
+            errors.append(
+                "male_proportion_cases cannot be 0 or 1 for sex='All' "
+                "(use sex='Male' or sex='Female' for single-sex cohorts)"
+            )
+        if mpctrl is not None and mpctrl in (0, 1):
+            errors.append(
+                "male_proportion_controls cannot be 0 or 1 for sex='All' "
+                "(use sex='Male' or sex='Female' for single-sex cohorts)"
+            )
+    return errors
+
+
 def validate_file_headers(file_path: str, column_mapping: Dict[str, str]) -> tuple:
     """Check that the file's TSV header row contains all required column names.
 
@@ -215,22 +328,10 @@ def main():
     p.add_argument("--phenotype", required=True)
 
     # Dataset-level metadata
-    p.add_argument("--ancestry", default="EUR")
-    p.add_argument("--sex", required=True,
-                   choices=["Not sex stratified", "Male only", "Female only"],
-                   help="Sex stratification of this dataset")
-    p.add_argument("--codes-used", required=True,
-                   help="Diagnosis codes used for case definition (e.g. 'L20, L21')")
-    p.add_argument("--cases", type=int, required=True, help="Number of cases")
-    p.add_argument("--controls", type=int, required=True, help="Number of controls")
-    p.add_argument("--male-proportion-cases", type=float, required=True,
-                   help="Proportion of cases that are male (0-1)")
-    p.add_argument("--male-proportion-controls", type=float, required=True,
-                   help="Proportion of controls that are male (0-1)")
-    p.add_argument("--assoc-test-software", required=True,
-                   help="Association testing software and version (e.g. 'regenie v4.1')")
-    p.add_argument("--assoc-test-model", required=True,
-                   help="Association testing model and settings")
+    p.add_argument("--ancestry", required=True,
+                   help="Ancestry code (e.g. EUR, AFR, Combined)")
+    p.add_argument("--metadata", required=True,
+                   help="Path to JSON file with dataset-level metadata")
 
     args = p.parse_args()
 
@@ -252,14 +353,8 @@ def main():
     file_size = os.path.getsize(args.file)
     filename = os.path.basename(args.file)
 
-    metadata = {
-        "sex": args.sex,
-        "codes_used": args.codes_used,
-        "male_proportion_cases": args.male_proportion_cases,
-        "male_proportion_controls": args.male_proportion_controls,
-        "assoc_test_software_and_version": args.assoc_test_software,
-        "assoc_test_model_and_settings": args.assoc_test_model,
-    }
+    with open(args.metadata, "r") as f:
+        metadata = json.load(f)
 
     # Credentials
     creds = load_credentials()
@@ -274,6 +369,53 @@ def main():
     if not token:
         sys.stderr.write("Authentication failed\n")
         sys.exit(1)
+
+    # Fetch valid sex values and validate metadata
+    valid_sex_values = fetch_valid_sex_values(api_base, token)
+    if not valid_sex_values:
+        sys.stderr.write("Could not fetch valid sex values from API\n")
+        sys.exit(1)
+
+    errors = validate_metadata(metadata, valid_sex_values)
+    if errors:
+        sys.stderr.write(f"Metadata validation errors in {args.metadata}:\n")
+        for err in errors:
+            sys.stderr.write(f"  - {err}\n")
+        sys.exit(1)
+
+    cases = metadata.pop("cases")
+    controls = metadata.pop("controls")
+
+    # Validate ancestry against allowed values
+    print("Validating ancestry...")
+    valid_ancestries = fetch_valid_ancestries(api_base, token)
+    if not valid_ancestries:
+        sys.stderr.write("Could not fetch valid ancestries from API\n")
+        sys.exit(1)
+    if args.ancestry not in valid_ancestries:
+        sys.stderr.write(
+            f"Invalid ancestry: '{args.ancestry}'\n"
+            f"Valid ancestries: {valid_ancestries}\n"
+            f"If the ancestry you need is not listed, please contact the SGC so it can be added.\n"
+        )
+        sys.exit(1)
+    print(f"Ancestry '{args.ancestry}' is valid.")
+
+    # Validate phenotype against allowed values
+    print("Validating phenotype...")
+    valid_phenotypes = fetch_valid_phenotypes(api_base, token)
+    if not valid_phenotypes:
+        sys.stderr.write("Could not fetch valid phenotypes from API\n")
+        sys.exit(1)
+    if args.phenotype not in valid_phenotypes:
+        ui_base = DEFAULT_UI_BY_ENV.get(args.env, "https://kpndataregistry.org")
+        sys.stderr.write(
+            f"Invalid phenotype: '{args.phenotype}'\n"
+            f"Valid phenotypes: {sorted(valid_phenotypes)}\n"
+            f"See {ui_base}/sgc/phenotypes for the full list of allowed phenotypes.\n"
+        )
+        sys.exit(1)
+    print(f"Phenotype '{args.phenotype}' is valid.")
 
     # Look up cohort ID by name
     cohort_id = lookup_cohort_id(api_base, token, args.cohort_name)
@@ -326,9 +468,9 @@ def main():
         "ancestry": args.ancestry,
         "filename": filename,
         "column_mapping": column_mapping,
-        "cases": args.cases,
-        "controls": args.controls,
         "metadata": metadata,
+        "cases": cases,
+        "controls": controls,
     }
 
     try:
@@ -383,9 +525,9 @@ def main():
         "file_size": file_size,
         "s3_key": s3_key,
         "column_mapping": column_mapping,
-        "cases": args.cases,
-        "controls": args.controls,
         "metadata": metadata,
+        "cases": cases,
+        "controls": controls,
     }
 
     try:

@@ -1002,6 +1002,26 @@ async def validate_s3_co_occurrence(
     }
 
 
+# Valid ancestry codes for GWAS uploads. This list is expected to grow as
+# collaborating groups provide feedback.
+VALID_GWAS_ANCESTRIES = ["Combined", "AFR", "EUR", "EAS", "SAS", "AMR", "MID"]
+
+# Valid sex stratification values for GWAS uploads.
+VALID_GWAS_SEX_VALUES = ["All", "Male", "Female"]
+
+
+@router.get("/sgc/gwas-ancestries")
+async def get_gwas_ancestries(user: User = Depends(get_sgc_user)):
+    """Return the list of valid ancestry codes for GWAS uploads."""
+    return VALID_GWAS_ANCESTRIES
+
+
+@router.get("/sgc/gwas-sex-values")
+async def get_gwas_sex_values(user: User = Depends(get_sgc_user)):
+    """Return the list of valid sex stratification values for GWAS uploads."""
+    return VALID_GWAS_SEX_VALUES
+
+
 @router.get("/sgc/phenotypes")
 async def get_all_sgc_phenotypes(user: User = Depends(get_sgc_user)):
     return query.get_sgc_phenotypes(engine)
