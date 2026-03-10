@@ -146,10 +146,15 @@ FIELD_VALIDATORS = {
 class ProgressTracker:
     """Accumulates validation state and writes periodic progress to S3."""
 
-    def __init__(self, s3_client, bucket: str, progress_key: str, total_rows: int):
+    def __init__(self, s3_client, bucket: str, progress_key: str, total_rows: int,
+                 error_file_path: str):
         self._s3 = s3_client
         self._bucket = bucket
         self._progress_key = progress_key
+        self._errors_key = progress_key.replace("progress.json", "errors.tsv")
+        self._error_file_path = error_file_path
+        self._error_file = open(error_file_path, "w", newline="", encoding="utf-8")
+        self._error_file.write("row\tcolumn\tvalue\terror\n")
         self.total_rows = total_rows
         self.rows_processed = 0
         self.errors_found = 0
@@ -159,11 +164,14 @@ class ProgressTracker:
 
     def record_error(self, row_num: int, column: str, value: str, error: str):
         self.errors_found += 1
+        # Write every error to the full TSV log
+        self._error_file.write(f"{row_num}\t{column}\t{value[:100]}\t{error}\n")
+        # Keep a capped sample for the progress JSON
         if len(self.error_samples) < MAX_ERROR_SAMPLES:
             self.error_samples.append({
                 "row": row_num,
                 "column": column,
-                "value": value[:100],  # truncate long values
+                "value": value[:100],
                 "error": error,
             })
 
@@ -191,6 +199,16 @@ class ProgressTracker:
 
     def finalize(self, status: str = "completed"):
         self.status = status
+        self._error_file.close()
+        if self.errors_found > 0:
+            with open(self._error_file_path, "rb") as f:
+                self._s3.put_object(
+                    Bucket=self._bucket,
+                    Key=self._errors_key,
+                    Body=f,
+                    ContentType="text/tab-separated-values",
+                )
+            print(f"Full error log written to s3://{self._bucket}/{self._errors_key}")
         self.write_progress()
 
 
@@ -288,7 +306,8 @@ def main(s3_path: str, column_mapping: str, progress_s3_key: str, bucket: str):
         print(f"Total data rows: {total_rows}")
 
         # Set up progress tracker and run validation
-        tracker = ProgressTracker(s3_client, bucket, progress_s3_key, total_rows)
+        error_file_path = os.path.join(tmpdir, "errors.tsv")
+        tracker = ProgressTracker(s3_client, bucket, progress_s3_key, total_rows, error_file_path)
         tracker.write_progress()  # initial "running" status
 
         try:

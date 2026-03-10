@@ -2360,6 +2360,55 @@ async def get_gwas_validation_progress(file_id: str, user: User = Depends(get_sg
         raise fastapi.HTTPException(status_code=500, detail=f"Error reading validation progress: {str(e)}")
 
 
+@router.get("/sgc/gwas-validate/{file_id}/errors")
+async def get_gwas_validation_errors_url(file_id: str, user: User = Depends(get_sgc_user)):
+    """Return a presigned S3 download URL for the full validation error log (TSV).
+
+    Returns 404 if no validation job exists for this file or no errors were recorded.
+    """
+    try:
+        gwas_file = query.get_sgc_gwas_file_by_id(engine, file_id)
+        if not gwas_file:
+            raise fastapi.HTTPException(status_code=404, detail="GWAS file not found")
+
+        cohort_data = query.get_sgc_cohort_by_id(engine, gwas_file['cohort_id'])
+        if not cohort_data:
+            raise fastapi.HTTPException(status_code=404, detail="Associated cohort not found")
+        cohort_owner = cohort_data[0]['uploaded_by']
+        if not (cohort_owner == user.user_name or check_review_permissions(user)):
+            raise fastapi.HTTPException(status_code=403, detail="Access denied")
+
+        jobs = query.get_sgc_gwas_validation_jobs_by_file_id(engine, file_id)
+        if not jobs:
+            raise fastapi.HTTPException(status_code=404, detail="No validation jobs found for this file")
+
+        latest = jobs[0]
+        progress_s3_key = latest.get("progress_s3_key")
+        if not progress_s3_key:
+            raise fastapi.HTTPException(status_code=404, detail="No error log available")
+
+        errors_s3_key = progress_s3_key.replace("progress.json", "errors.tsv")
+
+        s3_client = boto3.client('s3', region_name=s3.S3_REGION)
+        try:
+            s3_client.head_object(Bucket=s3.BASE_BUCKET, Key=errors_s3_key)
+        except ClientError:
+            raise fastapi.HTTPException(status_code=404, detail="No error log found — validation may still be running or no errors were found")
+
+        presigned_url = s3_client.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": s3.BASE_BUCKET, "Key": errors_s3_key,
+                    "ResponseContentDisposition": f"attachment; filename=errors_{file_id}.tsv"},
+            ExpiresIn=3600,
+        )
+        return {"errors_url": presigned_url, "expires_in_seconds": 3600}
+
+    except fastapi.HTTPException:
+        raise
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Error generating errors download URL: {str(e)}")
+
+
 # ---------------------------------------------------------------------------
 # SGC GWAS Cohort (Phase 1) endpoints
 # Nested under /sgc/cohorts/{cohort_id}/gwas-metadata — one record per cohort.
