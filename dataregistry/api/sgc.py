@@ -1866,16 +1866,9 @@ async def confirm_gwas_upload(request: GWASUploadConfirmRequest, background_task
         
         file_id = query.insert_sgc_gwas_file(engine, gwas_file)
 
-        # Auto-trigger row-level QA validation in the background
-        validation_job_id = _kick_off_gwas_validation(
-            background_tasks, file_id, request.s3_key,
-            request.column_mapping, user.user_name,
-        )
-
         return {
             "message": "GWAS file upload confirmed",
             "file_id": file_id,
-            "validation_job_id": validation_job_id,
             "cohort_id": request.cohort_id,
             "dataset": request.dataset,
             "phenotype": request.phenotype,
@@ -2013,15 +2006,9 @@ async def upload_gwas_stream(
         
         file_id = query.insert_sgc_gwas_file(engine, gwas_file)
 
-        # Auto-trigger row-level QA validation in the background
-        validation_job_id = _kick_off_gwas_validation(
-            background_tasks, file_id, s3_key, col_map, user.user_name,
-        )
-
         return {
             "message": "GWAS file uploaded successfully",
             "file_id": file_id,
-            "validation_job_id": validation_job_id,
             "cohort_id": cohort_id,
             "dataset": dataset,
             "phenotype": phenotype,
