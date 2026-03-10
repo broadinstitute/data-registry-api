@@ -86,8 +86,22 @@ async def is_gzip(stream: bytes) -> bool:
 
 
 async def decompress_gzip(stream: bytes) -> bytes:
-    with gzip.GzipFile(fileobj=io.BytesIO(stream), mode='rb') as gz:
-        return gz.read()
+    try:
+        with gzip.GzipFile(fileobj=io.BytesIO(stream), mode='rb') as gz:
+            return gz.read()
+    except EOFError:
+        # Truncated gzip stream (e.g. only first N bytes of a large file).
+        # Re-read what we can by collecting line-by-line.
+        lines = []
+        with gzip.GzipFile(fileobj=io.BytesIO(stream), mode='rb') as gz:
+            try:
+                for line in gz:
+                    lines.append(line)
+            except EOFError:
+                pass
+        if lines:
+            return b''.join(lines)
+        raise
 
 
 async def validate_tab_delimited_format(file_bytes: bytes) -> tuple:

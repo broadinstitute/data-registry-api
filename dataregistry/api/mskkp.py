@@ -72,8 +72,18 @@ COLUMN_ALIASES = {
 SIMILARITY_THRESHOLD = 0.6
 
 
-def suggest_column_map(columns: List[str], target_fields: List[str]) -> Dict[str, str]:
-    """Suggest mappings from file columns to target fields using aliases and string similarity."""
+def suggest_column_map(columns: List[str], target_fields: List[str], aliases: Dict[str, str] = None) -> Dict[str, str]:
+    """Suggest mappings from file columns to target fields using aliases and string similarity.
+
+    Args:
+        columns: column names found in the uploaded file.
+        target_fields: canonical field names the caller expects.
+        aliases: optional dict mapping lowercased column names to canonical target
+                 field names.  Defaults to the module-level COLUMN_ALIASES.
+    """
+    if aliases is None:
+        aliases = COLUMN_ALIASES
+
     suggested = {}
     matched_targets = set()
 
@@ -91,7 +101,7 @@ def suggest_column_map(columns: List[str], target_fields: List[str]) -> Dict[str
                 break
         else:
             # Check alias dict
-            alias_target = COLUMN_ALIASES.get(col_lower)
+            alias_target = aliases.get(col_lower)
             if alias_target and alias_target in target_fields and alias_target not in matched_targets:
                 suggested[col] = alias_target
                 matched_targets.add(alias_target)

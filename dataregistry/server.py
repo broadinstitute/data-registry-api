@@ -3,15 +3,17 @@ from fastapi import Depends
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.formparsers import MultiPartParser
 
-from dataregistry.api import api, sgc, peg, mskkp, calr
+from dataregistry.api import api, sgc, peg, mskkp, calr, hcm
 from dataregistry.api.api import get_current_user
 from dataregistry.api.sgc import get_sgc_user
 from dataregistry.api.calr import get_calr_user
+from dataregistry.api.hcm import get_hcm_user
 
 MultiPartParser.max_part_size = 5 * 1024 * 1024 * 1024  # 5GB
 
 SGC_ROUTES_WITHOUT_AUTH = {'hello_sgc'}
 CALR_ROUTES_WITHOUT_AUTH = {'download_calr_file', 'get_calr_file_info', 'list_public_calr_submissions', 'convert_calr_files'}
+HCM_ROUTES_WITHOUT_AUTH = set()
 ROUTES_WITHOUT_AUTH = {'stream_file', 'version', 'login', 'google_login', 'start_aggregator', 'search_phenotypes', 'search_terms', 'preview_files', 'download_sgc_phenotypes'}
 
 # create web server
@@ -29,10 +31,15 @@ for route in calr.router.routes:
     if route.name not in CALR_ROUTES_WITHOUT_AUTH:
         route.dependencies.append(Depends(get_calr_user))
 
+for route in hcm.router.routes:
+    if route.name not in HCM_ROUTES_WITHOUT_AUTH:
+        route.dependencies.append(Depends(get_hcm_user))
+
 # all the various routers for each api
 app.include_router(peg.router, prefix='/api', tags=['peg'])
 app.include_router(sgc.router, prefix='/api', tags=['sgc'])
 app.include_router(calr.router, prefix='/api', tags=['calr'])
+app.include_router(hcm.router, prefix='/api', tags=['hcm'])
 app.include_router(mskkp.router, prefix='/api', tags=['mskkp'])
 app.include_router(api.router, prefix='/api', tags=['api'])
 
