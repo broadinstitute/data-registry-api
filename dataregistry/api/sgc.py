@@ -6,7 +6,7 @@ import pandas as pd
 import io
 import smart_open
 from typing import Dict, List, Optional, Tuple
-from fastapi import UploadFile, Body, Form, Depends, Header
+from fastapi import BackgroundTasks, UploadFile, Body, Form, Depends, Header
 from pydantic import BaseModel
 from starlette.requests import Request
 from streaming_form_data import StreamingFormDataParser
@@ -18,7 +18,7 @@ from botocore.exceptions import ClientError
 
 from dataregistry.api import file_utils, s3, query
 from dataregistry.api.db import DataRegistryReadWriteDB
-from dataregistry.api.model import SGCPhenotype, SGCCohort, SGCCohortFile, SGCCasesControlsMetadata, SGCCoOccurrenceMetadata, SGCPhenotypeCaseTotals, SGCPhenotypeCaseCountsBySex, User, NewUserRequest, SGCGWASFile, SGCGWASCohort
+from dataregistry.api.model import SGCPhenotype, SGCCohort, SGCCohortFile, SGCCasesControlsMetadata, SGCCoOccurrenceMetadata, SGCPhenotypeCaseTotals, SGCPhenotypeCaseCountsBySex, User, NewUserRequest, SGCGWASFile, SGCGWASCohort, SGCGWASValidationJob
 from dataregistry.api.api import get_current_user
 
 router = fastapi.APIRouter()
@@ -1812,7 +1812,7 @@ async def generate_gwas_upload_url(request: GWASUploadInitRequest, user: User = 
 
 
 @router.post("/sgc/confirm-gwas-upload")
-async def confirm_gwas_upload(request: GWASUploadConfirmRequest, user: User = Depends(get_sgc_user)):
+async def confirm_gwas_upload(request: GWASUploadConfirmRequest, background_tasks: BackgroundTasks, user: User = Depends(get_sgc_user)):
     try:
         cohort_data = query.get_sgc_cohort_by_id(engine, request.cohort_id)
         if not cohort_data:
@@ -1865,10 +1865,17 @@ async def confirm_gwas_upload(request: GWASUploadConfirmRequest, user: User = De
         )
         
         file_id = query.insert_sgc_gwas_file(engine, gwas_file)
-        
+
+        # Auto-trigger row-level QA validation in the background
+        validation_job_id = _kick_off_gwas_validation(
+            background_tasks, file_id, request.s3_key,
+            request.column_mapping, user.user_name,
+        )
+
         return {
             "message": "GWAS file upload confirmed",
             "file_id": file_id,
+            "validation_job_id": validation_job_id,
             "cohort_id": request.cohort_id,
             "dataset": request.dataset,
             "phenotype": request.phenotype,
@@ -1887,6 +1894,7 @@ async def confirm_gwas_upload(request: GWASUploadConfirmRequest, user: User = De
 @router.post("/sgc/upload-gwas-stream")
 async def upload_gwas_stream(
     request: Request,
+    background_tasks: BackgroundTasks,
     user: User = Depends(get_sgc_user)
 ):
     """Stream upload GWAS file directly to S3 without writing to disk.
@@ -2004,10 +2012,16 @@ async def upload_gwas_stream(
         )
         
         file_id = query.insert_sgc_gwas_file(engine, gwas_file)
-        
+
+        # Auto-trigger row-level QA validation in the background
+        validation_job_id = _kick_off_gwas_validation(
+            background_tasks, file_id, s3_key, col_map, user.user_name,
+        )
+
         return {
             "message": "GWAS file uploaded successfully",
             "file_id": file_id,
+            "validation_job_id": validation_job_id,
             "cohort_id": cohort_id,
             "dataset": dataset,
             "phenotype": phenotype,
@@ -2174,8 +2188,189 @@ async def delete_sgc_gwas_file(file_id: str, user: User = Depends(get_sgc_user))
         raise fastapi.HTTPException(status_code=500, detail=f"Error deleting GWAS file: {str(e)}")
 
 
+# ---------------------------------------------------------------------------
+# SGC GWAS Row-Level Validation
+# ---------------------------------------------------------------------------
+
+GWAS_VALIDATOR_JOB_QUEUE = os.getenv('SGC_GWAS_VALIDATOR_JOB_QUEUE', 'sgc-gwas-validator-queue')
+GWAS_VALIDATOR_JOB_DEFINITION = os.getenv('SGC_GWAS_VALIDATOR_JOB_DEFINITION', 'sgc-gwas-validator-job')
 
 
+def _submit_gwas_validation_and_await(engine_ref, file_id: str, s3_path: str,
+                                      column_mapping: dict, submitted_by: str,
+                                      job_record_id: str):
+    """Background task: submit Batch job, poll until done, update DB.
+
+    Follows the same pattern as batch.submit_and_await_job used by Hermes.
+    """
+    import time
+
+    batch_client = boto3.client('batch', region_name=s3.S3_REGION)
+    progress_s3_key = f"sgc/gwas-validation/{file_id}/progress.json"
+
+    try:
+        response = batch_client.submit_job(
+            jobName=f"sgc-gwas-validate-{file_id[:16]}",
+            jobQueue=GWAS_VALIDATOR_JOB_QUEUE,
+            jobDefinition=GWAS_VALIDATOR_JOB_DEFINITION,
+            parameters={
+                's3-path': s3_path,
+                'column-mapping': json.dumps(column_mapping),
+                'progress-s3-key': progress_s3_key,
+                'bucket': s3.BASE_BUCKET,
+            },
+        )
+        batch_job_id = response['jobId']
+
+        # Update DB record with the Batch job ID
+        query.update_sgc_gwas_validation_job_status(
+            engine_ref, job_record_id, 'RUNNING', batch_job_id=batch_job_id
+        )
+
+        # Poll Batch job until terminal state
+        while True:
+            desc = batch_client.describe_jobs(jobs=[batch_job_id])
+            job_status = desc['jobs'][0]['status']
+            if job_status in ('SUCCEEDED', 'FAILED'):
+                break
+            time.sleep(10)
+
+        # Read final progress from S3 to get result summary
+        s3_client = boto3.client('s3', region_name=s3.S3_REGION)
+        try:
+            progress_resp = s3_client.get_object(Bucket=s3.BASE_BUCKET, Key=progress_s3_key)
+            progress = json.loads(progress_resp['Body'].read().decode('utf-8'))
+            total_rows = progress.get('total_rows')
+            errors_found = progress.get('errors_found', 0)
+            error_samples = progress.get('error_samples', [])
+        except Exception:
+            total_rows = None
+            errors_found = None
+            error_samples = None
+
+        final_status = 'COMPLETED' if job_status == 'SUCCEEDED' else 'FAILED'
+        query.update_sgc_gwas_validation_job_status(
+            engine_ref, job_record_id, final_status,
+            total_rows=total_rows,
+            errors_found=errors_found,
+            error_summary=error_samples,
+        )
+
+    except Exception:
+        # If anything goes wrong, mark the job as failed
+        try:
+            query.update_sgc_gwas_validation_job_status(
+                engine_ref, job_record_id, 'FAILED'
+            )
+        except Exception:
+            pass
+
+
+def _kick_off_gwas_validation(background_tasks: BackgroundTasks, file_id: str,
+                              s3_path: str, column_mapping: dict,
+                              submitted_by: str) -> str:
+    """Create a DB record and schedule the background validation task.
+
+    Returns the validation job record ID.
+    """
+    progress_s3_key = f"sgc/gwas-validation/{file_id}/progress.json"
+    job = SGCGWASValidationJob(
+        file_id=file_id,
+        status='SUBMITTED',
+        progress_s3_key=progress_s3_key,
+        submitted_by=submitted_by,
+    )
+    job_record_id = query.insert_sgc_gwas_validation_job(engine, job)
+
+    background_tasks.add_task(
+        _submit_gwas_validation_and_await,
+        engine, file_id, s3_path, column_mapping, submitted_by, job_record_id,
+    )
+    return job_record_id
+
+
+@router.post("/sgc/gwas-validate/{file_id}")
+async def start_gwas_validation(file_id: str, background_tasks: BackgroundTasks,
+                                user: User = Depends(get_sgc_user)):
+    """Kick off an AWS Batch job to validate every row of a GWAS file.
+
+    Creates a DB record in sgc_gwas_validation_jobs, submits the Batch job
+    in the background, and returns immediately.
+    """
+    try:
+        gwas_file = query.get_sgc_gwas_file_by_id(engine, file_id)
+        if not gwas_file:
+            raise fastapi.HTTPException(status_code=404, detail="GWAS file not found")
+
+        # Permission check
+        cohort_data = query.get_sgc_cohort_by_id(engine, gwas_file['cohort_id'])
+        if not cohort_data:
+            raise fastapi.HTTPException(status_code=404, detail="Associated cohort not found")
+        cohort_owner = cohort_data[0]['uploaded_by']
+        if not (cohort_owner == user.user_name or check_review_permissions(user)):
+            raise fastapi.HTTPException(status_code=403, detail="You can only validate GWAS files for cohorts you own")
+
+        job_record_id = _kick_off_gwas_validation(
+            background_tasks, file_id, gwas_file['s3_path'],
+            gwas_file.get('column_mapping', {}), user.user_name,
+        )
+
+        return {
+            "message": "Validation job submitted",
+            "validation_job_id": job_record_id,
+            "file_id": file_id,
+            "progress_s3_key": f"sgc/gwas-validation/{file_id}/progress.json",
+        }
+
+    except fastapi.HTTPException:
+        raise
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Error submitting validation job: {str(e)}")
+
+
+@router.get("/sgc/gwas-validate/{file_id}/progress")
+async def get_gwas_validation_progress(file_id: str, user: User = Depends(get_sgc_user)):
+    """Get validation status for a GWAS file.
+
+    Returns the DB record(s) for all validation runs of this file.
+    For the most recent running job, also includes live progress from S3.
+    """
+    try:
+        gwas_file = query.get_sgc_gwas_file_by_id(engine, file_id)
+        if not gwas_file:
+            raise fastapi.HTTPException(status_code=404, detail="GWAS file not found")
+
+        # Permission check
+        cohort_data = query.get_sgc_cohort_by_id(engine, gwas_file['cohort_id'])
+        if not cohort_data:
+            raise fastapi.HTTPException(status_code=404, detail="Associated cohort not found")
+        cohort_owner = cohort_data[0]['uploaded_by']
+        if not (cohort_owner == user.user_name or check_review_permissions(user)):
+            raise fastapi.HTTPException(status_code=403, detail="Access denied")
+
+        jobs = query.get_sgc_gwas_validation_jobs_by_file_id(engine, file_id)
+        if not jobs:
+            raise fastapi.HTTPException(
+                status_code=404,
+                detail="No validation jobs found for this file."
+            )
+
+        # For the most recent job, if it's still running, enrich with live S3 progress
+        latest = jobs[0]
+        if latest['status'] in ('SUBMITTED', 'RUNNING') and latest.get('progress_s3_key'):
+            s3_client = boto3.client('s3', region_name=s3.S3_REGION)
+            try:
+                resp = s3_client.get_object(Bucket=s3.BASE_BUCKET, Key=latest['progress_s3_key'])
+                latest['live_progress'] = json.loads(resp['Body'].read().decode('utf-8'))
+            except ClientError:
+                latest['live_progress'] = None
+
+        return {"validation_jobs": jobs}
+
+    except fastapi.HTTPException:
+        raise
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Error reading validation progress: {str(e)}")
 
 
 # ---------------------------------------------------------------------------

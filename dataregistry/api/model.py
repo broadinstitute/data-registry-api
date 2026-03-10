@@ -395,6 +395,20 @@ class SGCGWASFile(BaseModel):
     metadata: Union[Dict, None] = None
 
 
+class SGCGWASValidationJob(BaseModel):
+    id: Union[UUID, None] = None
+    file_id: UUID
+    batch_job_id: Union[str, None] = None
+    status: str = 'SUBMITTED'  # SUBMITTED, RUNNING, COMPLETED, FAILED
+    total_rows: Union[int, None] = None
+    errors_found: Union[int, None] = None
+    error_summary: Union[List[Dict], None] = None
+    progress_s3_key: Union[str, None] = None
+    submitted_at: Union[datetime, None] = None
+    completed_at: Union[datetime, None] = None
+    submitted_by: str = ''
+
+
 class SGCGWASCohort(BaseModel):
     id: Union[UUID, None] = None
     cohort_id: Union[UUID, None] = None
