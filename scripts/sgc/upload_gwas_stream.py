@@ -20,6 +20,9 @@ Metadata JSON file:
   All fields below are required. Additional fields may be included and will be
   stored alongside the required metadata.
     {
+      "cohort_name": "My Cohort",          # exact cohort name as registered in the portal
+      "phenotype": "acne",                 # phenotype code (see /sgc/phenotypes for valid values)
+      "ancestry": "EUR",                   # ancestry code (e.g. EUR, AFR, AMR, EAS, SAS, Combined)
       "sex": "All",                        # or "Male" or "Female"
       "codes_used": "L20, L21",           # diagnosis codes for case definition
       "cases": 1000,                       # number of cases (integer)
@@ -34,10 +37,7 @@ Usage examples:
   # QA
   ./upload_gwas_stream.py \
     --env qa \
-    --cohort-name "My Cohort" \
     --dataset test_curl \
-    --phenotype acne \
-    --ancestry EUR \
     --metadata /path/to/metadata.json \
     /path/to/gwas_file.tsv.gz
 
@@ -45,7 +45,7 @@ Usage examples:
   ./upload_gwas_stream.py \
     --api-base-url https://api.kpndataregistry.org \
     --user-service-url https://users.kpndataregistry.org \
-    --cohort-name ... --dataset ... --phenotype ... \
+    --dataset my_dataset \
     --metadata metadata.json \
     file.txt
 """
@@ -213,6 +213,9 @@ def read_first_line(file_path: str) -> str:
 
 # Required metadata fields and their expected types
 REQUIRED_METADATA_FIELDS = {
+    'cohort_name': str,
+    'phenotype': str,
+    'ancestry': str,
     'sex': str,
     'codes_used': str,
     'cases': int,
@@ -293,15 +296,11 @@ def main():
     p.add_argument("--user-service-url", default=DEFAULT_USER_SERVICE_URL, help="User service URL")
 
     # Required GWAS metadata
-    p.add_argument("--cohort-name", required=True, help="Name of the cohort")
     p.add_argument("--dataset", required=True)
-    p.add_argument("--phenotype", required=True)
 
     # Dataset-level metadata
-    p.add_argument("--ancestry", required=True,
-                   help="Ancestry code (e.g. EUR, AFR, Combined)")
     p.add_argument("--metadata", required=True,
-                   help="Path to JSON file with dataset-level metadata")
+                   help="Path to JSON file with dataset-level metadata (must include cohort_name, phenotype, ancestry)")
 
     args = p.parse_args()
 
@@ -350,6 +349,9 @@ def main():
             sys.stderr.write(f"  - {err}\n")
         sys.exit(1)
 
+    cohort_name = metadata.pop("cohort_name")
+    phenotype = metadata.pop("phenotype")
+    ancestry = metadata.pop("ancestry")
     cases = metadata.pop("cases")
     controls = metadata.pop("controls")
 
@@ -359,14 +361,14 @@ def main():
     if not valid_ancestries:
         sys.stderr.write("Could not fetch valid ancestries from API\n")
         sys.exit(1)
-    if args.ancestry not in valid_ancestries:
+    if ancestry not in valid_ancestries:
         sys.stderr.write(
-            f"Invalid ancestry: '{args.ancestry}'\n"
+            f"Invalid ancestry: '{ancestry}'\n"
             f"Valid ancestries: {valid_ancestries}\n"
             f"If the ancestry you need is not listed, please contact the SGC so it can be added.\n"
         )
         sys.exit(1)
-    print(f"Ancestry '{args.ancestry}' is valid.")
+    print(f"Ancestry '{ancestry}' is valid.")
 
     # Validate phenotype against allowed values
     print("Validating phenotype...")
@@ -374,22 +376,22 @@ def main():
     if not valid_phenotypes:
         sys.stderr.write("Could not fetch valid phenotypes from API\n")
         sys.exit(1)
-    if args.phenotype not in valid_phenotypes:
+    if phenotype not in valid_phenotypes:
         ui_base = DEFAULT_UI_BY_ENV.get(args.env, "https://kpndataregistry.org")
         sys.stderr.write(
-            f"Invalid phenotype: '{args.phenotype}'\n"
+            f"Invalid phenotype: '{phenotype}'\n"
             f"Valid phenotypes: {sorted(valid_phenotypes)}\n"
             f"See {ui_base}/sgc/phenotypes for the full list of allowed phenotypes.\n"
         )
         sys.exit(1)
-    print(f"Phenotype '{args.phenotype}' is valid.")
+    print(f"Phenotype '{phenotype}' is valid.")
 
     # Look up cohort ID by name
-    cohort_id = lookup_cohort_id(api_base, token, args.cohort_name)
+    cohort_id = lookup_cohort_id(api_base, token, cohort_name)
     if not cohort_id:
-        sys.stderr.write(f"Cohort not found: {args.cohort_name}\n")
+        sys.stderr.write(f"Cohort not found: '{cohort_name}'\n")
         sys.exit(1)
-    print(f"Found cohort '{args.cohort_name}' -> {cohort_id}")
+    print(f"Found cohort '{cohort_name}' -> {cohort_id}")
 
     # Fetch GWAS metadata and extract column mapping
     print("Fetching GWAS metadata for cohort...")
@@ -427,8 +429,8 @@ def main():
         "Authorization": f"Bearer {token}",
         "cohort_id": cohort_id,
         "dataset": args.dataset,
-        "phenotype": args.phenotype,
-        "ancestry": args.ancestry,
+        "phenotype": phenotype,
+        "ancestry": ancestry,
         "filename": filename,
         "column_mapping": json.dumps(column_mapping),
     }

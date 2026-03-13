@@ -11,9 +11,11 @@ import boto3
 from fastapi import UploadFile, Form, Depends, Header
 from fastapi.responses import StreamingResponse
 
-from dataregistry.api import s3, query
+from dataregistry.api import s3
 from dataregistry.api.db import DataRegistryReadWriteDB
-from dataregistry.api.model import CALRFile, CALRSubmission, User
+from dataregistry.api.model import User
+from dataregistry.api.calr_model import CALRFile, CALRSubmission, CalRSession, AnovaRequest, PowerCalcRequest, QualityControlRequest
+from dataregistry.api import calr_query
 
 # Import CalR conversion functions
 import sys
@@ -22,6 +24,7 @@ from calr.loaders import detect_format, load_cal_file
 from calr.oxymax_loader import load_oxymax_file, convert_oxymax
 from calr.sable_loader import load_sable_file, convert_sable
 from calr.tse_loader import load_tse_file, convert_tse
+from calr.analysis import acute_ancova, filter_by_time_of_day, power_calc, quality_control
 
 router = fastapi.APIRouter()
 engine = DataRegistryReadWriteDB().get_engine()
@@ -74,23 +77,21 @@ def _upload_file_to_s3(file_content: bytes, s3_key: str, content_type: str):
     )
 
 
-@router.post("/calr/files")
+@router.post("/calr/files", status_code=201)
 async def upload_calr_files(
     standard_file: UploadFile,
-    session_file: UploadFile,
     name: str = Form(...),
     description: str = Form(''),
     public: bool = Form(False),
     user: User = Depends(get_calr_user)
 ):
     """
-    Upload a paired CALR submission (standard format file + session file).
-    Creates one submission record and two file records.
+    Upload a standard CalR format file to create a submission.
+    Sessions are created separately via POST /calr/sessions.
     """
     try:
         submission_id = str(uuid.uuid4()).replace('-', '')
 
-        # Create submission record
         submission = CALRSubmission(
             id=submission_id,
             name=name,
@@ -98,38 +99,26 @@ async def upload_calr_files(
             public=public,
             uploaded_by=user.user_name
         )
-        saved_sub_id = query.insert_calr_submission(engine, submission)
+        saved_sub_id = calr_query.insert_calr_submission(engine, submission)
 
-        file_ids = {}
-        for file_type, upload_file in [('standard', standard_file), ('session', session_file)]:
-            content = await upload_file.read()
-            file_size = len(content)
-            file_id = str(uuid.uuid4()).replace('-', '')
-            s3_key = f"calr/{user.user_name}/{saved_sub_id}/{file_type}/{upload_file.filename}"
+        content = await standard_file.read()
+        s3_key = f"calr/{user.user_name}/{saved_sub_id}/standard/{standard_file.filename}"
+        _upload_file_to_s3(content, s3_key, standard_file.content_type)
 
-            _upload_file_to_s3(content, s3_key, upload_file.content_type)
-
-            calr_file = CALRFile(
-                id=file_id,
-                submission_id=saved_sub_id,
-                file_type=file_type,
-                file_name=upload_file.filename,
-                file_size=file_size,
-                s3_path=s3_key,
-            )
-            saved_file_id = query.insert_calr_file(engine, calr_file)
-            file_ids[file_type] = {
-                'file_id': saved_file_id,
-                'file_name': upload_file.filename,
-                'file_size': file_size,
-            }
+        calr_file = CALRFile(
+            submission_id=saved_sub_id,
+            file_type='standard',
+            file_name=standard_file.filename,
+            file_size=len(content),
+            s3_path=s3_key,
+        )
+        file_id = calr_query.insert_calr_file(engine, calr_file)
 
         return {
-            "message": "Submission uploaded successfully",
             "submission_id": saved_sub_id,
+            "file_id": file_id,
             "name": name,
             "public": public,
-            "files": file_ids,
             "uploaded_by": user.user_name
         }
 
@@ -144,7 +133,7 @@ async def list_calr_submissions(user: User = Depends(get_calr_user)):
     Returns submissions with nested file info.
     """
     try:
-        return query.get_calr_submissions_by_user(engine, user.user_name)
+        return calr_query.get_calr_submissions_by_user(engine, user.user_name)
     except Exception as e:
         raise fastapi.HTTPException(status_code=500, detail=f"Error retrieving submissions: {str(e)}")
 
@@ -157,7 +146,7 @@ async def list_public_calr_submissions():
     and file IDs/types for each public submission.
     """
     try:
-        return query.get_public_calr_submissions(engine)
+        return calr_query.get_public_calr_submissions(engine)
     except Exception as e:
         raise fastapi.HTTPException(status_code=500, detail=f"Error retrieving public submissions: {str(e)}")
 
@@ -170,7 +159,7 @@ async def download_calr_file(file_id: str):
     No authentication required.
     """
     try:
-        file_info = query.get_calr_file_by_id(engine, file_id)
+        file_info = calr_query.get_calr_file_by_id(engine, file_id)
         if not file_info or not file_info['public']:
             raise fastapi.HTTPException(status_code=404, detail="File not found")
 
@@ -212,7 +201,7 @@ async def get_calr_file_info(file_id: str):
     No authentication required. Returns 404 for non-public files.
     """
     try:
-        file_info = query.get_calr_file_by_id(engine, file_id)
+        file_info = calr_query.get_calr_file_by_id(engine, file_id)
         if not file_info or not file_info['public']:
             raise fastapi.HTTPException(status_code=404, detail="File not found")
 
@@ -337,12 +326,12 @@ async def delete_calr_submission(submission_id: str, user: User = Depends(get_ca
     """
     try:
         # Get all files for this submission to check ownership and get S3 paths
-        files = query.get_calr_files_by_submission(engine, submission_id)
+        files = calr_query.get_calr_files_by_submission(engine, submission_id)
         if not files:
             raise fastapi.HTTPException(status_code=404, detail="Submission not found")
 
         # Verify ownership by checking one of the files (they share the same submission)
-        file_info = query.get_calr_file_by_id(engine, files[0]['id'])
+        file_info = calr_query.get_calr_file_by_id(engine, files[0]['id'])
         if not file_info or file_info['uploaded_by'] != user.user_name:
             raise fastapi.HTTPException(
                 status_code=403,
@@ -358,7 +347,7 @@ async def delete_calr_submission(submission_id: str, user: User = Depends(get_ca
                 pass  # Best-effort S3 cleanup
 
         # Delete submission and files from database
-        deleted = query.delete_calr_submission(engine, submission_id)
+        deleted = calr_query.delete_calr_submission(engine, submission_id)
         if not deleted:
             raise fastapi.HTTPException(status_code=404, detail="Submission not found")
 
@@ -368,3 +357,314 @@ async def delete_calr_submission(submission_id: str, user: User = Depends(get_ca
         raise
     except Exception as e:
         raise fastapi.HTTPException(status_code=500, detail=f"Error deleting submission: {str(e)}")
+
+
+def _validate_session_against_standard_file(session: CalRSession, standard_df) -> list[str]:
+    """
+    Validate session configuration against the standard CalR dataframe.
+    Returns a list of error strings (empty if valid).
+    """
+    errors = []
+
+    file_subjects = set(standard_df['subject.id'].astype(str).unique())
+
+    # Check for subjects in multiple groups
+    seen = {}
+    for group_name, subject_ids in session.groups.items():
+        for sid in subject_ids:
+            if sid in seen:
+                errors.append(f"Subject '{sid}' appears in both '{seen[sid]}' and '{group_name}'")
+            seen[sid] = group_name
+
+    # Check all group subjects exist in the file
+    for group_name, subject_ids in session.groups.items():
+        missing = [sid for sid in subject_ids if sid not in file_subjects]
+        if missing:
+            errors.append(f"Group '{group_name}' contains subjects not found in standard file: {missing}")
+
+    # Check subject_mass subjects exist in the file
+    if session.subject_mass:
+        missing = [sid for sid in session.subject_mass if sid not in file_subjects]
+        if missing:
+            errors.append(f"subject_mass contains subjects not found in standard file: {missing}")
+
+    # Check exclusion subjects exist in the file
+    if session.exclusions:
+        missing = [sid for sid in session.exclusions if sid not in file_subjects]
+        if missing:
+            errors.append(f"exclusions contains subjects not found in standard file: {missing}")
+
+    # Check hour_range is within the file's exp.hour bounds
+    if 'exp.hour' in standard_df.columns:
+        file_min = float(standard_df['exp.hour'].min())
+        file_max = float(standard_df['exp.hour'].max())
+        start, end = session.hour_range
+        if start < file_min or end > file_max:
+            errors.append(
+                f"hour_range [{start}, {end}] is outside the file's exp.hour range [{file_min}, {file_max}]"
+            )
+        if start >= end:
+            errors.append(f"hour_range start ({start}) must be less than end ({end})")
+
+    return errors
+
+
+@router.post("/calr/sessions", status_code=201)
+async def create_calr_session(
+    session: CalRSession,
+    user: User = Depends(get_calr_user)
+):
+    """
+    Create and persist a CalR experiment session.
+
+    Validates the session configuration against the linked submission's standard file,
+    then stores it in S3. Returns the session ID for use in subsequent analysis requests.
+    """
+    import pandas as pd
+
+    # Verify the submission exists and belongs to this user
+    files = calr_query.get_calr_files_by_submission(engine, session.submission_id)
+    if not files:
+        raise fastapi.HTTPException(status_code=404, detail="Submission not found")
+    if files[0]['uploaded_by'] != user.user_name:
+        raise fastapi.HTTPException(status_code=403, detail="Access denied")
+
+    standard_file = next((f for f in files if f['file_type'] == 'standard'), None)
+    if not standard_file:
+        raise fastapi.HTTPException(status_code=404, detail="Standard file not found in submission")
+
+    # Download and parse the standard file
+    try:
+        s3_client = boto3.client('s3', region_name=s3.S3_REGION)
+        s3_response = s3_client.get_object(Bucket=s3.BASE_BUCKET, Key=standard_file['s3_path'])
+        standard_df = pd.read_csv(s3_response['Body'])
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Error reading standard file: {str(e)}")
+
+    # Validate session against the standard file
+    errors = _validate_session_against_standard_file(session, standard_df)
+    if errors:
+        raise fastapi.HTTPException(status_code=422, detail=errors)
+
+    try:
+        session_id = str(uuid.uuid4()).replace('-', '')
+        s3_key = f"calr/{user.user_name}/sessions/{session_id}.json"
+        _upload_file_to_s3(session.json().encode('utf-8'), s3_key, 'application/json')
+        return {"session_id": session_id}
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Error creating session: {str(e)}")
+
+
+@router.get("/calr/sessions/{session_id}")
+async def get_calr_session(
+    session_id: str,
+    user: User = Depends(get_calr_user)
+):
+    """
+    Retrieve a CalR session by ID.
+
+    Streams the session JSON from S3. Users can only retrieve their own sessions.
+    """
+    s3_key = f"calr/{user.user_name}/sessions/{session_id}.json"
+    try:
+        s3_client = boto3.client('s3', region_name=s3.S3_REGION)
+        s3_response = s3_client.get_object(Bucket=s3.BASE_BUCKET, Key=s3_key)
+    except s3_client.exceptions.NoSuchKey:
+        raise fastapi.HTTPException(status_code=404, detail="Session not found")
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Error retrieving session: {str(e)}")
+
+    def stream():
+        for chunk in s3_response['Body'].iter_chunks(chunk_size=8192):
+            yield chunk
+
+    return StreamingResponse(
+        stream(),
+        media_type='application/json',
+        headers={"Content-Length": str(s3_response['ContentLength'])},
+    )
+
+
+def _load_session_and_standard_df(session_id: str, username: str):
+    """
+    Load a CalR session from S3 and its associated standard file as a DataFrame.
+    Returns (session_dict, standard_df). Raises HTTPException on any failure.
+    """
+    import json
+    import pandas as pd
+
+    s3_client = boto3.client('s3', region_name=s3.S3_REGION)
+
+    # Load session
+    session_key = f"calr/{username}/sessions/{session_id}.json"
+    try:
+        session_obj = s3_client.get_object(Bucket=s3.BASE_BUCKET, Key=session_key)
+        session_data = json.loads(session_obj['Body'].read())
+    except s3_client.exceptions.NoSuchKey:
+        raise fastapi.HTTPException(status_code=404, detail="Session not found")
+
+    # Load standard file via submission_id stored in session
+    submission_id = session_data.get('submission_id')
+    if not submission_id:
+        raise fastapi.HTTPException(status_code=422, detail="Session has no submission_id")
+
+    files = calr_query.get_calr_files_by_submission(engine, submission_id)
+    standard_file = next((f for f in files if f['file_type'] == 'standard'), None)
+    if not standard_file:
+        raise fastapi.HTTPException(status_code=404, detail="Standard file not found for session")
+
+    try:
+        file_obj = s3_client.get_object(Bucket=s3.BASE_BUCKET, Key=standard_file['s3_path'])
+        standard_df = pd.read_csv(file_obj['Body'])
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Error reading standard file: {str(e)}")
+
+    return session_data, standard_df
+
+
+@router.post("/calr/analysis/ancova")
+async def run_ancova(
+    request: AnovaRequest,
+    user: User = Depends(get_calr_user)
+):
+    """
+    Run per-hour ANCOVA on a CalR standard file using the given session configuration.
+
+    For each hour in the analysis window, fits: variable ~ mass_variable + group
+    Returns per-hour p-values, significance annotations, annotation y-positions,
+    and per-group means and standard errors — everything a client needs to render
+    a time-series plot with significance overlay.
+    """
+    if request.time_of_day not in ('light', 'dark', 'total'):
+        raise fastapi.HTTPException(status_code=422, detail="time_of_day must be 'light', 'dark', or 'total'")
+
+    session, df = _load_session_and_standard_df(request.session_id, user.user_name)
+
+    if request.variable not in df.columns:
+        raise fastapi.HTTPException(status_code=422, detail=f"Variable '{request.variable}' not found in standard file")
+    if request.mass_variable not in df.columns:
+        raise fastapi.HTTPException(status_code=422, detail=f"Mass variable '{request.mass_variable}' not found in standard file")
+
+    # Assign groups from session
+    subject_to_group = {
+        sid: group
+        for group, sids in session['groups'].items()
+        for sid in sids
+    }
+    df['group'] = df['subject.id'].astype(str).map(subject_to_group)
+    df = df[df['group'].notna()]
+
+    # Apply hour range from session
+    start_hour, end_hour = session['hour_range']
+    df = df[(df['exp.hour'] >= start_hour) & (df['exp.hour'] <= end_hour)]
+
+    # Filter by time of day
+    df = filter_by_time_of_day(
+        df,
+        request.time_of_day,
+        session['light_cycle_start'],
+        session['dark_cycle_start'],
+    )
+
+    if df.empty:
+        raise fastapi.HTTPException(status_code=422, detail="No data remaining after filters")
+
+    result = acute_ancova(df, request.variable, request.mass_variable)
+    return result
+
+
+@router.post("/calr/analysis/power")
+async def run_power_calc(
+    request: PowerCalcRequest,
+    user: User = Depends(get_calr_user)
+):
+    """
+    Compute a statistical power curve for a CalR experiment.
+
+    Auto-selects ANCOVA (for 'ee', 'feed', 'feed.acc') or ANOVA (all others)
+    based on the variable. Returns per-group summary statistics, the effect size,
+    and power estimates across the requested sample sizes.
+    """
+    if request.time_of_day not in ('light', 'dark', 'total'):
+        raise fastapi.HTTPException(status_code=422, detail="time_of_day must be 'light', 'dark', or 'total'")
+
+    session, df = _load_session_and_standard_df(request.session_id, user.user_name)
+
+    if request.variable not in df.columns:
+        raise fastapi.HTTPException(status_code=422, detail=f"Variable '{request.variable}' not found in standard file")
+    if request.mass_variable not in df.columns:
+        raise fastapi.HTTPException(status_code=422, detail=f"Mass variable '{request.mass_variable}' not found in standard file")
+
+    # Assign groups from session
+    subject_to_group = {
+        sid: group
+        for group, sids in session['groups'].items()
+        for sid in sids
+    }
+    df['group'] = df['subject.id'].astype(str).map(subject_to_group)
+    df = df[df['group'].notna()]
+
+    # Apply hour range from session
+    start_hour, end_hour = session['hour_range']
+    df = df[(df['exp.hour'] >= start_hour) & (df['exp.hour'] <= end_hour)]
+
+    df = filter_by_time_of_day(
+        df,
+        request.time_of_day,
+        session['light_cycle_start'],
+        session['dark_cycle_start'],
+    )
+
+    if df.empty:
+        raise fastapi.HTTPException(status_code=422, detail="No data remaining after filters")
+
+    try:
+        result = power_calc(df, request.variable, request.mass_variable, request.sample_sizes, request.alpha)
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Power calculation failed: {str(e)}")
+
+    return result
+
+
+@router.post("/calr/analysis/qc")
+async def run_quality_control(
+    request: QualityControlRequest,
+    user: User = Depends(get_calr_user)
+):
+    """
+    Run the CalR quality control analysis.
+
+    For each subject, computes mass change and total cumulative energy balance
+    over the session's hour window, then fits per-group and overall linear
+    regressions. A well-controlled experiment should show strong positive
+    correlation between mass loss and negative energy balance.
+
+    Returns per-subject data points and regression statistics for client-side
+    scatter plot rendering.
+    """
+    session, df = _load_session_and_standard_df(request.session_id, user.user_name)
+
+    for col in ('subject.mass', 'feed', 'ee'):
+        if col not in df.columns:
+            raise fastapi.HTTPException(status_code=422, detail=f"Required column '{col}' not found in standard file")
+
+    subject_to_group = {
+        sid: group
+        for group, sids in session['groups'].items()
+        for sid in sids
+    }
+    df['group'] = df['subject.id'].astype(str).map(subject_to_group)
+    df = df[df['group'].notna()]
+
+    start_hour, end_hour = session['hour_range']
+    df = df[(df['exp.hour'] >= start_hour) & (df['exp.hour'] <= end_hour)]
+
+    if df.empty:
+        raise fastapi.HTTPException(status_code=422, detail="No data remaining after filters")
+
+    try:
+        result = quality_control(df, request.n_mass_measurements)
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"QC analysis failed: {str(e)}")
+
+    return result
