@@ -4,7 +4,7 @@ from typing import Optional
 
 from sqlalchemy import text
 
-from dataregistry.api.hcm_model import HCMGWASFile
+from dataregistry.api.hcm_model import HCMGWASFile, HCMGWASValidationJob
 
 
 def _parse_hcm_gwas_row(row) -> dict:
@@ -132,3 +132,83 @@ def delete_hcm_gwas_file(engine, file_id: str) -> bool:
                               {'file_id': file_id.replace('-', '')})
         conn.commit()
         return result.rowcount > 0
+
+
+# ---------------------------------------------------------------------------
+# Validation job queries
+# ---------------------------------------------------------------------------
+
+def _parse_validation_job_row(row) -> dict:
+    d = dict(row)
+    for key in ('id', 'file_id'):
+        if isinstance(d.get(key), (bytes, bytearray)):
+            d[key] = d[key].hex()
+    if isinstance(d.get('error_summary'), str):
+        d['error_summary'] = json.loads(d['error_summary'])
+    return d
+
+
+def insert_hcm_gwas_validation_job(engine, job: HCMGWASValidationJob) -> str:
+    """Insert a new validation job record. Returns the job ID as a hex string."""
+    with engine.connect() as conn:
+        job_id = str(uuid.uuid4()).replace('-', '')
+        conn.execute(text("""
+            INSERT INTO hcm_gwas_validation_jobs
+            (id, file_id, batch_job_id, status, progress_s3_key, submitted_by)
+            VALUES (:id, :file_id, :batch_job_id, :status, :progress_s3_key, :submitted_by)
+        """), {
+            'id': job_id,
+            'file_id': str(job.file_id).replace('-', ''),
+            'batch_job_id': job.batch_job_id,
+            'status': job.status,
+            'progress_s3_key': job.progress_s3_key,
+            'submitted_by': job.submitted_by,
+        })
+        conn.commit()
+        return job_id
+
+
+def update_hcm_gwas_validation_job_status(
+    engine, job_id: str, status: str,
+    total_rows: int = None, errors_found: int = None,
+    error_summary: list = None, batch_job_id: str = None
+):
+    """Update validation job status and optional result fields."""
+    with engine.connect() as conn:
+        params = {'id': job_id, 'status': status}
+        set_clauses = ['status = :status']
+
+        if total_rows is not None:
+            params['total_rows'] = total_rows
+            set_clauses.append('total_rows = :total_rows')
+        if errors_found is not None:
+            params['errors_found'] = errors_found
+            set_clauses.append('errors_found = :errors_found')
+        if error_summary is not None:
+            params['error_summary'] = json.dumps(error_summary)
+            set_clauses.append('error_summary = :error_summary')
+        if batch_job_id is not None:
+            params['batch_job_id'] = batch_job_id
+            set_clauses.append('batch_job_id = :batch_job_id')
+        if status in ('COMPLETED', 'FAILED'):
+            set_clauses.append('completed_at = NOW()')
+
+        conn.execute(text(f"""
+            UPDATE hcm_gwas_validation_jobs
+            SET {', '.join(set_clauses)}
+            WHERE id = :id
+        """), params)
+        conn.commit()
+
+
+def get_hcm_gwas_validation_jobs_by_file_id(engine, file_id: str) -> list:
+    """Get all validation jobs for a given GWAS file, most recent first."""
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+            SELECT id, file_id, batch_job_id, status, total_rows, errors_found,
+                   error_summary, progress_s3_key, submitted_at, completed_at, submitted_by
+            FROM hcm_gwas_validation_jobs
+            WHERE file_id = :file_id
+            ORDER BY submitted_at DESC
+        """), {'file_id': str(file_id).replace('-', '')}).mappings().all()
+        return [_parse_validation_job_row(row) for row in result]

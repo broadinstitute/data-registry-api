@@ -8,6 +8,7 @@ import httpx
 import boto3
 import smart_open
 from botocore.exceptions import ClientError
+from fastapi import BackgroundTasks
 from pydantic import BaseModel
 from starlette.requests import Request
 from streaming_form_data import StreamingFormDataParser
@@ -16,7 +17,7 @@ from streaming_form_data.targets import S3Target
 from dataregistry.api import s3
 from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api.model import User, NewUserRequest
-from dataregistry.api.hcm_model import HCMGWASFile
+from dataregistry.api.hcm_model import HCMGWASFile, HCMGWASValidationJob
 from dataregistry.api import hcm_query
 from dataregistry.api.mskkp import suggest_column_map
 
@@ -26,6 +27,9 @@ engine = DataRegistryReadWriteDB().get_engine()
 USER_SERVICE_URL = os.getenv('USER_SERVICE_URL', 'https://users.kpndataregistry.org')
 HCM_UPLOADER_TOKEN = os.getenv('HCM_UPLOADER_TOKEN')
 HCM_REVIEWER_TOKEN = os.getenv('HCM_REVIEWER_TOKEN')
+
+HCM_GWAS_VALIDATOR_JOB_QUEUE = os.getenv('HCM_GWAS_VALIDATOR_JOB_QUEUE', 'hcm-gwas-validator-queue')
+HCM_GWAS_VALIDATOR_JOB_DEFINITION = os.getenv('HCM_GWAS_VALIDATOR_JOB_DEFINITION', 'hcm-gwas-validator-job')
 
 # Valid enum values from the HCM GWAS analysis plan
 VALID_SARC = {'ALL', 'SP', 'SN'}
@@ -737,3 +741,211 @@ async def create_hcm_user(request: NewUserRequest, user: User = fastapi.Depends(
             status_code=500,
             detail=f"Error creating user: {str(e)}"
         )
+
+
+# ---------------------------------------------------------------------------
+# GWAS Row-Level Validation (AWS Batch)
+# ---------------------------------------------------------------------------
+
+def _submit_gwas_validation_and_await(engine_ref, file_id: str, s3_path: str,
+                                      column_mapping: dict, submitted_by: str,
+                                      job_record_id: str):
+    """Background task: submit Batch job, poll until done, update DB."""
+    batch_client = boto3.client('batch', region_name=s3.S3_REGION)
+    s3_client = boto3.client('s3', region_name=s3.S3_REGION)
+
+    progress_s3_key = f"hcm/gwas-validation/{file_id}/progress.json"
+
+    try:
+        response = batch_client.submit_job(
+            jobName=f'hcm-gwas-validator-{file_id[:8]}',
+            jobQueue=HCM_GWAS_VALIDATOR_JOB_QUEUE,
+            jobDefinition=HCM_GWAS_VALIDATOR_JOB_DEFINITION,
+            parameters={
+                's3-path': s3_path,
+                'column-mapping': json.dumps(column_mapping),
+                'progress-s3-key': progress_s3_key,
+                'bucket': s3.BASE_BUCKET,
+            },
+        )
+        batch_job_id = response['jobId']
+
+        hcm_query.update_hcm_gwas_validation_job_status(
+            engine_ref, job_record_id, 'RUNNING', batch_job_id=batch_job_id
+        )
+
+        while True:
+            import time
+            time.sleep(10)
+            response = batch_client.describe_jobs(jobs=[batch_job_id])
+            job_status = response['jobs'][0]['status']
+            if job_status in ('SUCCEEDED', 'FAILED'):
+                break
+
+        # Read final progress JSON from S3 for error summary
+        total_rows = None
+        errors_found = None
+        error_samples = None
+        try:
+            resp = s3_client.get_object(Bucket=s3.BASE_BUCKET, Key=progress_s3_key)
+            progress = json.loads(resp['Body'].read().decode('utf-8'))
+            total_rows = progress.get('total_rows')
+            errors_found = progress.get('errors_found')
+            error_samples = progress.get('error_samples')
+        except Exception:
+            pass
+
+        final_status = 'COMPLETED' if job_status == 'SUCCEEDED' else 'FAILED'
+        hcm_query.update_hcm_gwas_validation_job_status(
+            engine_ref, job_record_id, final_status,
+            total_rows=total_rows,
+            errors_found=errors_found,
+            error_summary=error_samples,
+        )
+
+    except Exception:
+        try:
+            hcm_query.update_hcm_gwas_validation_job_status(
+                engine_ref, job_record_id, 'FAILED'
+            )
+        except Exception:
+            pass
+
+
+def _kick_off_gwas_validation(background_tasks: BackgroundTasks, file_id: str,
+                              s3_path: str, column_mapping: dict,
+                              submitted_by: str) -> str:
+    """Create a DB record and schedule the background validation task. Returns job record ID."""
+    progress_s3_key = f"hcm/gwas-validation/{file_id}/progress.json"
+    job = HCMGWASValidationJob(
+        file_id=file_id,
+        status='SUBMITTED',
+        progress_s3_key=progress_s3_key,
+        submitted_by=submitted_by,
+    )
+    job_record_id = hcm_query.insert_hcm_gwas_validation_job(engine, job)
+
+    background_tasks.add_task(
+        _submit_gwas_validation_and_await,
+        engine, file_id, s3_path, column_mapping, submitted_by, job_record_id,
+    )
+    return job_record_id
+
+
+@router.post("/hcm/gwas-validate/{file_id}")
+async def start_hcm_gwas_validation(file_id: str, background_tasks: BackgroundTasks,
+                                    user: User = fastapi.Depends(get_hcm_user)):
+    """Kick off an AWS Batch job to validate every row of an HCM GWAS file.
+
+    Creates a DB record in hcm_gwas_validation_jobs, submits the Batch job
+    in the background, and returns immediately.
+    """
+    try:
+        gwas_file = hcm_query.get_hcm_gwas_file_by_id(engine, file_id)
+        if not gwas_file:
+            raise fastapi.HTTPException(status_code=404, detail="GWAS file not found")
+
+        if not (gwas_file['uploaded_by'] == user.user_name or check_review_permissions(user)):
+            raise fastapi.HTTPException(status_code=403, detail="Access denied")
+
+        job_record_id = _kick_off_gwas_validation(
+            background_tasks, file_id,
+            gwas_file['s3_path'],
+            gwas_file.get('column_mapping', {}),
+            user.user_name,
+        )
+
+        return {
+            "message": "Validation job submitted",
+            "validation_job_id": job_record_id,
+            "file_id": file_id,
+            "progress_s3_key": f"hcm/gwas-validation/{file_id}/progress.json",
+        }
+
+    except fastapi.HTTPException:
+        raise
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Error submitting validation job: {str(e)}")
+
+
+@router.get("/hcm/gwas-validate/{file_id}/progress")
+async def get_hcm_gwas_validation_progress(file_id: str, user: User = fastapi.Depends(get_hcm_user)):
+    """Get validation status for an HCM GWAS file.
+
+    If the most recent job is still running, enriches the response with live
+    progress read directly from the S3 progress JSON.
+    """
+    try:
+        gwas_file = hcm_query.get_hcm_gwas_file_by_id(engine, file_id)
+        if not gwas_file:
+            raise fastapi.HTTPException(status_code=404, detail="GWAS file not found")
+
+        if not (gwas_file['uploaded_by'] == user.user_name or check_review_permissions(user)):
+            raise fastapi.HTTPException(status_code=403, detail="Access denied")
+
+        jobs = hcm_query.get_hcm_gwas_validation_jobs_by_file_id(engine, file_id)
+        if not jobs:
+            raise fastapi.HTTPException(
+                status_code=404,
+                detail="No validation jobs found for this file."
+            )
+
+        latest = jobs[0]
+        if latest['status'] in ('SUBMITTED', 'RUNNING') and latest.get('progress_s3_key'):
+            try:
+                s3_client = boto3.client('s3', region_name=s3.S3_REGION)
+                resp = s3_client.get_object(Bucket=s3.BASE_BUCKET, Key=latest['progress_s3_key'])
+                latest['live_progress'] = json.loads(resp['Body'].read().decode('utf-8'))
+            except ClientError:
+                latest['live_progress'] = None
+
+        return {"validation_jobs": jobs}
+
+    except fastapi.HTTPException:
+        raise
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Error reading validation progress: {str(e)}")
+
+
+@router.get("/hcm/gwas-validate/{file_id}/errors")
+async def get_hcm_gwas_validation_errors_url(file_id: str, user: User = fastapi.Depends(get_hcm_user)):
+    """Return a presigned S3 download URL for the full validation error log (TSV).
+
+    Returns 404 if no validation job exists or no errors were recorded.
+    """
+    try:
+        gwas_file = hcm_query.get_hcm_gwas_file_by_id(engine, file_id)
+        if not gwas_file:
+            raise fastapi.HTTPException(status_code=404, detail="GWAS file not found")
+
+        if not (gwas_file['uploaded_by'] == user.user_name or check_review_permissions(user)):
+            raise fastapi.HTTPException(status_code=403, detail="Access denied")
+
+        jobs = hcm_query.get_hcm_gwas_validation_jobs_by_file_id(engine, file_id)
+        if not jobs:
+            raise fastapi.HTTPException(status_code=404, detail="No validation jobs found for this file")
+
+        latest = jobs[0]
+        progress_s3_key = latest.get("progress_s3_key")
+        if not progress_s3_key:
+            raise fastapi.HTTPException(status_code=404, detail="No error log available")
+
+        errors_key = progress_s3_key.replace("progress.json", "errors.tsv")
+        try:
+            presigned_url = s3.get_signed_url(s3.BASE_BUCKET, errors_key)
+        except ClientError:
+            raise fastapi.HTTPException(
+                status_code=404,
+                detail="No error log found — validation may have completed with no errors."
+            )
+
+        return {
+            "errors_url": presigned_url,
+            "file_id": file_id,
+            "errors_s3_key": errors_key,
+        }
+
+    except fastapi.HTTPException:
+        raise
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Error retrieving error log: {str(e)}")
