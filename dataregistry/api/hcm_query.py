@@ -7,12 +7,18 @@ from sqlalchemy import text
 from dataregistry.api.hcm_model import HCMGWASFile, HCMGWASValidationJob
 
 
+def _format_uuid(raw) -> str:
+    """Convert a binary(32) field (stored as ASCII hex bytes) to a dash-formatted UUID."""
+    hex_str = raw.decode('ascii') if isinstance(raw, (bytes, bytearray)) else raw
+    return f"{hex_str[:8]}-{hex_str[8:12]}-{hex_str[12:16]}-{hex_str[16:20]}-{hex_str[20:]}"
+
+
 def _parse_hcm_gwas_row(row) -> dict:
     """Parse a raw DB row into a clean dict, handling JSON fields."""
     d = dict(row)
     for key in ('id',):
-        if isinstance(d.get(key), (bytes, bytearray)):
-            d[key] = d[key].hex()
+        if d.get(key) is not None:
+            d[key] = _format_uuid(d[key])
     if isinstance(d.get('column_mapping'), str):
         d['column_mapping'] = json.loads(d['column_mapping'])
     if isinstance(d.get('metadata'), str):
@@ -141,8 +147,8 @@ def delete_hcm_gwas_file(engine, file_id: str) -> bool:
 def _parse_validation_job_row(row) -> dict:
     d = dict(row)
     for key in ('id', 'file_id'):
-        if isinstance(d.get(key), (bytes, bytearray)):
-            d[key] = d[key].hex()
+        if d.get(key) is not None:
+            d[key] = _format_uuid(d[key])
     if isinstance(d.get('error_summary'), str):
         d['error_summary'] = json.loads(d['error_summary'])
     return d
