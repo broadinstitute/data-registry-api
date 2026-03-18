@@ -16,9 +16,9 @@ Validation rules (per mapped column):
   beta                    : numeric, any real (required)
   standard_error          : numeric, >= 0 (required)
   p_value                 : numeric, 0 <= v <= 1 (required)
-  effect_allele_frequency : numeric, 0 <= v <= 1 (required)
+  effect_allele_frequency : numeric, 0 < v < 1 (required; 0 or 1 = monomorphic, excluded per Section 8.5)
   sample_size             : positive integer (required)
-  imputation_quality      : numeric, 0 <= v <= 1 (required)
+  imputation_quality      : numeric, 0.1 <= v <= 1 (required; < 0.1 excluded per Section 8.5)
   cases                   : positive integer (optional — "where available" per analysis plan)
   controls                : positive integer (optional — "where available" per analysis plan)
 """
@@ -113,7 +113,9 @@ def validate_eaf(value: str) -> str | None:
     if not _is_numeric(value):
         return "Must be numeric"
     v = float(value)
-    if 0.0 <= v <= 1.0:
+    if v == 0.0 or v == 1.0:
+        return "Monomorphic variant (EAF = 0 or 1) — should be excluded before upload"
+    if 0.0 < v < 1.0:
         return None
     return "Must be between 0 and 1"
 
@@ -132,9 +134,11 @@ def validate_info(value: str) -> str | None:
     if not _is_numeric(value):
         return "Must be numeric"
     v = float(value)
-    if 0.0 <= v <= 1.0:
-        return None
-    return "Must be between 0 and 1"
+    if v < 0.0 or v > 1.0:
+        return "Must be between 0 and 1"
+    if v < 0.1:
+        return "Imputation quality below threshold (INFO < 0.1) — should be excluded before upload"
+    return None
 
 
 # Map from column-mapping key -> (validator_func, is_required)
