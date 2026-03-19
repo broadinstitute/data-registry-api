@@ -7,7 +7,7 @@ mapping rules from the SGC cohort analysis plan, and writes periodic progress
 updates to an S3 JSON file so the API can report percent-complete.
 
 Validation rules (per mapped column):
-  CHR  (col_chromosome)          : 1-22 or "X"
+  CHR  (col_chromosome)          : 1-23 or "X" (23 accepted as alias for X)
   BP   (col_position)            : positive integer
   EA   (col_effect_allele)       : non-empty, chars in {A,C,T,G,-,N}
   OA   (col_non_effect_allele)   : same as EA
@@ -17,6 +17,7 @@ Validation rules (per mapped column):
   P    (col_pvalue)              : numeric, 0 <= v <= 1
   INFO (col_imputation_quality)  : numeric, 0 <= v <= 1
   ID   (col_variant_id)          : optional; if present, non-empty string
+  N    (col_variant_n)           : optional; numeric, > 0
 """
 
 import csv
@@ -35,7 +36,7 @@ import click
 # Constants
 # ---------------------------------------------------------------------------
 
-VALID_CHR = {str(i) for i in range(1, 23)} | {"X"}
+VALID_CHR = {str(i) for i in range(1, 24)} | {"X"}
 ALLELE_CHARS = set("ACTGactg-N")
 MAX_ERROR_SAMPLES = 100
 PROGRESS_INTERVAL = 1000  # rows between S3 progress writes
@@ -56,7 +57,7 @@ def _is_numeric(value: str) -> bool:
 def validate_chromosome(value: str) -> str | None:
     if value.upper() in VALID_CHR:
         return None
-    return "Must be 1-22 or X"
+    return "Must be 1-23 or X"
 
 
 def validate_position(value: str) -> str | None:
@@ -124,6 +125,14 @@ def validate_variant_id(value: str) -> str | None:
     return "Must be non-empty when present"
 
 
+def validate_variant_n(value: str) -> str | None:
+    if not _is_numeric(value):
+        return "Must be numeric"
+    if float(value) > 0:
+        return None
+    return "Must be > 0"
+
+
 # Map from column-mapping key -> (validator_func, is_required)
 FIELD_VALIDATORS = {
     "col_chromosome":          (validate_chromosome, True),
@@ -136,6 +145,7 @@ FIELD_VALIDATORS = {
     "col_pvalue":              (validate_pvalue, True),
     "col_imputation_quality":  (validate_info, True),
     "col_variant_id":          (validate_variant_id, False),
+    "col_variant_n":           (validate_variant_n, False),
 }
 
 
