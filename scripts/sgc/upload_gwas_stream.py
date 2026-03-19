@@ -174,6 +174,25 @@ def lookup_cohort_id(api_base: str, token: str, cohort_name: str) -> Optional[st
         return None
 
 
+def check_for_existing_gwas_file(api_base: str, token: str, cohort_id: str,
+                                  dataset: str, phenotype: str, filename: str) -> Optional[Dict]:
+    """Return the existing GWAS file record if one matches dataset/phenotype/filename, else None."""
+    try:
+        resp = requests.get(
+            f"{api_base}/api/sgc/gwas-files/{cohort_id}",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        for f in resp.json():
+            if f.get("dataset") == dataset and f.get("phenotype") == phenotype and f.get("file_name") == filename:
+                return f
+        return None
+    except requests.RequestException as e:
+        sys.stderr.write(f"Error checking for existing GWAS file: {e}\n")
+        return None
+
+
 def fetch_gwas_metadata(api_base: str, token: str, cohort_id: str) -> Optional[Dict]:
     """Fetch GWAS metadata for a cohort. Returns None if not saved yet."""
     try:
@@ -301,6 +320,8 @@ def main():
     # Dataset-level metadata
     p.add_argument("--metadata", required=True,
                    help="Path to JSON file with dataset-level metadata (must include cohort_name, phenotype, ancestry)")
+    p.add_argument("--validate", action="store_true",
+                   help="Submit a batch QA validation job after upload and poll until it completes")
 
     args = p.parse_args()
 
@@ -393,6 +414,17 @@ def main():
         sys.exit(1)
     print(f"Found cohort '{cohort_name}' -> {cohort_id}")
 
+    # Check for an existing GWAS file with the same dataset/phenotype/filename before uploading
+    filename = os.path.basename(args.file)
+    existing = check_for_existing_gwas_file(api_base, token, cohort_id, args.dataset, args.phenotype, filename)
+    if existing:
+        sys.stderr.write(
+            f"A GWAS file already exists for dataset='{args.dataset}', phenotype='{args.phenotype}', "
+            f"file='{filename}' (id: {existing['id']}).\n"
+            f"Delete the existing file before uploading a new one.\n"
+        )
+        sys.exit(1)
+
     # Fetch GWAS metadata and extract column mapping
     print("Fetching GWAS metadata for cohort...")
     gwas_metadata = fetch_gwas_metadata(api_base, token, cohort_id)
@@ -422,8 +454,6 @@ def main():
             sys.stderr.write(f"  {field}: expected column '{expected}' not found in file\n")
         sys.exit(1)
     print("File headers validated successfully.")
-
-    filename = os.path.basename(args.file)
 
     headers = {
         "Authorization": f"Bearer {token}",
@@ -470,7 +500,128 @@ def main():
         finally:
             pbar.close()
 
-    print(json.dumps(resp.json(), indent=2))
+    upload_result = resp.json()
+    print(json.dumps(upload_result, indent=2))
+
+    file_id = upload_result.get("file_id")
+    if file_id and args.validate:
+        start_validation(api_base, token, file_id)
+
+
+def start_validation(api_base: str, token: str, file_id: str):
+    """Kick off the batch QA validation job for the uploaded file, then poll until done."""
+    print("\nSubmitting batch QA validation job...")
+    try:
+        r = requests.post(
+            f"{api_base}/api/sgc/gwas-validate/{file_id}",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30,
+        )
+        r.raise_for_status()
+    except requests.RequestException as e:
+        sys.stderr.write(f"Failed to submit validation job: {e}\n")
+        sys.exit(1)
+
+    result = r.json()
+    print(f"Validation job submitted: {result.get('validation_job_id')}")
+    poll_validation_progress(api_base, token, file_id)
+
+
+def fetch_errors_url(api_base: str, token: str, file_id: str) -> Optional[str]:
+    """Fetch a presigned download URL for the full validation error log."""
+    try:
+        r = requests.get(
+            f"{api_base}/api/sgc/gwas-validate/{file_id}/errors",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30,
+        )
+        if r.ok:
+            return r.json().get("errors_url")
+    except requests.RequestException:
+        pass
+    return None
+
+
+def poll_validation_progress(api_base: str, token: str, file_id: str, poll_interval: int = 10):
+    """Poll the validation progress endpoint until the batch QA job completes or fails."""
+    import time
+
+    url = f"{api_base}/api/sgc/gwas-validate/{file_id}/progress"
+    headers = {"Authorization": f"Bearer {token}"}
+
+    print("Waiting for batch QA validation to start...")
+
+    pbar = None
+    last_pct = 0.0
+
+    while True:
+        try:
+            r = requests.get(url, headers=headers, timeout=30)
+        except requests.RequestException as e:
+            sys.stderr.write(f"Error polling validation progress: {e}\n")
+            time.sleep(poll_interval)
+            continue
+
+        if r.status_code == 404:
+            time.sleep(poll_interval)
+            continue
+
+        if not r.ok:
+            sys.stderr.write(f"Validation progress endpoint returned {r.status_code}: {r.text}\n")
+            time.sleep(poll_interval)
+            continue
+
+        jobs = r.json().get("validation_jobs", [])
+        if not jobs:
+            time.sleep(poll_interval)
+            continue
+
+        latest = jobs[0]
+        db_status = latest.get("status", "")       # SUBMITTED, RUNNING, COMPLETED, FAILED
+        live = latest.get("live_progress") or {}   # populated from S3 while running
+
+        pct = live.get("percent_complete", 0.0)
+        total_rows = live.get("total_rows") or latest.get("total_rows") or 0
+        rows_processed = live.get("rows_processed", 0)
+        errors_found = live.get("errors_found") if live else (latest.get("errors_found") or 0)
+
+        if pbar is None and total_rows:
+            pbar = tqdm(total=100, unit="%", desc="Validating",
+                        bar_format="{l_bar}{bar}| {n:.1f}/{total}%  {postfix}")
+
+        if pbar is not None:
+            delta = pct - last_pct
+            if delta > 0:
+                pbar.update(delta)
+                last_pct = pct
+            pbar.set_postfix(errors=errors_found, rows=f"{rows_processed:,}/{total_rows:,}")
+
+        if db_status in ("COMPLETED", "FAILED"):
+            if pbar is not None:
+                pbar.update(100.0 - last_pct)
+                pbar.close()
+
+            print(f"\nValidation {db_status.lower()}.")
+            total = latest.get("total_rows")
+            print(f"  Rows checked : {total:,}" if isinstance(total, int) else f"  Rows checked : {total}")
+            print(f"  Errors found : {latest.get('errors_found', 'N/A')}")
+
+            error_summary = latest.get("error_summary") or live.get("error_samples")
+            if error_summary:
+                print(f"\n  Sample errors (up to {len(error_summary)} shown):")
+                for err in error_summary:
+                    print(f"    Row {err.get('row')}: [{err.get('column')}] {err.get('error')} (value: {err.get('value')!r})")
+
+            if latest.get("errors_found"):
+                errors_url = fetch_errors_url(api_base, token, file_id)
+                if errors_url:
+                    print(f"\n  Full error log (TSV, expires in 1 hour):\n  {errors_url}")
+
+            if db_status == "FAILED":
+                sys.exit(1)
+            return
+
+        time.sleep(poll_interval)
 
 
 if __name__ == "__main__":
