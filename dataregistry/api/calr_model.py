@@ -45,30 +45,41 @@ class PowerCalcRequest(BaseModel):
     alpha: float = Field(default=0.05, gt=0, lt=1)
 
 
-class SubjectExclusion(BaseModel):
-    hours: List[float]
-    reason: Union[str, None] = None
+class Group(BaseModel):
+    name: str
+    diet_name: Optional[str] = None
+    diet_kcal: Optional[float] = None
+
+
+class Subject(BaseModel):
+    subject: str
+    groupIndex: int
+    total_mass: Optional[float] = None
+    lean_mass: Optional[float] = None
+    fat_mass: Optional[float] = None
+    exc_hour: Optional[float] = None
+    exc_reason: Optional[str] = None
 
 
 class CalRSession(BaseModel):
     """
     Experiment session configuration used as input to all CalR analysis endpoints.
 
-    groups:             mapping of group name → list of subject IDs
-    group_colors:       optional mapping of group name → hex color (e.g. "#3B73C7")
+    groups:             list of group definitions (name, diet_name, diet_kcal)
+    subjects:           list of subjects — group membership, mass values, and exclusions
     light_cycle_start:  hour (0-23) when light cycle begins
     dark_cycle_start:   hour (0-23) when dark cycle begins
     hour_range:         [start_hour, end_hour] window for analysis
+    food_cutoff:        optional hard food cutoff value; null means no cutoff
     remove_outliers:    whether to exclude statistical outliers
-    subject_mass:       optional mapping of subject ID → body mass (g); required for ANCOVA
-    exclusions:         optional per-subject exclusion windows
+    group_colors:       optional mapping of group name → hex color (e.g. "#3B73C7")
     """
     submission_id: str
-    groups: Dict[str, List[str]]
-    group_colors: Optional[Dict[str, str]] = None
+    groups: List[Group]
+    subjects: List[Subject]
     light_cycle_start: int = Field(ge=0, le=23)
     dark_cycle_start: int = Field(ge=0, le=23)
     hour_range: conlist(float, min_items=2, max_items=2)
+    food_cutoff: Optional[float] = None
     remove_outliers: bool = False
-    subject_mass: Optional[Dict[str, float]] = None
-    exclusions: Optional[Dict[str, SubjectExclusion]] = None
+    group_colors: Optional[Dict[str, str]] = None

@@ -368,31 +368,18 @@ def _validate_session_against_standard_file(session: CalRSession, standard_df) -
 
     file_subjects = set(standard_df['subject.id'].astype(str).unique())
 
-    # Check for subjects in multiple groups
-    seen = {}
-    for group_name, subject_ids in session.groups.items():
-        for sid in subject_ids:
-            if sid in seen:
-                errors.append(f"Subject '{sid}' appears in both '{seen[sid]}' and '{group_name}'")
-            seen[sid] = group_name
+    # Check all groupIndexes are valid
+    for subj in session.subjects:
+        if subj.groupIndex < 0 or subj.groupIndex >= len(session.groups):
+            errors.append(
+                f"Subject '{subj.subject}' has invalid groupIndex {subj.groupIndex} "
+                f"(session has {len(session.groups)} group(s))"
+            )
 
-    # Check all group subjects exist in the file
-    for group_name, subject_ids in session.groups.items():
-        missing = [sid for sid in subject_ids if sid not in file_subjects]
-        if missing:
-            errors.append(f"Group '{group_name}' contains subjects not found in standard file: {missing}")
-
-    # Check subject_mass subjects exist in the file
-    if session.subject_mass:
-        missing = [sid for sid in session.subject_mass if sid not in file_subjects]
-        if missing:
-            errors.append(f"subject_mass contains subjects not found in standard file: {missing}")
-
-    # Check exclusion subjects exist in the file
-    if session.exclusions:
-        missing = [sid for sid in session.exclusions if sid not in file_subjects]
-        if missing:
-            errors.append(f"exclusions contains subjects not found in standard file: {missing}")
+    # Check all subjects exist in the file
+    missing = [s.subject for s in session.subjects if s.subject not in file_subjects]
+    if missing:
+        errors.append(f"Subjects not found in standard file: {missing}")
 
     # Check hour_range is within the file's exp.hour bounds
     if 'exp.hour' in standard_df.columns:
@@ -546,10 +533,10 @@ async def run_ancova(
         raise fastapi.HTTPException(status_code=422, detail=f"Mass variable '{request.mass_variable}' not found in standard file")
 
     # Assign groups from session
+    groups = session['groups']
     subject_to_group = {
-        sid: group
-        for group, sids in session['groups'].items()
-        for sid in sids
+        s['subject']: groups[s['groupIndex']]['name']
+        for s in session['subjects']
     }
     df['group'] = df['subject.id'].astype(str).map(subject_to_group)
     df = df[df['group'].notna()]
@@ -596,10 +583,10 @@ async def run_power_calc(
         raise fastapi.HTTPException(status_code=422, detail=f"Mass variable '{request.mass_variable}' not found in standard file")
 
     # Assign groups from session
+    groups = session['groups']
     subject_to_group = {
-        sid: group
-        for group, sids in session['groups'].items()
-        for sid in sids
+        s['subject']: groups[s['groupIndex']]['name']
+        for s in session['subjects']
     }
     df['group'] = df['subject.id'].astype(str).map(subject_to_group)
     df = df[df['group'].notna()]
@@ -648,10 +635,10 @@ async def run_quality_control(
         if col not in df.columns:
             raise fastapi.HTTPException(status_code=422, detail=f"Required column '{col}' not found in standard file")
 
+    groups = session['groups']
     subject_to_group = {
-        sid: group
-        for group, sids in session['groups'].items()
-        for sid in sids
+        s['subject']: groups[s['groupIndex']]['name']
+        for s in session['subjects']
     }
     df['group'] = df['subject.id'].astype(str).map(subject_to_group)
     df = df[df['group'].notna()]
