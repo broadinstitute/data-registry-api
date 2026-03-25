@@ -487,6 +487,115 @@ async def get_calr_session(
     )
 
 
+def _session_json_to_csv(session_data: dict) -> bytes:
+    """
+    Convert a CalRSession JSON dict to the CSV format expected by the CalR Shiny app.
+
+    Mirrors the R downloadHandler in Input_tab.R: groups membership lists, per-group
+    config, and per-subject mass/exclusion data are all packed into a single wide CSV
+    with 2*N rows (N subject rows followed by N annotation rows).
+    """
+    import csv
+
+    groups = session_data['groups']
+    subjects_list = session_data['subjects']
+    n_groups = len(groups)
+
+    # Sort subjects so row position is deterministic
+    try:
+        subjects_sorted = sorted(subjects_list, key=lambda s: int(s['subject']))
+    except (ValueError, TypeError):
+        subjects_sorted = sorted(subjects_list, key=lambda s: s['subject'])
+
+    N = len(subjects_sorted)
+    total_rows = 2 * N
+
+    # Per-group subject membership lists (in sorted-subject order)
+    groups_subjects = {i: [] for i in range(n_groups)}
+    for s in subjects_sorted:
+        g_idx = s['groupIndex']
+        if 0 <= g_idx < n_groups:
+            groups_subjects[g_idx].append(s['subject'])
+
+    group_colors = session_data.get('group_colors') or {}
+    hour_range = session_data.get('hour_range', [0, 0])
+
+    def pad(values, length, fill='NA'):
+        lst = list(values)
+        return lst + [fill] * (length - len(lst))
+
+    # Build columns — each is a list of length total_rows
+    cols = {}
+
+    for g_idx in range(n_groups):
+        cols[f'group{g_idx + 1}'] = pad(groups_subjects[g_idx], total_rows)
+
+    cols['group_names']    = pad([g['name'] for g in groups], total_rows)
+    cols['diet_names']     = pad([g.get('diet_name') or 'NA' for g in groups], total_rows)
+    cols['othr_diet_names']= pad(['' for _ in groups], total_rows)
+    cols['dietCal']        = pad([g['diet_kcal'] if g.get('diet_kcal') is not None else 'NA' for g in groups], total_rows)
+    cols['othr_dietCal']   = pad(['' for _ in groups], total_rows)
+    cols['colors']         = pad([group_colors.get(g['name'], 'NA') for g in groups], total_rows)
+    cols['xrange']         = pad(hour_range, total_rows)
+    cols['outliers']       = pad(['Yes' if session_data.get('remove_outliers') else 'No'], total_rows)
+    cols['feedCutoff']     = pad([session_data['food_cutoff'] if session_data.get('food_cutoff') is not None else 'NA'], total_rows)
+    cols['mri']            = pad(['No'], total_rows)
+    cols['light']          = pad([session_data.get('light_cycle_start', 'NA'), session_data.get('dark_cycle_start', 'NA')], total_rows)
+
+    exclusions  = [s['exc_hour'] if s.get('exc_hour') is not None else '' for s in subjects_sorted]
+    annotations = [s.get('exc_reason') or '' for s in subjects_sorted]
+    cols['exc'] = exclusions + annotations
+
+    cols['Total.Mass'] = pad([s['total_mass'] if s.get('total_mass') is not None else 'NA' for s in subjects_sorted], total_rows)
+    cols['id'] = [s['subject'] for s in subjects_sorted] + ['NA'] * N
+
+    headers = list(cols.keys())
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([''] + headers)
+    for row_i in range(total_rows):
+        writer.writerow([row_i + 1] + [cols[h][row_i] for h in headers])
+
+    return buf.getvalue().encode('utf-8')
+
+
+@router.get("/calr/sessions/{session_id}/csv")
+async def download_calr_session_csv(
+    session_id: str,
+    user: User = Depends(get_calr_user)
+):
+    """
+    Download a CalR session as the CSV format used by the CalR Shiny app.
+    Converts the stored session JSON on the fly.
+    """
+    import json
+
+    file_info = calr_query.get_calr_file_by_id(engine, session_id)
+    if not file_info or file_info['file_type'] != 'session':
+        raise fastapi.HTTPException(status_code=404, detail="Session not found")
+    if file_info['uploaded_by'] != user.user_name:
+        raise fastapi.HTTPException(status_code=403, detail="Access denied")
+
+    try:
+        s3_client = boto3.client('s3', region_name=s3.S3_REGION)
+        s3_response = s3_client.get_object(Bucket=s3.BASE_BUCKET, Key=file_info['s3_path'])
+        session_data = json.loads(s3_response['Body'].read())
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Error reading session: {str(e)}")
+
+    csv_bytes = _session_json_to_csv(session_data)
+
+    return StreamingResponse(
+        io.BytesIO(csv_bytes),
+        media_type='text/csv',
+        headers={
+            "Content-Disposition": f'attachment; filename="{session_id}_Session.csv"',
+            "Content-Length": str(len(csv_bytes)),
+        }
+    )
+
+
 def _load_session_and_standard_df(session_id: str, username: str):
     """
     Load a CalR session from S3 and its associated standard file as a DataFrame.
