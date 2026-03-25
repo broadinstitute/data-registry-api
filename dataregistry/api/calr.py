@@ -32,6 +32,13 @@ engine = DataRegistryReadWriteDB().get_engine()
 USER_SERVICE_URL = os.getenv('USER_SERVICE_URL', 'https://users.kpndataregistry.org')
 
 
+async def get_calr_user_optional(authorization: Optional[str] = Header(None)) -> Optional[User]:
+    """Validate CALR user token if present; return None if no token provided."""
+    if not authorization:
+        return None
+    return await get_calr_user(authorization)
+
+
 async def get_calr_user(authorization: Optional[str] = Header(None)):
     """Validate CALR user token against the user service."""
     if not authorization:
@@ -152,15 +159,16 @@ async def list_public_calr_submissions():
 
 
 @router.get("/calr/files/{file_id}")
-async def download_calr_file(file_id: str):
+async def download_calr_file(file_id: str, user: Optional[User] = Depends(get_calr_user_optional)):
     """
     Download a CALR file by streaming its content from S3.
-    Only files belonging to public submissions are accessible.
-    No authentication required.
+    Accessible if the submission is public, or if the authenticated user owns it.
     """
     try:
         file_info = calr_query.get_calr_file_by_id(engine, file_id)
-        if not file_info or not file_info['public']:
+        if not file_info:
+            raise fastapi.HTTPException(status_code=404, detail="File not found")
+        if not file_info['public'] and (user is None or file_info['uploaded_by'] != user.user_name):
             raise fastapi.HTTPException(status_code=404, detail="File not found")
 
         s3_client = boto3.client('s3', region_name=s3.S3_REGION)
@@ -457,17 +465,18 @@ async def create_calr_session(
 @router.get("/calr/sessions/{session_id}")
 async def get_calr_session(
     session_id: str,
-    user: User = Depends(get_calr_user)
+    user: Optional[User] = Depends(get_calr_user_optional)
 ):
     """
     Retrieve a CalR session by ID.
 
-    Streams the session JSON from S3. Users can only retrieve their own sessions.
+    Streams the session JSON from S3. Accessible if the submission is public,
+    or if the authenticated user owns it.
     """
     file_info = calr_query.get_calr_file_by_id(engine, session_id)
     if not file_info or file_info['file_type'] != 'session':
         raise fastapi.HTTPException(status_code=404, detail="Session not found")
-    if file_info['uploaded_by'] != user.user_name:
+    if not file_info['public'] and (user is None or file_info['uploaded_by'] != user.user_name):
         raise fastapi.HTTPException(status_code=403, detail="Access denied")
 
     try:
@@ -563,18 +572,19 @@ def _session_json_to_csv(session_data: dict) -> bytes:
 @router.get("/calr/sessions/{session_id}/csv")
 async def download_calr_session_csv(
     session_id: str,
-    user: User = Depends(get_calr_user)
+    user: Optional[User] = Depends(get_calr_user_optional)
 ):
     """
     Download a CalR session as the CSV format used by the CalR Shiny app.
-    Converts the stored session JSON on the fly.
+    Converts the stored session JSON on the fly. Accessible if the submission
+    is public, or if the authenticated user owns it.
     """
     import json
 
     file_info = calr_query.get_calr_file_by_id(engine, session_id)
     if not file_info or file_info['file_type'] != 'session':
         raise fastapi.HTTPException(status_code=404, detail="Session not found")
-    if file_info['uploaded_by'] != user.user_name:
+    if not file_info['public'] and (user is None or file_info['uploaded_by'] != user.user_name):
         raise fastapi.HTTPException(status_code=403, detail="Access denied")
 
     try:
