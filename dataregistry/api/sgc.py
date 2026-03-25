@@ -2342,10 +2342,7 @@ async def get_gwas_validation_progress(file_id: str, user: User = Depends(get_sg
 
         jobs = query.get_sgc_gwas_validation_jobs_by_file_id(engine, file_id)
         if not jobs:
-            raise fastapi.HTTPException(
-                status_code=404,
-                detail="No validation jobs found for this file."
-            )
+            return {"validation_jobs": []}
 
         # For the most recent job, if it's still running, enrich with live S3 progress
         latest = jobs[0]
