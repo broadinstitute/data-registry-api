@@ -436,7 +436,19 @@ async def create_calr_session(
     try:
         session_id = str(uuid.uuid4()).replace('-', '')
         s3_key = f"calr/{user.user_name}/sessions/{session_id}.json"
-        _upload_file_to_s3(session.json().encode('utf-8'), s3_key, 'application/json')
+        session_json = session.json().encode('utf-8')
+        _upload_file_to_s3(session_json, s3_key, 'application/json')
+
+        calr_file = CALRFile(
+            id=session_id,
+            submission_id=session.submission_id,
+            file_type='session',
+            file_name=f"{session_id}.json",
+            file_size=len(session_json),
+            s3_path=s3_key,
+        )
+        calr_query.insert_calr_file(engine, calr_file)
+
         return {"session_id": session_id}
     except Exception as e:
         raise fastapi.HTTPException(status_code=500, detail=f"Error creating session: {str(e)}")
@@ -452,12 +464,15 @@ async def get_calr_session(
 
     Streams the session JSON from S3. Users can only retrieve their own sessions.
     """
-    s3_key = f"calr/{user.user_name}/sessions/{session_id}.json"
+    file_info = calr_query.get_calr_file_by_id(engine, session_id)
+    if not file_info or file_info['file_type'] != 'session':
+        raise fastapi.HTTPException(status_code=404, detail="Session not found")
+    if file_info['uploaded_by'] != user.user_name:
+        raise fastapi.HTTPException(status_code=403, detail="Access denied")
+
     try:
         s3_client = boto3.client('s3', region_name=s3.S3_REGION)
-        s3_response = s3_client.get_object(Bucket=s3.BASE_BUCKET, Key=s3_key)
-    except s3_client.exceptions.NoSuchKey:
-        raise fastapi.HTTPException(status_code=404, detail="Session not found")
+        s3_response = s3_client.get_object(Bucket=s3.BASE_BUCKET, Key=file_info['s3_path'])
     except Exception as e:
         raise fastapi.HTTPException(status_code=500, detail=f"Error retrieving session: {str(e)}")
 
@@ -482,19 +497,21 @@ def _load_session_and_standard_df(session_id: str, username: str):
 
     s3_client = boto3.client('s3', region_name=s3.S3_REGION)
 
-    # Load session
-    session_key = f"calr/{username}/sessions/{session_id}.json"
-    try:
-        session_obj = s3_client.get_object(Bucket=s3.BASE_BUCKET, Key=session_key)
-        session_data = json.loads(session_obj['Body'].read())
-    except s3_client.exceptions.NoSuchKey:
+    # Load session via DB record
+    file_info = calr_query.get_calr_file_by_id(engine, session_id)
+    if not file_info or file_info['file_type'] != 'session':
         raise fastapi.HTTPException(status_code=404, detail="Session not found")
+    if file_info['uploaded_by'] != username:
+        raise fastapi.HTTPException(status_code=403, detail="Access denied")
 
-    # Load standard file via submission_id stored in session
-    submission_id = session_data.get('submission_id')
-    if not submission_id:
-        raise fastapi.HTTPException(status_code=422, detail="Session has no submission_id")
+    try:
+        session_obj = s3_client.get_object(Bucket=s3.BASE_BUCKET, Key=file_info['s3_path'])
+        session_data = json.loads(session_obj['Body'].read())
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Error reading session: {str(e)}")
 
+    # Load standard file via submission_id from DB record
+    submission_id = file_info['submission_id']
     files = calr_query.get_calr_files_by_submission(engine, submission_id)
     standard_file = next((f for f in files if f['file_type'] == 'standard'), None)
     if not standard_file:
