@@ -125,12 +125,15 @@ def validate_variant_id(value: str) -> str | None:
     return "Must be non-empty when present"
 
 
-def validate_variant_n(value: str) -> str | None:
+def validate_variant_n(value: str, max_n: int = 0) -> str | None:
     if not _is_numeric(value):
         return "Must be numeric"
-    if float(value) > 0:
-        return None
-    return "Must be > 0"
+    v = float(value)
+    if v <= 0:
+        return "Must be > 0"
+    if max_n > 0 and v > max_n:
+        return f"N ({int(v)}) exceeds cases + controls ({max_n})"
+    return None
 
 
 # Map from column-mapping key -> (validator_func, is_required)
@@ -241,11 +244,13 @@ def _is_gzipped(file_path: str) -> bool:
         return f.read(2) == b"\x1f\x8b"
 
 
-def validate_file(file_path: str, column_mapping: dict, tracker: ProgressTracker):
+def validate_file(file_path: str, column_mapping: dict, tracker: ProgressTracker,
+                  max_n: int = 0):
     """Stream through the GWAS file and validate every row."""
 
     # Build a lookup: file_header_name -> (validator_func, mapping_key)
     validators = {}
+    n_header = column_mapping.get("col_variant_n")
     opener = gzip.open if _is_gzipped(file_path) else open
 
     with opener(file_path, "rt") as fh:
@@ -273,7 +278,10 @@ def validate_file(file_path: str, column_mapping: dict, tracker: ProgressTracker
                     tracker.record_error(row_idx, header_name, "", "Value is missing")
                     continue
 
-                error = validator_fn(value)
+                if mapping_key == "col_variant_n":
+                    error = validator_fn(value, max_n)
+                else:
+                    error = validator_fn(value)
                 if error:
                     tracker.record_error(row_idx, header_name, value, error)
 
@@ -294,7 +302,8 @@ def validate_file(file_path: str, column_mapping: dict, tracker: ProgressTracker
 @click.option("--column-mapping", required=True, help="JSON string of column mappings")
 @click.option("--progress-s3-key", required=True, help="S3 key for progress JSON output")
 @click.option("--bucket", required=True, help="S3 bucket name")
-def main(s3_path: str, column_mapping: str, progress_s3_key: str, bucket: str):
+@click.option("--max-n", default=0, type=int, help="Maximum allowed N (cases + controls); 0 = no limit")
+def main(s3_path: str, column_mapping: str, progress_s3_key: str, bucket: str, max_n: int):
     s3_client = boto3.client("s3")
 
     # Parse column mapping
@@ -321,7 +330,7 @@ def main(s3_path: str, column_mapping: str, progress_s3_key: str, bucket: str):
         tracker.write_progress()  # initial "running" status
 
         try:
-            validate_file(local_file, col_map, tracker)
+            validate_file(local_file, col_map, tracker, max_n=max_n)
         except Exception as e:
             print(f"Validation failed: {e}", file=sys.stderr)
             tracker.finalize("failed")

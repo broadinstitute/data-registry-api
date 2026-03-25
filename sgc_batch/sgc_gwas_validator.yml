@@ -67,6 +67,8 @@ Resources:
           - 'Ref::progress-s3-key'
           - '--bucket'
           - 'Ref::bucket'
+          - '--max-n'
+          - 'Ref::max-n'
         JobRoleArn: !GetAtt GwasValidatorJobRole.Arn
         ExecutionRoleArn: !GetAtt GwasValidatorJobRole.Arn
         ResourceRequirements:

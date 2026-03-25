@@ -2185,7 +2185,7 @@ GWAS_VALIDATOR_JOB_DEFINITION = os.getenv('SGC_GWAS_VALIDATOR_JOB_DEFINITION', '
 
 def _submit_gwas_validation_and_await(engine_ref, file_id: str, s3_path: str,
                                       column_mapping: dict, submitted_by: str,
-                                      job_record_id: str):
+                                      job_record_id: str, max_n: int = 0):
     """Background task: submit Batch job, poll until done, update DB.
 
     Follows the same pattern as batch.submit_and_await_job used by Hermes.
@@ -2205,6 +2205,7 @@ def _submit_gwas_validation_and_await(engine_ref, file_id: str, s3_path: str,
                 'column-mapping': json.dumps(column_mapping),
                 'progress-s3-key': progress_s3_key,
                 'bucket': s3.BASE_BUCKET,
+                'max-n': str(max_n),
             },
         )
         batch_job_id = response['jobId']
@@ -2255,7 +2256,7 @@ def _submit_gwas_validation_and_await(engine_ref, file_id: str, s3_path: str,
 
 def _kick_off_gwas_validation(background_tasks: BackgroundTasks, file_id: str,
                               s3_path: str, column_mapping: dict,
-                              submitted_by: str) -> str:
+                              submitted_by: str, max_n: int = 0) -> str:
     """Create a DB record and schedule the background validation task.
 
     Returns the validation job record ID.
@@ -2271,7 +2272,7 @@ def _kick_off_gwas_validation(background_tasks: BackgroundTasks, file_id: str,
 
     background_tasks.add_task(
         _submit_gwas_validation_and_await,
-        engine, file_id, s3_path, column_mapping, submitted_by, job_record_id,
+        engine, file_id, s3_path, column_mapping, submitted_by, job_record_id, max_n,
     )
     return job_record_id
 
@@ -2297,9 +2298,13 @@ async def start_gwas_validation(file_id: str, background_tasks: BackgroundTasks,
         if not (cohort_owner == user.user_name or check_review_permissions(user)):
             raise fastapi.HTTPException(status_code=403, detail="You can only validate GWAS files for cohorts you own")
 
+        cases = gwas_file.get('cases') or 0
+        controls = gwas_file.get('controls') or 0
+        max_n = cases + controls
+
         job_record_id = _kick_off_gwas_validation(
             background_tasks, file_id, gwas_file['s3_path'],
-            gwas_file.get('column_mapping', {}), user.user_name,
+            gwas_file.get('column_mapping', {}), user.user_name, max_n,
         )
 
         return {
@@ -2446,6 +2451,17 @@ async def update_sgc_gwas_metadata(cohort_id: str, cohort: SGCGWASCohort, user: 
         raise fastapi.HTTPException(status_code=404, detail="GWAS metadata not found")
     if existing['submitted_by'] != user.user_name and not check_review_permissions(user):
         raise fastapi.HTTPException(status_code=403, detail="Access denied")
+
+    existing_meta = existing.get('metadata') or {}
+    new_meta = cohort.metadata or {}
+    existing_cols = {k: v for k, v in existing_meta.items() if k.startswith('col_')}
+    new_cols = {k: v for k, v in new_meta.items() if k.startswith('col_')}
+    if existing_cols != new_cols and query.get_sgc_gwas_files_by_cohort(engine, cohort_id):
+        raise fastapi.HTTPException(
+            status_code=409,
+            detail="Column name mappings cannot be changed while GWAS files are uploaded for this cohort. Delete all uploaded files first."
+        )
+
     try:
         query.update_sgc_gwas_cohort(engine, cohort_id, cohort)
         return query.get_sgc_gwas_cohort_by_cohort_id(engine, cohort_id)
