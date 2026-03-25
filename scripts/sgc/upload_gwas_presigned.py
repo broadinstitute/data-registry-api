@@ -448,10 +448,10 @@ def main():
     print(f"Found cohort '{cohort_name}' -> {cohort_id}")
 
     # Check for an existing GWAS file with the same dataset/phenotype/filename before uploading
-    existing = check_for_existing_gwas_file(api_base, token, cohort_id, args.dataset, args.phenotype, filename)
+    existing = check_for_existing_gwas_file(api_base, token, cohort_id, args.dataset, phenotype, filename)
     if existing:
         sys.stderr.write(
-            f"A GWAS file already exists for dataset='{args.dataset}', phenotype='{args.phenotype}', "
+            f"A GWAS file already exists for dataset='{args.dataset}', phenotype='{phenotype}', "
             f"file='{filename}' (id: {existing['id']}).\n"
             f"Delete the existing file before uploading a new one.\n"
         )
