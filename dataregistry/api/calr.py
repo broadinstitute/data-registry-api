@@ -367,6 +367,28 @@ async def delete_calr_submission(submission_id: str, user: User = Depends(get_ca
         raise fastapi.HTTPException(status_code=500, detail=f"Error deleting submission: {str(e)}")
 
 
+@router.patch("/calr/files/{submission_id}")
+async def update_calr_submission_public(
+    submission_id: str,
+    public: bool,
+    user: User = Depends(get_calr_user)
+):
+    """
+    Update the public flag on a CALR submission.
+    Only the submission owner can change this.
+    """
+    files = calr_query.get_calr_files_by_submission(engine, submission_id)
+    if not files:
+        raise fastapi.HTTPException(status_code=404, detail="Submission not found")
+
+    file_info = calr_query.get_calr_file_by_id(engine, files[0]['id'])
+    if not file_info or file_info['uploaded_by'] != user.user_name:
+        raise fastapi.HTTPException(status_code=403, detail="You can only modify your own submissions")
+
+    calr_query.set_calr_submission_public(engine, submission_id, public)
+    return {"submission_id": submission_id, "public": public}
+
+
 def _validate_session_against_standard_file(session: CalRSession, standard_df) -> list[str]:
     """
     Validate session configuration against the standard CalR dataframe.
@@ -620,7 +642,7 @@ def _load_session_and_standard_df(session_id: str, username: str):
     file_info = calr_query.get_calr_file_by_id(engine, session_id)
     if not file_info or file_info['file_type'] != 'session':
         raise fastapi.HTTPException(status_code=404, detail="Session not found")
-    if file_info['uploaded_by'] != username:
+    if not file_info['public'] and file_info['uploaded_by'] != username:
         raise fastapi.HTTPException(status_code=403, detail="Access denied")
 
     try:
@@ -648,7 +670,7 @@ def _load_session_and_standard_df(session_id: str, username: str):
 @router.post("/calr/analysis/ancova")
 async def run_ancova(
     request: AnovaRequest,
-    user: User = Depends(get_calr_user)
+    user: Optional[User] = Depends(get_calr_user_optional)
 ):
     """
     Run per-hour ANCOVA on a CalR standard file using the given session configuration.
@@ -661,7 +683,7 @@ async def run_ancova(
     if request.time_of_day not in ('light', 'dark', 'total'):
         raise fastapi.HTTPException(status_code=422, detail="time_of_day must be 'light', 'dark', or 'total'")
 
-    session, df = _load_session_and_standard_df(request.session_id, user.user_name)
+    session, df = _load_session_and_standard_df(request.session_id, user.user_name if user else None)
 
     if request.variable not in df.columns:
         raise fastapi.HTTPException(status_code=422, detail=f"Variable '{request.variable}' not found in standard file")
@@ -699,7 +721,7 @@ async def run_ancova(
 @router.post("/calr/analysis/power")
 async def run_power_calc(
     request: PowerCalcRequest,
-    user: User = Depends(get_calr_user)
+    user: Optional[User] = Depends(get_calr_user_optional)
 ):
     """
     Compute a statistical power curve for a CalR experiment.
@@ -711,7 +733,7 @@ async def run_power_calc(
     if request.time_of_day not in ('light', 'dark', 'total'):
         raise fastapi.HTTPException(status_code=422, detail="time_of_day must be 'light', 'dark', or 'total'")
 
-    session, df = _load_session_and_standard_df(request.session_id, user.user_name)
+    session, df = _load_session_and_standard_df(request.session_id, user.user_name if user else None)
 
     if request.variable not in df.columns:
         raise fastapi.HTTPException(status_code=422, detail=f"Variable '{request.variable}' not found in standard file")
@@ -752,7 +774,7 @@ async def run_power_calc(
 @router.post("/calr/analysis/qc")
 async def run_quality_control(
     request: QualityControlRequest,
-    user: User = Depends(get_calr_user)
+    user: Optional[User] = Depends(get_calr_user_optional)
 ):
     """
     Run the CalR quality control analysis.
@@ -765,7 +787,7 @@ async def run_quality_control(
     Returns per-subject data points and regression statistics for client-side
     scatter plot rendering.
     """
-    session, df = _load_session_and_standard_df(request.session_id, user.user_name)
+    session, df = _load_session_and_standard_df(request.session_id, user.user_name if user else None)
 
     for col in ('subject.mass', 'feed', 'ee'):
         if col not in df.columns:

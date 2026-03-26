@@ -135,6 +135,16 @@ def get_calr_files_by_submission(engine, submission_id: str):
         return [dict(row) for row in result]
 
 
+def set_calr_submission_public(engine, submission_id: str, public: bool) -> bool:
+    """Set the public flag on a submission. Returns True if the record was found and updated."""
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+            UPDATE calr_submissions SET public = :public WHERE id = :id
+        """), {'public': 1 if public else 0, 'id': submission_id})
+        conn.commit()
+        return result.rowcount > 0
+
+
 def delete_calr_submission(engine, submission_id: str) -> bool:
     """Delete a CALR submission and its files. Returns True if deleted."""
     with engine.connect() as conn:
