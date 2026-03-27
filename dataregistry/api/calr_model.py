@@ -2,7 +2,12 @@ from datetime import datetime
 from typing import Dict, List, Optional, Union
 from uuid import UUID
 
-from pydantic import BaseModel, Field, conlist
+from pydantic import BaseModel, EmailStr, Field, conlist
+
+
+class CalRNewUserRequest(BaseModel):
+    user_name: EmailStr
+    password: str
 
 
 class CALRSubmission(BaseModel):

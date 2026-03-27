@@ -14,7 +14,7 @@ from fastapi.responses import StreamingResponse
 from dataregistry.api import s3
 from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api.model import User
-from dataregistry.api.calr_model import CALRFile, CALRSubmission, CalRSession, AnovaRequest, PowerCalcRequest, QualityControlRequest
+from dataregistry.api.calr_model import CALRFile, CALRSubmission, CalRSession, CalRNewUserRequest, AnovaRequest, PowerCalcRequest, QualityControlRequest
 from dataregistry.api import calr_query
 
 # Import CalR conversion functions
@@ -30,6 +30,7 @@ router = fastapi.APIRouter()
 engine = DataRegistryReadWriteDB().get_engine()
 
 USER_SERVICE_URL = os.getenv('USER_SERVICE_URL', 'https://users.kpndataregistry.org')
+CALR_USER_TOKEN = os.getenv('CALR_USER_TOKEN')
 
 
 async def get_calr_user_optional(authorization: Optional[str] = Header(None)) -> Optional[User]:
@@ -82,6 +83,39 @@ def _upload_file_to_s3(file_content: bytes, s3_key: str, content_type: str):
         Body=file_content,
         ContentType=content_type or 'application/octet-stream'
     )
+
+
+@router.post("/calr/create-user", status_code=201)
+async def create_calr_user(request: CalRNewUserRequest):
+    """
+    Self-service registration for CalR users.
+    Creates a new account in the user service and adds it to the calr group.
+    No authentication required.
+    """
+    if not CALR_USER_TOKEN:
+        raise fastapi.HTTPException(status_code=503, detail="User creation is not configured")
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{USER_SERVICE_URL}/api/auth/create-user/",
+                data={
+                    "token": CALR_USER_TOKEN,
+                    "username": request.user_name,
+                    "email": request.user_name,
+                    "password": request.password,
+                }
+            )
+            if response.status_code in (200, 201):
+                return {"message": "Account created successfully", "username": request.user_name}
+            else:
+                try:
+                    detail = response.json()
+                except Exception:
+                    detail = response.text
+                raise fastapi.HTTPException(status_code=response.status_code, detail=detail)
+    except httpx.RequestError:
+        raise fastapi.HTTPException(status_code=503, detail="User service unavailable")
 
 
 @router.post("/calr/files", status_code=201)
