@@ -9,6 +9,7 @@ import fastapi
 import httpx
 import boto3
 from fastapi import UploadFile, Form, Depends, Header
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import StreamingResponse
 
 from dataregistry.api import s3
@@ -32,25 +33,12 @@ engine = DataRegistryReadWriteDB().get_engine()
 USER_SERVICE_URL = os.getenv('USER_SERVICE_URL', 'https://users.kpndataregistry.org')
 CALR_USER_TOKEN = os.getenv('CALR_USER_TOKEN')
 
-
-async def get_calr_user_optional(authorization: Optional[str] = Header(None)) -> Optional[User]:
-    """Validate CALR user token if present; return None if no token provided."""
-    if not authorization:
-        return None
-    return await get_calr_user(authorization)
+http_bearer = HTTPBearer(auto_error=False)
 
 
-async def get_calr_user(authorization: Optional[str] = Header(None)):
-    """Validate CALR user token against the user service."""
-    if not authorization:
-        raise fastapi.HTTPException(status_code=401, detail='Authorization header required')
-
-    schema, _, token = authorization.partition(' ')
-    if schema.lower() != 'bearer' or not token:
-        raise fastapi.HTTPException(status_code=401, detail='Bearer token required')
-
+async def _verify_calr_token(token: str) -> User:
+    """Verify a CALR bearer token against the user service."""
     calr_user_group = os.getenv('CALR_USER_GROUP', 'calr')
-
     try:
         async with httpx.AsyncClient() as client:
             response = await client.get(
@@ -72,6 +60,23 @@ async def get_calr_user(authorization: Optional[str] = Header(None)):
                 raise fastapi.HTTPException(status_code=401, detail='Invalid token')
     except httpx.RequestError:
         raise fastapi.HTTPException(status_code=503, detail='User service unavailable')
+
+
+async def get_calr_user_optional(credentials: Optional[HTTPAuthorizationCredentials] = Depends(http_bearer)) -> Optional[User]:
+    """Validate CALR user token if present; return None if no token provided."""
+    if not credentials:
+        return None
+    try:
+        return await _verify_calr_token(credentials.credentials)
+    except fastapi.HTTPException:
+        return None
+
+
+async def get_calr_user(credentials: Optional[HTTPAuthorizationCredentials] = Depends(http_bearer)):
+    """Validate CALR user token against the user service."""
+    if not credentials:
+        raise fastapi.HTTPException(status_code=401, detail='Authorization header required')
+    return await _verify_calr_token(credentials.credentials)
 
 
 def _upload_file_to_s3(file_content: bytes, s3_key: str, content_type: str):
