@@ -1,3 +1,4 @@
+import json
 import uuid
 from typing import Optional
 
@@ -54,7 +55,7 @@ def get_calr_submissions_by_user(engine, uploaded_by: str):
     with engine.connect() as conn:
         rows = conn.execute(text("""
             SELECT s.id AS submission_id, s.name, s.description, s.public,
-                   s.uploaded_by, s.uploaded_at,
+                   s.uploaded_by, s.uploaded_at, s.metadata,
                    f.id AS file_id, f.file_type, f.file_name, f.file_size
             FROM calr_submissions s
             LEFT JOIN calr_files f ON f.submission_id = s.id
@@ -70,7 +71,7 @@ def get_public_calr_submissions(engine):
     with engine.connect() as conn:
         rows = conn.execute(text("""
             SELECT s.id AS submission_id, s.name, s.description, s.public,
-                   s.uploaded_by, s.uploaded_at,
+                   s.uploaded_by, s.uploaded_at, s.metadata,
                    f.id AS file_id, f.file_type, f.file_name, f.file_size
             FROM calr_submissions s
             LEFT JOIN calr_files f ON f.submission_id = s.id
@@ -88,6 +89,7 @@ def _group_calr_submissions(rows):
         row = dict(row)
         sub_id = row['submission_id']
         if sub_id not in submissions:
+            raw_metadata = row['metadata']
             submissions[sub_id] = {
                 'id': sub_id,
                 'name': row['name'],
@@ -95,6 +97,7 @@ def _group_calr_submissions(rows):
                 'public': bool(row['public']),
                 'uploaded_by': row['uploaded_by'],
                 'uploaded_at': row['uploaded_at'],
+                'metadata': json.loads(raw_metadata) if isinstance(raw_metadata, str) else (raw_metadata or {}),
                 'files': [],
             }
         if row['file_id']:
@@ -141,6 +144,40 @@ def set_calr_submission_public(engine, submission_id: str, public: bool) -> bool
         result = conn.execute(text("""
             UPDATE calr_submissions SET public = :public WHERE id = :id
         """), {'public': 1 if public else 0, 'id': submission_id})
+        conn.commit()
+        return result.rowcount > 0
+
+
+def patch_calr_submission_metadata(engine, submission_id: str, patch: dict) -> bool:
+    """Merge patch values into the existing metadata JSON. Explicit None values remove keys.
+    Returns True if the submission was found and updated."""
+    with engine.connect() as conn:
+        row = conn.execute(text(
+            "SELECT metadata FROM calr_submissions WHERE id = :id"
+        ), {'id': submission_id}).first()
+        if row is None:
+            return False
+        raw = row[0]
+        existing = json.loads(raw) if isinstance(raw, str) else (raw or {})
+        for k, v in patch.items():
+            if v is None:
+                existing.pop(k, None)
+            else:
+                existing[k] = v
+        result = conn.execute(text(
+            "UPDATE calr_submissions SET metadata = :metadata WHERE id = :id"
+        ), {'metadata': json.dumps(existing) if existing else None, 'id': submission_id})
+        conn.commit()
+        return result.rowcount > 0
+
+
+def update_calr_file(engine, file_id: str, file_name: str, file_size: int, s3_path: str) -> bool:
+    """Update mutable attributes of an existing calr_files record. Returns True if found and updated."""
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+            UPDATE calr_files SET file_name = :file_name, file_size = :file_size, s3_path = :s3_path
+            WHERE id = :id
+        """), {'file_name': file_name, 'file_size': file_size, 's3_path': s3_path, 'id': file_id})
         conn.commit()
         return result.rowcount > 0
 

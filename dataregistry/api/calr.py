@@ -15,7 +15,7 @@ from fastapi.responses import StreamingResponse
 from dataregistry.api import s3
 from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api.model import User
-from dataregistry.api.calr_model import CALRFile, CALRSubmission, CalRSession, CalRNewUserRequest, AnovaRequest, PowerCalcRequest, QualityControlRequest
+from dataregistry.api.calr_model import CALRFile, CALRSubmission, CalRSession, CalRNewUserRequest, CalRSubmissionMetadata, AnovaRequest, PowerCalcRequest, QualityControlRequest
 from dataregistry.api import calr_query
 
 # Import CalR conversion functions
@@ -428,6 +428,30 @@ async def update_calr_submission_public(
     return {"submission_id": submission_id, "public": public}
 
 
+@router.patch("/calr/submissions/{submission_id}/metadata")
+async def update_calr_submission_metadata(
+    submission_id: str,
+    metadata: CalRSubmissionMetadata,
+    user: User = Depends(get_calr_user)
+):
+    """
+    Update experiment metadata for a CALR submission.
+
+    Only fields included in the request body are changed; omitted fields are left as-is.
+    Setting a field to null removes it from the stored metadata.
+    Only the submission owner can update metadata.
+    """
+    files = calr_query.get_calr_files_by_submission(engine, submission_id)
+    if not files:
+        raise fastapi.HTTPException(status_code=404, detail="Submission not found")
+    if files[0]['uploaded_by'] != user.user_name:
+        raise fastapi.HTTPException(status_code=403, detail="You can only modify your own submissions")
+
+    patch = metadata.dict(exclude_unset=True)
+    calr_query.patch_calr_submission_metadata(engine, submission_id, patch)
+    return {"submission_id": submission_id}
+
+
 def _validate_session_against_standard_file(session: CalRSession, standard_df) -> list[str]:
     """
     Validate session configuration against the standard CalR dataframe.
@@ -521,6 +545,51 @@ async def create_calr_session(
         return {"session_id": session_id}
     except Exception as e:
         raise fastapi.HTTPException(status_code=500, detail=f"Error creating session: {str(e)}")
+
+
+@router.put("/calr/sessions/{session_id}", status_code=200)
+async def replace_calr_session(
+    session_id: str,
+    session: CalRSession,
+    user: User = Depends(get_calr_user)
+):
+    """
+    Replace an existing CalR session with new configuration.
+
+    Validates the new session against the submission's standard file, then overwrites
+    the existing session in S3. The session_id remains unchanged.
+    """
+    import pandas as pd
+
+    existing = calr_query.get_calr_file_by_id(engine, session_id)
+    if not existing or existing['file_type'] != 'session':
+        raise fastapi.HTTPException(status_code=404, detail="Session not found")
+    if existing['uploaded_by'] != user.user_name:
+        raise fastapi.HTTPException(status_code=403, detail="Access denied")
+
+    files = calr_query.get_calr_files_by_submission(engine, existing['submission_id'])
+    standard_file = next((f for f in files if f['file_type'] == 'standard'), None)
+    if not standard_file:
+        raise fastapi.HTTPException(status_code=404, detail="Standard file not found in submission")
+
+    try:
+        s3_client = boto3.client('s3', region_name=s3.S3_REGION)
+        s3_response = s3_client.get_object(Bucket=s3.BASE_BUCKET, Key=standard_file['s3_path'])
+        standard_df = pd.read_csv(s3_response['Body'])
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Error reading standard file: {str(e)}")
+
+    errors = _validate_session_against_standard_file(session, standard_df)
+    if errors:
+        raise fastapi.HTTPException(status_code=422, detail=errors)
+
+    try:
+        session_json = session.json().encode('utf-8')
+        _upload_file_to_s3(session_json, existing['s3_path'], 'application/json')
+        calr_query.update_calr_file(engine, session_id, existing['file_name'], len(session_json), existing['s3_path'])
+        return {"session_id": session_id}
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Error replacing session: {str(e)}")
 
 
 def _csv_to_session_dict(csv_bytes: bytes, submission_id: str) -> dict:

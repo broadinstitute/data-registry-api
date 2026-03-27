@@ -10,6 +10,27 @@ class CalRNewUserRequest(BaseModel):
     password: str
 
 
+class CalRSubmissionMetadata(BaseModel):
+    species: Optional[str] = None
+    tissue: Optional[str] = None
+    litter: Optional[int] = None
+    bedding: Optional[str] = None
+    ee_calc: Optional[str] = None
+    enrich: Optional[str] = None
+    experiment_id: Optional[str] = None
+    age: Optional[float] = None
+    strain: Optional[str] = None
+    genetic_background: Optional[str] = None
+    sex: Optional[str] = None  # male / female / both / other
+    temperature: Optional[float] = None
+    quality_score: Optional[float] = None
+    system: Optional[str] = None  # CLAMS / TSE / Sable / Other
+    location: Optional[str] = None
+    pmid: Optional[str] = None
+    investigator: Optional[str] = None
+    treatment: Optional[str] = None
+
+
 class CALRSubmission(BaseModel):
     id: Union[UUID, None] = None
     name: str
