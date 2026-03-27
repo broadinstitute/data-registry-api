@@ -109,3 +109,8 @@ class CalRSession(BaseModel):
     food_cutoff: Optional[float] = None
     remove_outliers: bool = False
     group_colors: Optional[Dict[str, str]] = None
+
+
+class CalRSessionUpdate(CalRSession):
+    """CalRSession variant for PUT requests where submission_id is derived from the existing record."""
+    submission_id: Optional[str] = None

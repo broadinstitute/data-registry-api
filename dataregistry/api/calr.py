@@ -15,7 +15,7 @@ from fastapi.responses import StreamingResponse
 from dataregistry.api import s3
 from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api.model import User
-from dataregistry.api.calr_model import CALRFile, CALRSubmission, CalRSession, CalRNewUserRequest, CalRSubmissionMetadata, AnovaRequest, PowerCalcRequest, QualityControlRequest
+from dataregistry.api.calr_model import CALRFile, CALRSubmission, CalRSession, CalRSessionUpdate, CalRNewUserRequest, CalRSubmissionMetadata, AnovaRequest, PowerCalcRequest, QualityControlRequest
 from dataregistry.api import calr_query
 
 # Import CalR conversion functions
@@ -550,7 +550,7 @@ async def create_calr_session(
 @router.put("/calr/sessions/{session_id}", status_code=200)
 async def replace_calr_session(
     session_id: str,
-    session: CalRSession,
+    session: CalRSessionUpdate,
     user: User = Depends(get_calr_user)
 ):
     """
