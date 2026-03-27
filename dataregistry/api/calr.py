@@ -484,6 +484,161 @@ async def create_calr_session(
         raise fastapi.HTTPException(status_code=500, detail=f"Error creating session: {str(e)}")
 
 
+def _csv_to_session_dict(csv_bytes: bytes, submission_id: str) -> dict:
+    """
+    Parse a CalR R-app session CSV and return a CalRSession-compatible dict.
+    Inverse of _session_json_to_csv.
+    """
+    import csv
+    import io
+
+    reader = csv.DictReader(io.StringIO(csv_bytes.decode('utf-8')))
+    rows = list(reader)
+
+    def val(v):
+        """Return None for NA/empty, else the raw string."""
+        return None if v in ('NA', '', None) else v
+
+    def fval(v):
+        v = val(v)
+        return float(v) if v is not None else None
+
+    # Determine group columns
+    group_cols = [c for c in reader.fieldnames if c.startswith('group') and c[5:].isdigit()]
+    group_cols.sort(key=lambda c: int(c[5:]))
+    n_groups = len(group_cols)
+
+    # Subject rows: those with a non-NA id
+    subject_rows = [r for r in rows if val(r.get('id')) is not None]
+    N = len(subject_rows)
+
+    # Annotation rows: rows N+1 onwards (by position, not id)
+    annotation_rows = [r for r in rows if val(r.get('id')) is None]
+
+    # Build group membership map: subject_id -> group index
+    subject_to_group = {}
+    for g_idx, gcol in enumerate(group_cols):
+        for r in rows:
+            v = val(r.get(gcol))
+            if v is not None:
+                subject_to_group[str(v)] = g_idx
+
+    # Build groups from first n_groups rows
+    groups = []
+    for i in range(n_groups):
+        r = rows[i] if i < len(rows) else {}
+        groups.append({
+            'name': val(r.get('group_names')) or f'Group {i + 1}',
+            'diet_name': val(r.get('diet_names')),
+            'diet_kcal': fval(r.get('dietCal')),
+        })
+
+    # Group colors
+    group_colors = {}
+    for i in range(n_groups):
+        r = rows[i] if i < len(rows) else {}
+        color = val(r.get('colors'))
+        if color:
+            group_colors[groups[i]['name']] = color
+
+    # Config scalars
+    hour_range = [fval(rows[0].get('xrange')) if rows else None,
+                  fval(rows[1].get('xrange')) if len(rows) > 1 else None]
+    light_cycle_start = int(fval(rows[0].get('light')) or 0)
+    dark_cycle_start  = int(fval(rows[1].get('light')) or 0) if len(rows) > 1 else 0
+    remove_outliers = (val(rows[0].get('outliers')) or 'No').lower() == 'yes' if rows else False
+    food_cutoff = fval(rows[0].get('feedCutoff')) if rows else None
+
+    # Build subjects
+    subjects = []
+    for i, r in enumerate(subject_rows):
+        subj_id = str(val(r['id']))
+        exc_hour = fval(r.get('exc'))
+        ann_row = annotation_rows[i] if i < len(annotation_rows) else {}
+        exc_reason = val(ann_row.get('exc'))
+        subjects.append({
+            'subject': subj_id,
+            'groupIndex': subject_to_group.get(subj_id, 0),
+            'total_mass': fval(r.get('Total.Mass')),
+            'exc_hour': exc_hour,
+            'exc_reason': exc_reason,
+        })
+
+    return {
+        'submission_id': submission_id,
+        'groups': groups,
+        'subjects': subjects,
+        'light_cycle_start': light_cycle_start,
+        'dark_cycle_start': dark_cycle_start,
+        'hour_range': hour_range,
+        'food_cutoff': food_cutoff,
+        'remove_outliers': remove_outliers,
+        'group_colors': group_colors or None,
+    }
+
+
+@router.post("/calr/sessions/from-csv", status_code=201)
+async def create_calr_session_from_csv(
+    submission_id: str = Form(...),
+    session_file: UploadFile = None,
+    user: User = Depends(get_calr_user)
+):
+    """
+    Create a CalR session by uploading a CSV in the R app's native session format.
+    Parses the CSV, validates against the submission's standard file, and stores
+    it as JSON. Returns the session ID for use in subsequent analysis requests.
+    """
+    import pandas as pd
+
+    files = calr_query.get_calr_files_by_submission(engine, submission_id)
+    if not files:
+        raise fastapi.HTTPException(status_code=404, detail="Submission not found")
+    if files[0]['uploaded_by'] != user.user_name:
+        raise fastapi.HTTPException(status_code=403, detail="Access denied")
+
+    standard_file = next((f for f in files if f['file_type'] == 'standard'), None)
+    if not standard_file:
+        raise fastapi.HTTPException(status_code=404, detail="Standard file not found in submission")
+
+    try:
+        csv_bytes = await session_file.read()
+        session_dict = _csv_to_session_dict(csv_bytes, submission_id)
+        session = CalRSession(**session_dict)
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=422, detail=f"Error parsing session CSV: {str(e)}")
+
+    try:
+        s3_client = boto3.client('s3', region_name=s3.S3_REGION)
+        s3_response = s3_client.get_object(Bucket=s3.BASE_BUCKET, Key=standard_file['s3_path'])
+        standard_df = pd.read_csv(s3_response['Body'])
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Error reading standard file: {str(e)}")
+
+    errors = _validate_session_against_standard_file(session, standard_df)
+    if errors:
+        raise fastapi.HTTPException(status_code=422, detail=errors)
+
+    try:
+        session_id = str(uuid.uuid4()).replace('-', '')
+        s3_key = f"calr/{user.user_name}/sessions/{session_id}.json"
+        session_json = session.json().encode('utf-8')
+        _upload_file_to_s3(session_json, s3_key, 'application/json')
+
+        calr_file = CALRFile(
+            id=session_id,
+            submission_id=submission_id,
+            file_type='session',
+            file_name=f"{session_id}.json",
+            file_size=len(session_json),
+            s3_path=s3_key,
+        )
+        calr_query.insert_calr_file(engine, calr_file)
+
+        return {"session_id": session_id}
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Error creating session: {str(e)}")
+
+
 @router.get("/calr/sessions/{session_id}")
 async def get_calr_session(
     session_id: str,
