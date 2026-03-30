@@ -149,14 +149,18 @@ def set_calr_submission_public(engine, submission_id: str, public: bool) -> bool
 
 
 def patch_calr_submission_metadata(engine, submission_id: str, patch: dict) -> bool:
-    """Merge patch values into the existing metadata JSON. Explicit None values remove keys.
+    """Merge patch values into the submission. name/description update their columns directly;
+    all other fields are merged into the metadata JSON blob. Explicit None values remove JSON keys.
     Returns True if the submission was found and updated."""
+    column_fields = {k: patch.pop(k) for k in ('name', 'description') if k in patch}
+
     with engine.connect() as conn:
         row = conn.execute(text(
             "SELECT metadata FROM calr_submissions WHERE id = :id"
         ), {'id': submission_id}).first()
         if row is None:
             return False
+
         raw = row[0]
         existing = json.loads(raw) if isinstance(raw, str) else (raw or {})
         for k, v in patch.items():
@@ -164,9 +168,19 @@ def patch_calr_submission_metadata(engine, submission_id: str, patch: dict) -> b
                 existing.pop(k, None)
             else:
                 existing[k] = v
+
+        set_clauses = "metadata = :metadata"
+        params = {'metadata': json.dumps(existing) if existing else None, 'id': submission_id}
+        if 'name' in column_fields and column_fields['name'] is not None:
+            set_clauses += ", name = :name"
+            params['name'] = column_fields['name']
+        if 'description' in column_fields:
+            set_clauses += ", description = :description"
+            params['description'] = column_fields['description']
+
         result = conn.execute(text(
-            "UPDATE calr_submissions SET metadata = :metadata WHERE id = :id"
-        ), {'metadata': json.dumps(existing) if existing else None, 'id': submission_id})
+            f"UPDATE calr_submissions SET {set_clauses} WHERE id = :id"
+        ), params)
         conn.commit()
         return result.rowcount > 0
 

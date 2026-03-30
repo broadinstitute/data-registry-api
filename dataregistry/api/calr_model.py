@@ -11,6 +11,8 @@ class CalRNewUserRequest(BaseModel):
 
 
 class CalRSubmissionMetadata(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
     species: Optional[str] = None
     tissue: Optional[str] = None
     litter: Optional[int] = None
