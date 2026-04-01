@@ -15,7 +15,7 @@ from fastapi.responses import StreamingResponse
 from dataregistry.api import s3
 from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api.model import User
-from dataregistry.api.calr_model import CALRFile, CALRSubmission, CalRSession, CalRSessionUpdate, CalRNewUserRequest, CalRSubmissionMetadata, AnovaRequest, PowerCalcRequest, QualityControlRequest
+from dataregistry.api.calr_model import CALRFile, CALRSubmission, CalRSession, CalRSessionUpdate, CalRNewUserRequest, CalRSubmissionMetadata, AncovaTableRequest, PowerCalcRequest, QualityControlRequest
 from dataregistry.api import calr_query
 
 # Import CalR conversion functions
@@ -25,7 +25,7 @@ from calr.loaders import detect_format, load_cal_file
 from calr.oxymax_loader import load_oxymax_file, convert_oxymax
 from calr.sable_loader import load_sable_file, convert_sable
 from calr.tse_loader import load_tse_file, convert_tse
-from calr.analysis import acute_ancova, filter_by_time_of_day, power_calc, quality_control
+from calr.analysis import ancova_table, filter_by_time_of_day, power_calc, quality_control
 
 router = fastapi.APIRouter()
 engine = DataRegistryReadWriteDB().get_engine()
@@ -932,26 +932,30 @@ def _load_session_and_standard_df(session_id: str, username: str):
 
 @router.post("/calr/analysis/ancova")
 async def run_ancova(
-    request: AnovaRequest,
+    request: AncovaTableRequest,
     user: Optional[User] = Depends(get_calr_user_optional)
 ):
     """
-    Run per-hour ANCOVA on a CalR standard file using the given session configuration.
+    Compute the summary ANCOVA/GLM and ANOVA table for all standard variables,
+    mirroring the anovaTab() output from the R calR application.
 
-    For each hour in the analysis window, fits: variable ~ mass_variable + group
-    Returns per-hour p-values, significance annotations, annotation y-positions,
-    and per-group means and standard errors — everything a client needs to render
-    a time-series plot with significance overlay.
+    Runs models for three time periods (full_day, light, dark) for every variable:
+      - ANCOVA/GLM variables (feed, drink, ee, vo2, vco2):
+          var ~ mass + group [+ mass:group if interaction is significant]
+        Returns per-period p-values for mass, group, and interaction (null when dropped).
+      - ANOVA variables (pedmeter, allmeter, rer, xytot, body.temp, eb):
+          var ~ group
+        Returns per-period p-value for group.
+
+    Energy balance (eb) is computed on the fly as feed − ee when not present.
     """
-    if request.time_of_day not in ('light', 'dark', 'total'):
-        raise fastapi.HTTPException(status_code=422, detail="time_of_day must be 'light', 'dark', or 'total'")
-
     session, df = _load_session_and_standard_df(request.session_id, user.user_name if user else None)
 
-    if request.variable not in df.columns:
-        raise fastapi.HTTPException(status_code=422, detail=f"Variable '{request.variable}' not found in standard file")
     if request.mass_variable not in df.columns:
-        raise fastapi.HTTPException(status_code=422, detail=f"Mass variable '{request.mass_variable}' not found in standard file")
+        raise fastapi.HTTPException(
+            status_code=422,
+            detail=f"Mass variable '{request.mass_variable}' not found in standard file"
+        )
 
     # Assign groups from session
     groups = session['groups']
@@ -966,18 +970,19 @@ async def run_ancova(
     start_hour, end_hour = session['hour_range']
     df = df[(df['exp.hour'] >= start_hour) & (df['exp.hour'] <= end_hour)]
 
-    # Filter by time of day
-    df = filter_by_time_of_day(
-        df,
-        request.time_of_day,
-        session['light_cycle_start'],
-        session['dark_cycle_start'],
-    )
-
     if df.empty:
         raise fastapi.HTTPException(status_code=422, detail="No data remaining after filters")
 
-    result = acute_ancova(df, request.variable, request.mass_variable)
+    try:
+        result = ancova_table(
+            df,
+            mass_variable=request.mass_variable,
+            light_cycle_start=session['light_cycle_start'],
+            dark_cycle_start=session['dark_cycle_start'],
+        )
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"ANCOVA table calculation failed: {str(e)}")
+
     return result
 
 

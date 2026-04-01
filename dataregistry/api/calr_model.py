@@ -59,6 +59,11 @@ class AnovaRequest(BaseModel):
     time_of_day: str = 'total'  # 'light', 'dark', or 'total'
 
 
+class AncovaTableRequest(BaseModel):
+    session_id: str
+    mass_variable: str = 'subject.mass'
+
+
 class QualityControlRequest(BaseModel):
     session_id: str
     n_mass_measurements: int = Field(default=5, ge=1, le=15)

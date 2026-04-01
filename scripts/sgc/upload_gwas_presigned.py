@@ -342,7 +342,7 @@ def main():
     p.add_argument("--user-service-url", default=DEFAULT_USER_SERVICE_URL, help="User service URL")
 
     # Auth group
-    p.add_argument("--group", default="sgc", help="Auth group (default: sgc)")
+    p.add_argument("--group", default=None, help="Auth group (default: sgc for qa, sgc-prod for prd)")
 
     # Required GWAS metadata
     p.add_argument("--dataset", required=True)
@@ -354,6 +354,10 @@ def main():
                    help="Submit a batch QA validation job after upload and poll until it completes")
 
     args = p.parse_args()
+
+    # Default group based on environment
+    if args.group is None:
+        args.group = "sgc-prod" if args.env == "prd" else "sgc"
 
     # Resolve endpoints
     if args.api_base_url:

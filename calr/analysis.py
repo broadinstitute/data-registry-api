@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import statsmodels.formula.api as smf
 from scipy import stats
+from statsmodels.stats.anova import anova_lm
 
 
 def _p_to_annotation(p: float) -> str:
@@ -272,4 +273,186 @@ def power_calc(
         'overall_sd': round(overall_sd, 6),
         'group_stats': group_stats,
         'power_curve': power_curve,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Summary ANCOVA / ANOVA table  (mirrors anovaTab() in calR's Input_tab.R)
+# ---------------------------------------------------------------------------
+
+# Variables analysed with mass as a covariate (ANCOVA / GLM section)
+_ANCOVA_VARS = [
+    ('feed',      'Food Consumed (kcal/period)'),
+    ('drink',     'Water Consumed (ml/period)'),
+    ('ee',        'Energy Expenditure (kcal/period)'),
+    ('vo2',       'Oxygen Consumption (ml/hr)'),
+    ('vco2',      'Carbon Dioxide Production (ml/hr)'),
+]
+
+# Variables analysed without a mass covariate (ANOVA section)
+_ANOVA_VARS = [
+    ('pedmeter',  'Pedestrian Locomotion (m)'),
+    ('allmeter',  'Total Distance in Cage (m)'),
+    ('rer',       'Respiratory Exchange Ratio'),
+    ('xytot',     'Locomotor Activity (beam breaks)'),
+    ('body.temp', 'Body Temperature (Celsius)'),
+    ('eb',        'Energy Balance (kcal/period)'),   # computed: feed - ee
+]
+
+
+def _aggregate_subjects(df: pd.DataFrame, var_col: str, mass_col: str) -> pd.DataFrame:
+    """Per-subject means of mass and var, mirroring calR's ddply(group, subject.id, mean)."""
+    agg = (
+        df.groupby(['group', 'subject.id'])
+        .agg(mass=(mass_col, 'mean'), var=(var_col, 'mean'))
+        .reset_index()
+        .dropna(subset=['mass', 'var'])
+    )
+    return agg
+
+
+def _fit_ancova_period(subj_df: pd.DataFrame):
+    """
+    Fit var ~ mass + C(group) + mass:C(group).
+    If interaction p > 0.05, re-fit without interaction.
+    Returns (p_mass, p_group, p_interaction) — p_interaction is None when dropped.
+    Returns None when there is insufficient data.
+    """
+    n_groups = subj_df['group'].nunique()
+    if n_groups < 2 or len(subj_df) <= n_groups + 2:
+        return None
+
+    try:
+        m_full = smf.ols('var ~ mass + C(group) + mass:C(group)', data=subj_df).fit()
+        at_full = anova_lm(m_full, typ=2)
+
+        int_rows = [r for r in at_full.index if ':' in str(r)]
+        if not int_rows:
+            return None
+        p_int = float(at_full.loc[int_rows[0], 'PR(>F)'])
+
+        if p_int > 0.05:
+            m_noint = smf.ols('var ~ mass + C(group)', data=subj_df).fit()
+            at_noint = anova_lm(m_noint, typ=2)
+            p_mass = float(at_noint.loc['mass', 'PR(>F)'])
+            p_group = float(at_noint.loc['C(group)', 'PR(>F)'])
+            return (round(p_mass, 4), round(p_group, 4), None)
+        else:
+            p_mass = float(at_full.loc['mass', 'PR(>F)'])
+            grp_rows = [r for r in at_full.index if 'C(group)' in str(r) and ':' not in str(r)]
+            p_group = float(at_full.loc[grp_rows[0], 'PR(>F)'])
+            return (round(p_mass, 4), round(p_group, 4), round(p_int, 4))
+    except Exception:
+        return None
+
+
+def _fit_anova_period(subj_df: pd.DataFrame):
+    """
+    Fit var ~ C(group).
+    Returns p_group F-test p-value, or None when there is insufficient data.
+    """
+    n_groups = subj_df['group'].nunique()
+    if n_groups < 2 or len(subj_df) <= n_groups:
+        return None
+
+    try:
+        m = smf.ols('var ~ C(group)', data=subj_df).fit()
+        at = anova_lm(m, typ=2)
+        return round(float(at.loc['C(group)', 'PR(>F)']), 4)
+    except Exception:
+        return None
+
+
+def ancova_table(
+    df: pd.DataFrame,
+    mass_variable: str = 'subject.mass',
+    light_cycle_start: int = 6,
+    dark_cycle_start: int = 18,
+) -> dict:
+    """
+    Compute the summary ANCOVA/ANOVA table, mirroring anovaTab() from calR.
+
+    For each variable in _ANCOVA_VARS, runs:
+        var ~ mass + C(group) + mass:C(group)
+    and if the interaction p-value > 0.05 drops the interaction term, mirroring the
+    R code that tests ``a$coefficients[nrow(a$coefficients), 4] > 0.05``.
+
+    For each variable in _ANOVA_VARS, runs:
+        var ~ C(group)
+
+    Both analyses are run for three time periods: full_day, light, dark.
+    Energy balance (eb) is computed on the fly as feed − ee when absent from df.
+
+    Returns
+    -------
+    {
+      "mass_variable": str,
+      "ancova": [
+        {
+          "variable": str,
+          "label": str,
+          "full_day": {"mass": float|null, "group": float|null, "interaction": float|null},
+          "light":    {"mass": float|null, "group": float|null, "interaction": float|null},
+          "dark":     {"mass": float|null, "group": float|null, "interaction": float|null}
+        }, ...
+      ],
+      "anova": [
+        {
+          "variable": str,
+          "label": str,
+          "full_day": {"group": float|null},
+          "light":    {"group": float|null},
+          "dark":     {"group": float|null}
+        }, ...
+      ]
+    }
+    """
+    # Compute energy balance if missing
+    if 'eb' not in df.columns and 'feed' in df.columns and 'ee' in df.columns:
+        df = df.copy()
+        df['eb'] = df['feed'] - df['ee']
+
+    # Phase subsets
+    hour_of_day = df['exp.hour'] % 24
+    if light_cycle_start < dark_cycle_start:
+        in_light = (hour_of_day >= light_cycle_start) & (hour_of_day < dark_cycle_start)
+    else:
+        in_light = (hour_of_day >= light_cycle_start) | (hour_of_day < dark_cycle_start)
+
+    phase_dfs = {
+        'full_day': df,
+        'light':    df[in_light],
+        'dark':     df[~in_light],
+    }
+
+    ancova_rows = []
+    for var_col, label in _ANCOVA_VARS:
+        if var_col not in df.columns:
+            continue
+        row: dict = {'variable': var_col, 'label': label}
+        for phase, phase_df in phase_dfs.items():
+            subj = _aggregate_subjects(phase_df, var_col, mass_variable)
+            result = _fit_ancova_period(subj)
+            if result is None:
+                row[phase] = {'mass': None, 'group': None, 'interaction': None}
+            else:
+                p_mass, p_group, p_int = result
+                row[phase] = {'mass': p_mass, 'group': p_group, 'interaction': p_int}
+        ancova_rows.append(row)
+
+    anova_rows = []
+    for var_col, label in _ANOVA_VARS:
+        if var_col not in df.columns:
+            continue
+        row = {'variable': var_col, 'label': label}
+        for phase, phase_df in phase_dfs.items():
+            subj = _aggregate_subjects(phase_df, var_col, mass_variable)
+            p_group = _fit_anova_period(subj)
+            row[phase] = {'group': p_group}
+        anova_rows.append(row)
+
+    return {
+        'mass_variable': mass_variable,
+        'ancova': ancova_rows,
+        'anova': anova_rows,
     }
