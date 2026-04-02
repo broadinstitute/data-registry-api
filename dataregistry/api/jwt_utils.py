@@ -23,9 +23,9 @@ def get_decoded_jwt_data(cookie_data: str) -> dict:
         return jwt.decode(cookie_data, SECRET_KEY, algorithms=[ALGORITHM])
     except jwt.exceptions.ExpiredSignatureError:
         raise ValueError("JWT token has expired")
-    except jwt.exceptions.InvalidTokenError as e:
-        raise ValueError(f"Invalid JWT token: {str(e)}")
     except jwt.exceptions.InvalidSignatureError:
         raise ValueError("Invalid JWT signature")
+    except jwt.exceptions.InvalidTokenError as e:
+        raise ValueError(f"Invalid JWT token: {str(e)}")
     except Exception as e:
         raise ValueError(f"Error decoding JWT token: {str(e)}")

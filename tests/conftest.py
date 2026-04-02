@@ -12,6 +12,9 @@ if environ.get('DATA_REGISTRY_TEST_DB_CONNECTION'):
 else:
     environ['DATA_REGISTRY_DB_CONNECTION'] = 'mysql+pymysql://dataregistry:dataregistry@127.0.0.1:3307/dataregistry'
 
+if not environ.get('JWT_SECRET'):
+    environ['JWT_SECRET'] = 'test_secret'
+
 from dataregistry.api.db import DataRegistryReadWriteDB
 
 from dataregistry.server import app

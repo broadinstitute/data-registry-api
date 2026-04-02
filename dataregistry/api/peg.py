@@ -302,7 +302,12 @@ async def upload_peg_matrix(study_id: UUID, file: UploadFile = File(...), user: 
     study = query.get_peg_study(engine, study_id)
     if not study:
         raise fastapi.HTTPException(status_code=404, detail="Study not found")
-    
+
+    if not (study['created_by'] == user.user_name or check_review_permissions(user)):
+        raise fastapi.HTTPException(status_code=403, detail="You can only upload files to studies you created")
+
+    _validate_filename(file.filename)
+
     # Read and validate file
     try:
         contents = await file.read()
@@ -346,11 +351,16 @@ async def upload_peg_metadata(study_id: UUID, file: UploadFile = File(...), user
     study = query.get_peg_study(engine, study_id)
     if not study:
         raise fastapi.HTTPException(status_code=404, detail="Study not found")
-    
+
+    if not (study['created_by'] == user.user_name or check_review_permissions(user)):
+        raise fastapi.HTTPException(status_code=403, detail="You can only upload files to studies you created")
+
+    _validate_filename(file.filename)
+
     # Read and validate file
     try:
         contents = await file.read()
-        
+
         # Only accept XLSX files
         if not file.filename.endswith('.xlsx'):
             raise fastapi.HTTPException(
@@ -420,6 +430,11 @@ async def upload_peg_metadata(study_id: UUID, file: UploadFile = File(...), user
 @router.get("/peg/studies/{study_id}/files")
 async def get_peg_files(study_id: UUID, user: User = Depends(get_peg_user)):
     """Get all files for a PEG study"""
+    study = query.get_peg_study(engine, study_id)
+    if not study:
+        raise fastapi.HTTPException(status_code=404, detail="Study not found")
+    if not (study['created_by'] == user.user_name or check_review_permissions(user)):
+        raise fastapi.HTTPException(status_code=403, detail="You can only view files for studies you created")
     files = query.get_peg_files(engine, study_id)
     return files
 
@@ -432,6 +447,13 @@ async def download_peg_file(file_id: UUID, user: User = Depends(get_peg_user)):
         file_info = query.get_peg_file(engine, file_id)
         if not file_info:
             raise fastapi.HTTPException(status_code=404, detail="File not found")
+
+        # Check ownership via parent study
+        study = query.get_peg_study(engine, file_info['study_id'])
+        if not study:
+            raise fastapi.HTTPException(status_code=404, detail="Study not found")
+        if not (study['created_by'] == user.user_name or check_review_permissions(user)):
+            raise fastapi.HTTPException(status_code=403, detail="You can only download files from studies you created")
 
         # Get S3 path and create presigned URL
         s3_full_path = file_info['file_path']
@@ -452,5 +474,13 @@ async def download_peg_file(file_id: UUID, user: User = Depends(get_peg_user)):
 @router.delete("/peg/files/{file_id}")
 async def delete_peg_file(file_id: UUID, user: User = Depends(get_peg_user)):
     """Delete a PEG file"""
+    file_info = query.get_peg_file(engine, file_id)
+    if not file_info:
+        raise fastapi.HTTPException(status_code=404, detail="File not found")
+    study = query.get_peg_study(engine, file_info['study_id'])
+    if not study:
+        raise fastapi.HTTPException(status_code=404, detail="Study not found")
+    if not (study['created_by'] == user.user_name or check_review_permissions(user)):
+        raise fastapi.HTTPException(status_code=403, detail="You can only delete files from studies you created")
     query.delete_peg_file(engine, file_id)
     return {"message": "PEG file deleted successfully"}
