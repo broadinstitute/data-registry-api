@@ -283,7 +283,7 @@ def check_hermes_admin_perms(user):
 @router.post("/start-aggregator")
 async def start_aggregator(req: StartAggregatorRequest, authorization: Optional[str] = Header(None),
                            user: Optional[User] = Depends(get_current_user_quiet)):
-    if authorization == AGGREGATOR_API_SECRET or (user and VIEW_ALL_ROLES.intersection(user.roles)):
+    if (AGGREGATOR_API_SECRET and authorization == AGGREGATOR_API_SECRET) or (user and VIEW_ALL_ROLES.intersection(user.roles)):
         job_id = batch.submit_aggregator_job(req.branch, req.method, req.args)
         return {"job_id": job_id}
     else:
@@ -570,7 +570,12 @@ async def get_s3_file_name_and_obj(s3_path):
     return file_name, obj
 
 @router.get("/hermes-ma/results/{ma_id}")
-async def stream_ma(ma_id: str):
+async def stream_ma(ma_id: UUID, user: User = Depends(get_current_user)):
+    ma = query.get_meta_analysis(engine, ma_id)
+    if not ma:
+        raise fastapi.HTTPException(status_code=404, detail="Meta-analysis not found")
+    if not VIEW_ALL_ROLES.intersection(user.roles) and ma.created_by != user.user_name:
+        raise fastapi.HTTPException(status_code=403, detail="You don't have permission to access this meta-analysis")
     name, obj = await get_s3_file_name_and_obj(f"s3://{s3.BASE_BUCKET}/hermes/ma-results/{ma_id}/combined_data.csv.gz")
 
     def generator():

@@ -1,6 +1,7 @@
 """MSKKP GWAS Upload API endpoints"""
 import io
 import json
+import re
 from difflib import SequenceMatcher
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -70,6 +71,17 @@ COLUMN_ALIASES = {
 }
 
 SIMILARITY_THRESHOLD = 0.6
+
+_SAFE_PATH_COMPONENT = re.compile(r'^[\w\-\.]+$')
+
+
+def _validate_s3_component(value: str, field: str) -> None:
+    """Reject values that could escape the intended S3 prefix."""
+    if not value or not _SAFE_PATH_COMPONENT.match(value) or '..' in value:
+        raise fastapi.HTTPException(
+            status_code=400,
+            detail=f"Invalid {field}: must contain only alphanumeric characters, hyphens, underscores, or single dots"
+        )
 
 
 def suggest_column_map(columns: List[str], target_fields: List[str], aliases: Dict[str, str] = None) -> Dict[str, str]:
@@ -230,10 +242,12 @@ async def get_mskkp_dataset_presigned_url(dataset_id: str, filename: str):
         )
     
     dataset_name = dataset['name']
-    
+    _validate_s3_component(dataset_name, 'dataset name')
+    _validate_s3_component(filename, 'filename')
+
     # Construct S3 path
     s3_path = f"mskkp/{dataset_name}/{filename}"
-    
+
     # Generate presigned URL for direct S3 upload
     return s3.generate_presigned_url_with_path(s3_path)
 
@@ -250,8 +264,10 @@ async def finalize_mskkp_dataset_upload(dataset_id: str, filename: str = Body(..
         )
     
     dataset_name = dataset['name']
+    _validate_s3_component(dataset_name, 'dataset name')
+    _validate_s3_component(filename, 'filename')
     s3_path = f"mskkp/{dataset_name}/{filename}"
-    
+
     try:
         # Verify file exists in S3 and get size
         s3_client = boto3.client('s3', region_name=s3.S3_REGION)
@@ -305,10 +321,12 @@ async def get_mskkp_presigned_url(request: Request):
     
     if not filename or not dataset_name:
         raise fastapi.HTTPException(
-            status_code=400, 
+            status_code=400,
             detail="Filename and Dataset headers are required"
         )
-    
+    _validate_s3_component(filename, 'filename')
+    _validate_s3_component(dataset_name, 'dataset name')
+
     # Create S3 path: mskkp/{dataset_name}/{filename}
     s3_path = f"mskkp/{dataset_name}/{filename}"
     
@@ -321,7 +339,9 @@ async def validate_mskkp_dataset(request: MSKKPDatasetRequest):
     dataset_name = request.dataset_name
     filename = request.file_name
     metadata = request.metadata
-    
+    _validate_s3_component(dataset_name, 'dataset name')
+    _validate_s3_component(filename, 'filename')
+
     # Construct S3 path
     s3_path = f"mskkp/{dataset_name}/{filename}"
     

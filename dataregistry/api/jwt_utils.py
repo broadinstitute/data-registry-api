@@ -5,7 +5,9 @@ import jwt
 from dataregistry.api.config import get_sensitive_config
 from dataregistry.api.model import User
 
-SECRET_KEY = os.getenv('JWT_SECRET') or (get_sensitive_config() or {}).get('jwtSecret', 'test_secret')
+SECRET_KEY = os.getenv('JWT_SECRET') or (get_sensitive_config() or {}).get('jwtSecret')
+if not SECRET_KEY:
+    raise RuntimeError("JWT secret is not configured. Set the JWT_SECRET environment variable or configure jwtSecret in AWS Secrets Manager.")
 ALGORITHM = "HS256"
 
 

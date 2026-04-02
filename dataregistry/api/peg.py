@@ -1,5 +1,6 @@
 import io
 import os
+import re
 from datetime import datetime
 from typing import Dict, List, Optional
 from uuid import UUID
@@ -20,6 +21,18 @@ router = fastapi.APIRouter()
 engine = DataRegistryReadWriteDB().get_engine()
 
 USER_SERVICE_URL = os.getenv('USER_SERVICE_URL', 'https://users.kpndataregistry.org')
+
+
+_SAFE_FILENAME = re.compile(r'^[\w\-\.]+$')
+
+
+def _validate_filename(filename: str) -> None:
+    """Reject filenames that could escape the intended S3 prefix."""
+    if not filename or not _SAFE_FILENAME.match(filename) or '..' in filename:
+        raise fastapi.HTTPException(
+            status_code=400,
+            detail="Invalid filename: must contain only alphanumeric characters, hyphens, underscores, or single dots"
+        )
 
 
 def check_review_permissions(user: User):
@@ -234,13 +247,18 @@ async def delete_peg_study(study_id: UUID, user: User = Depends(get_peg_user)):
 
 
 @router.post("/peg/studies/{study_id}/peg-list")
-async def upload_peg_list(study_id: UUID, file: UploadFile = File(...)):
+async def upload_peg_list(study_id: UUID, file: UploadFile = File(...), user: User = Depends(get_peg_user)):
     """Upload PEG list TSV file"""
     # Verify study exists
     study = query.get_peg_study(engine, study_id)
     if not study:
         raise fastapi.HTTPException(status_code=404, detail="Study not found")
-    
+
+    if not (study['created_by'] == user.user_name or check_review_permissions(user)):
+        raise fastapi.HTTPException(status_code=403, detail="You can only upload files to studies you created")
+
+    _validate_filename(file.filename)
+
     # Read and validate file
     try:
         contents = await file.read()
@@ -278,7 +296,7 @@ async def upload_peg_list(study_id: UUID, file: UploadFile = File(...)):
 
 
 @router.post("/peg/studies/{study_id}/peg-matrix")
-async def upload_peg_matrix(study_id: UUID, file: UploadFile = File(...)):
+async def upload_peg_matrix(study_id: UUID, file: UploadFile = File(...), user: User = Depends(get_peg_user)):
     """Upload PEG matrix TSV file"""
     # Verify study exists
     study = query.get_peg_study(engine, study_id)
@@ -322,7 +340,7 @@ async def upload_peg_matrix(study_id: UUID, file: UploadFile = File(...)):
 
 
 @router.post("/peg/studies/{study_id}/peg-metadata")
-async def upload_peg_metadata(study_id: UUID, file: UploadFile = File(...)):
+async def upload_peg_metadata(study_id: UUID, file: UploadFile = File(...), user: User = Depends(get_peg_user)):
     """Upload PEG metadata XLSX file with multiple sheets"""
     # Verify study exists
     study = query.get_peg_study(engine, study_id)
@@ -400,14 +418,14 @@ async def upload_peg_metadata(study_id: UUID, file: UploadFile = File(...)):
 
 
 @router.get("/peg/studies/{study_id}/files")
-async def get_peg_files(study_id: UUID):
+async def get_peg_files(study_id: UUID, user: User = Depends(get_peg_user)):
     """Get all files for a PEG study"""
     files = query.get_peg_files(engine, study_id)
     return files
 
 
 @router.get("/peg/files/{file_id}")
-async def download_peg_file(file_id: UUID):
+async def download_peg_file(file_id: UUID, user: User = Depends(get_peg_user)):
     """Get download info for a PEG file (returns presigned S3 URL)"""
     try:
         # Get file info
@@ -432,7 +450,7 @@ async def download_peg_file(file_id: UUID):
 
 
 @router.delete("/peg/files/{file_id}")
-async def delete_peg_file(file_id: UUID):
+async def delete_peg_file(file_id: UUID, user: User = Depends(get_peg_user)):
     """Delete a PEG file"""
     query.delete_peg_file(engine, file_id)
     return {"message": "PEG file deleted successfully"}

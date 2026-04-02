@@ -401,11 +401,8 @@ def get_data_set_owner(engine, ds_id):
 
 def retrieve_meta_data_mapping(engine, user: str) -> [dict]:
     with engine.connect() as conn:
-        if user == 'dhite@broadinstitute.org':
-            results = conn.execute(text("""select dataset, metadata from file_uploads"""))
-        else:
-            results = conn.execute(text("""select dataset, metadata from file_uploads where uploaded_by = :user_name
-            """), {'user_name': user})
+        results = conn.execute(text("""select dataset, metadata from file_uploads where uploaded_by = :user_name
+        """), {'user_name': user})
 
         return {row.dataset: json.loads(row.metadata) for row in results}
 
@@ -779,6 +776,8 @@ def get_meta_analysis(engine, ma_id: uuid.UUID) -> SavedMetaAnalysisRequest:
             join file_uploads fu on fu.id = mad.dataset_id where ma.id = :id group by ma.id
         """
         result = conn.execute(text(sql), {'id': str(ma_id).replace('-', '')}).mappings().first()
+        if result is None:
+            return None
         return SavedMetaAnalysisRequest(
             id=result['id'],
             name=result['name'],
