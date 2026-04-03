@@ -67,6 +67,9 @@ class AncovaTableRequest(BaseModel):
 class QualityControlRequest(BaseModel):
     session_id: str
     n_mass_measurements: int = Field(default=5, ge=1, le=15)
+    # QC-specific hour range from the frontend slider (overrides session hour_range)
+    min_hour: Optional[float] = None
+    max_hour: Optional[float] = None
 
 
 class PowerCalcRequest(BaseModel):

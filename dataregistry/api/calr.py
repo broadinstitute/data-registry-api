@@ -1062,18 +1062,49 @@ async def run_quality_control(
             raise fastapi.HTTPException(status_code=422, detail=f"Required column '{col}' not found in standard file")
 
     groups = session['groups']
+    subjects = session['subjects']
     subject_to_group = {
         s['subject']: groups[s['groupIndex']]['name']
-        for s in session['subjects']
+        for s in subjects
     }
     df['group'] = df['subject.id'].astype(str).map(subject_to_group)
     df = df[df['group'].notna()]
 
-    start_hour, end_hour = session['hour_range']
-    df = df[(df['exp.hour'] >= start_hour) & (df['exp.hour'] <= end_hour)]
+    # Use QC-specific hour range from the request if provided; fall back to session range.
+    # Mirrors R: qc_x1/qc_x2 from the QC slider, independent of the main xranges.
+    session_start, session_end = session['hour_range']
+    start_hour = request.min_hour if request.min_hour is not None else session_start
+    end_hour = request.max_hour if request.max_hour is not None else session_end
+
+    # R: qc_dataFrame uses >= x1 and <= x2, then modified_df1 further filters < x2.
+    # Net result: start_hour <= exp.hour < end_hour (strict upper bound).
+    df = df[(df['exp.hour'] >= start_hour) & (df['exp.hour'] < end_hour)]
 
     if df.empty:
         raise fastapi.HTTPException(status_code=422, detail="No data remaining after filters")
+
+    # Apply subject exclusions — mirrors R's qc_dataFrame exclusion loop.
+    # Rows where the subject is excluded and exp.hour >= exc_hour are dropped.
+    import pandas as pd
+    for s in subjects:
+        exc_hour = s.get('exc_hour')
+        if exc_hour is not None:
+            subj_id = str(s['subject'])
+            mask = (df['subject.id'].astype(str) == subj_id) & (df['exp.hour'] >= exc_hour)
+            df = df[~mask]
+
+    if df.empty:
+        raise fastapi.HTTPException(status_code=422, detail="No data remaining after exclusions")
+
+    # fixFeed equivalent — mirrors R's fixFeed()/setZero().
+    # Subtracts each accumulated column's first value per subject so they start at 0
+    # within the QC window, preventing pre-window accumulation from inflating totals.
+    for acc_col in ('feed.acc', 'ee.acc', 'drink.acc', 'wheel.acc'):
+        if acc_col in df.columns:
+            df = df.copy()
+            df[acc_col] = df.groupby('subject.id')[acc_col].transform(
+                lambda x: x - x.dropna().iloc[0] if x.dropna().size > 0 else x
+            )
 
     # Build per-group caloric density map (kcal/g) — mirrors R's cal1/cal2/... parameters
     group_diet_kcal = {g['name']: g.get('diet_kcal') for g in groups}
