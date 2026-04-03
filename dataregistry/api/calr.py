@@ -1075,8 +1075,11 @@ async def run_quality_control(
     if df.empty:
         raise fastapi.HTTPException(status_code=422, detail="No data remaining after filters")
 
+    # Build per-group caloric density map (kcal/g) — mirrors R's cal1/cal2/... parameters
+    group_diet_kcal = {g['name']: g.get('diet_kcal') for g in groups}
+
     try:
-        result = quality_control(df, request.n_mass_measurements)
+        result = quality_control(df, request.n_mass_measurements, group_diet_kcal)
     except Exception as e:
         raise fastapi.HTTPException(status_code=500, detail=f"QC analysis failed: {str(e)}")
 

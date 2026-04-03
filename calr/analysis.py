@@ -112,31 +112,60 @@ def filter_by_time_of_day(
 def quality_control(
     df: pd.DataFrame,
     n_mass_measurements: int = 5,
+    group_diet_kcal: dict = None,
 ) -> dict:
     """
-    Port of the CalR quality control analysis.
+    Port of the CalR quality control analysis (revperAve / modified_df1 pipeline).
 
-    For each subject, computes:
-      - mass_delta: average of last N body mass readings minus average of first N
-      - total_eb:   total cumulative energy balance (total feed - total EE) over
-                    the time window
+    Matches the R implementation exactly:
+      1. Apply caloric density conversion to feed and feed.acc per group
+         (group_diet_kcal maps group name → kcal per gram of food)
+      2. Compute bin = 60 / modal_measurement_interval_minutes
+         (converts cumulative EE from sum-of-rates to actual kcal)
+      3. For each subject:
+           - mass_delta: avg(last N mass rows) - avg(first N mass rows)
+           - total_eb:   last feed.acc value - last ee.acc value / bin
+             (mirrors R's l.eb.acc.x = last value of feed.acc - ee.acc/bin)
 
     Then fits per-group and overall linear regressions of mass_delta (x) vs
-    total_eb (y). A well-controlled experiment should show a strong positive
-    correlation — subjects that lost mass should have a negative energy balance.
+    total_eb (y).
 
-    Expects df to have columns: subject.id, group, subject.mass, feed, ee,
-    ordered by time (exp.hour ascending).
+    Expects df to have columns: subject.id, group, subject.mass, feed, feed.acc,
+    ee, ee.acc, exp.minute — sorted by time within each subject.
 
     Returns:
         subjects            - per-subject [subject_id, group, mass_delta, total_eb]
         group_regressions   - per-group {slope, intercept, r_squared, n}
         overall_regression  - {slope, intercept, r_squared, n}
     """
+    df = df.copy()
+
+    # Step 1: caloric density conversion (mirrors R: feed *= cal_i, feed.acc *= cal_i)
+    if group_diet_kcal:
+        for group_name, kcal_per_g in group_diet_kcal.items():
+            if kcal_per_g:
+                mask = df['group'] == group_name
+                df.loc[mask, 'feed'] = df.loc[mask, 'feed'] * kcal_per_g
+                if 'feed.acc' in df.columns:
+                    df.loc[mask, 'feed.acc'] = df.loc[mask, 'feed.acc'] * kcal_per_g
+
+    # Step 2: bin = 60 / modal measurement interval in minutes
+    # Mirrors R: binDf <- diff(my.table$minute)/60; bin <- 60/getmode(binDf)
+    sort_col = 'exp.minute' if 'exp.minute' in df.columns else 'exp.hour'
+    minute_diffs = df.groupby('subject.id')[sort_col].diff().dropna()
+    if not minute_diffs.empty:
+        modal_interval = float(minute_diffs.mode().iloc[0])
+        # exp.minute is in minutes; exp.hour is in hours — normalise to minutes
+        if sort_col == 'exp.hour':
+            modal_interval *= 60
+    else:
+        modal_interval = 60.0  # assume hourly if no diff available
+    bin_factor = 60.0 / modal_interval  # intervals per hour
+
     subject_rows = []
 
     for subject_id, sdf in df.groupby('subject.id'):
-        sdf = sdf.sort_values('exp.hour')
+        sdf = sdf.sort_values(sort_col)
         group = sdf['group'].iloc[0]
 
         n = min(n_mass_measurements, len(sdf))
@@ -144,9 +173,13 @@ def quality_control(
         last_mass = float(sdf['subject.mass'].iloc[-n:].mean())
         mass_delta = round(last_mass - first_mass, 4)
 
-        total_feed = float(sdf['feed'].sum())
-        total_ee = float(sdf['ee'].sum())
-        total_eb = round(total_feed - total_ee, 4)
+        # eb.acc = feed.acc - ee.acc/bin  (last cumulative value)
+        # Mirrors R: my.table$ee.acc <- my.table$ee.acc/bin
+        #            my.table$eb.acc  <- my.table$feed.acc - my.table$ee.acc
+        #            l.eb.acc.x = tail(eb.acc, 1)
+        feed_acc_last = float(sdf['feed.acc'].iloc[-1]) if 'feed.acc' in sdf.columns else float(sdf['feed'].sum())
+        ee_acc_last = float(sdf['ee.acc'].iloc[-1]) if 'ee.acc' in sdf.columns else float(sdf['ee'].sum())
+        total_eb = round(feed_acc_last - ee_acc_last / bin_factor, 4)
 
         subject_rows.append({
             'subject_id': str(subject_id),
