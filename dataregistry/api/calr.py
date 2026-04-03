@@ -1096,12 +1096,17 @@ async def run_quality_control(
     if df.empty:
         raise fastapi.HTTPException(status_code=422, detail="No data remaining after exclusions")
 
+    # Mirrors retrofitCalR(): add ee.acc as cumulative EE when absent.
+    # fixFeed will then zero-base it so the window starts at 0 — same as R.
+    df = df.copy()
+    if 'ee.acc' not in df.columns and 'ee' in df.columns:
+        df['ee.acc'] = df.groupby('subject.id')['ee'].transform('cumsum')
+
     # fixFeed equivalent — mirrors R's fixFeed()/setZero().
     # Subtracts each accumulated column's first value per subject so they start at 0
     # within the QC window, preventing pre-window accumulation from inflating totals.
     for acc_col in ('feed.acc', 'ee.acc', 'drink.acc', 'wheel.acc'):
         if acc_col in df.columns:
-            df = df.copy()
             df[acc_col] = df.groupby('subject.id')[acc_col].transform(
                 lambda x: x - x.dropna().iloc[0] if x.dropna().size > 0 else x
             )

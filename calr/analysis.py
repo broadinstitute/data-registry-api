@@ -184,12 +184,20 @@ def quality_control(
     modal_interval = _modal_interval_minutes(df)
     bin_factor = 60.0 / modal_interval  # intervals per hour
 
-    sort_col = 'exp.minute' if 'exp.minute' in df.columns else 'exp.hour'
+    # Determine sort column: prefer exp.minute (numeric, unambiguous), then Date.Time
+    # (stable chronological order), then exp.hour.  When exp.hour is an integer, many
+    # rows share the same value and an unstable sort scrambles them within the hour.
+    if 'exp.minute' in df.columns:
+        sort_col = 'exp.minute'
+    elif 'Date.Time' in df.columns:
+        sort_col = 'Date.Time'
+    else:
+        sort_col = 'exp.hour'
 
     subject_rows = []
 
     for subject_id, sdf in df.groupby('subject.id'):
-        sdf = sdf.sort_values(sort_col)
+        sdf = sdf.sort_values(sort_col, kind='stable')
         group = sdf['group'].iloc[0]
 
         n = min(n_mass_measurements, len(sdf))
