@@ -151,16 +151,40 @@ def quality_control(
 
     # Step 2: bin = 60 / modal measurement interval in minutes
     # Mirrors R: binDf <- diff(my.table$minute)/60; bin <- 60/getmode(binDf)
-    sort_col = 'exp.minute' if 'exp.minute' in df.columns else 'exp.hour'
-    minute_diffs = df.groupby('subject.id')[sort_col].diff().dropna()
-    if not minute_diffs.empty:
-        modal_interval = float(minute_diffs.mode().iloc[0])
-        # exp.minute is in minutes; exp.hour is in hours — normalise to minutes
-        if sort_col == 'exp.hour':
-            modal_interval *= 60
-    else:
-        modal_interval = 60.0  # assume hourly if no diff available
+    # Cascade: exp.minute → Date.Time → exp.hour (non-zero diffs only) → default 60 min
+    def _modal_interval_minutes(df: pd.DataFrame) -> float:
+        # exp.minute: reliable when present and has variation
+        if 'exp.minute' in df.columns:
+            diffs = df.groupby('subject.id')['exp.minute'].diff().dropna()
+            nonzero = diffs[diffs > 0]
+            if not nonzero.empty:
+                return float(nonzero.mode().iloc[0])
+
+        # Date.Time: parse timestamps and diff in minutes
+        if 'Date.Time' in df.columns:
+            try:
+                times = pd.to_datetime(df['Date.Time'])
+                diffs = times.groupby(df['subject.id']).diff().dropna()
+                diffs_min = diffs.dt.total_seconds() / 60
+                nonzero = diffs_min[diffs_min > 0]
+                if not nonzero.empty:
+                    return float(nonzero.mode().iloc[0])
+            except Exception:
+                pass
+
+        # exp.hour: integer or decimal — only non-zero diffs, convert to minutes
+        if 'exp.hour' in df.columns:
+            diffs = df.groupby('subject.id')['exp.hour'].diff().dropna()
+            nonzero = diffs[diffs > 0]
+            if not nonzero.empty:
+                return float(nonzero.mode().iloc[0]) * 60
+
+        return 60.0  # fallback: assume hourly measurements
+
+    modal_interval = _modal_interval_minutes(df)
     bin_factor = 60.0 / modal_interval  # intervals per hour
+
+    sort_col = 'exp.minute' if 'exp.minute' in df.columns else 'exp.hour'
 
     subject_rows = []
 
