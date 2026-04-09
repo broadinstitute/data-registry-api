@@ -133,9 +133,11 @@ class TestSubjectMassFallbacks:
         assert b1_rows['subject.fat.mass'].isna().all()
 
     def test_existing_mass_value_not_overwritten(self):
-        df = _df()  # subject.mass already present
+        df = _df()
+        df.loc[df['subject.id'] == 'A1', 'subject.mass'] = 99.0  # distinct from session total_mass=25.0
         result = _enrich_df(df, _session())
-        assert result.loc[result['subject.id'] == 'A1', 'subject.mass'].iloc[0] == 25.0
+        # Existing value (99.0) must be preserved; session's 25.0 must not overwrite it
+        assert result.loc[result['subject.id'] == 'A1', 'subject.mass'].iloc[0] == 99.0
 
 
 class TestGroupMetadata:
@@ -197,7 +199,9 @@ class TestAccumulatorFill:
     def test_eb_computed_as_feed_minus_ee(self):
         result = _enrich_df(_df(), _session())
         a1 = result[result['subject.id'] == 'A1'].iloc[0]
-        assert pytest.approx(a1['eb']) == a1['feed'] - a1['ee']
+        # GroupA has diet_kcal=3.5, so feed is 0.5*3.5=1.75; ee is unchanged at 2.0
+        expected_eb = 0.5 * 3.5 - 2.0
+        assert pytest.approx(a1['eb']) == expected_eb
 
     def test_eb_acc_computed_as_feed_acc_minus_ee_acc(self):
         result = _enrich_df(_df(), _session())

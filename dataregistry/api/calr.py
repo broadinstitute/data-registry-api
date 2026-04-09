@@ -920,7 +920,10 @@ def _enrich_df(df: 'pd.DataFrame', session: dict) -> 'pd.DataFrame':
     subjects = session.get('subjects', [])
 
     # ── 1. Numeric parsing ────────────────────────────────────────────────────
-    df['exp.minute'] = pd.to_numeric(df.get('exp.minute'), errors='coerce')
+    if 'exp.minute' in df.columns:
+        df['exp.minute'] = pd.to_numeric(df['exp.minute'], errors='coerce')
+    else:
+        df['exp.minute'] = np.nan
     df['hour'] = df['exp.minute'] / 60
     df['exp.hour'] = df['hour']
 
@@ -985,7 +988,7 @@ def _enrich_df(df: 'pd.DataFrame', session: dict) -> 'pd.DataFrame':
     # ── 6. Kcal conversion ────────────────────────────────────────────────────
     for g in groups:
         kcal = g.get('diet_kcal')
-        if kcal:
+        if kcal is not None:
             mask = df['group'] == g['name']
             if 'feed' in df.columns:
                 df.loc[mask, 'feed'] = (
