@@ -1091,8 +1091,6 @@ async def get_enriched_session_data(
     require a valid token from the owning user (enforced by
     _load_session_and_standard_df).
     """
-    import pandas as pd
-
     session, df = _load_session_and_standard_df(session_id, user.user_name if user else None)
     enriched = _enrich_df(df, session)
 
@@ -1100,8 +1098,8 @@ async def get_enriched_session_data(
     enriched.to_csv(csv_buffer, index=False)
     csv_bytes = csv_buffer.getvalue().encode('utf-8')
 
-    return StreamingResponse(
-        io.BytesIO(csv_bytes),
+    return fastapi.Response(
+        content=csv_bytes,
         media_type='text/csv',
         headers={
             'Content-Disposition': f'attachment; filename="enriched_{session_id}.csv"',

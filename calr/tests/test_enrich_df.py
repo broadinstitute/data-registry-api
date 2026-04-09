@@ -13,7 +13,6 @@ Verifies that each enrichment step matches the JS processDetail pipeline:
 """
 
 import io
-import json
 import os
 import sys
 from unittest.mock import patch
@@ -243,8 +242,7 @@ class TestEnrichedEndpoint:
         from fastapi.testclient import TestClient
         client = TestClient(app)
 
-        # Adjust the URL prefix to match what main.py registers — check with:
-        # grep include_router dataregistry/main.py
+        # URL prefix matches the calr router registration in dataregistry/server.py
         response = client.get('/api/calr/sessions/test-session-id/enriched')
 
         assert response.status_code == 200
