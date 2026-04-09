@@ -26,6 +26,7 @@ import json
 import os
 import sys
 import tempfile
+import threading
 import time
 from datetime import datetime, timezone
 
@@ -39,7 +40,8 @@ import click
 VALID_CHR = {str(i) for i in range(1, 24)} | {"X"}
 ALLELE_CHARS = set("ACTGactg-N")
 MAX_ERROR_SAMPLES = 100
-PROGRESS_INTERVAL = 1000  # rows between S3 progress writes
+PROGRESS_INTERVAL = 1000          # rows between S3 progress writes
+DOWNLOAD_PROGRESS_INTERVAL = 10 * 1024 * 1024  # bytes between S3 progress writes during download (10 MB)
 
 
 # ---------------------------------------------------------------------------
@@ -159,6 +161,8 @@ FIELD_VALIDATORS = {
 class ProgressTracker:
     """Accumulates validation state and writes periodic progress to S3."""
 
+    BACKGROUND_WRITE_INTERVAL = 5  # seconds between background S3 progress flushes
+
     def __init__(self, s3_client, bucket: str, progress_key: str, total_rows: int,
                  error_file_path: str):
         self._s3 = s3_client
@@ -174,6 +178,28 @@ class ProgressTracker:
         self.error_samples: list[dict] = []
         self.started_at = datetime.now(timezone.utc).isoformat()
         self.status = "running"
+        self.download_bytes = 0
+        self.download_total = 0
+        self._dirty = False
+        self._lock = threading.Lock()
+        self._stop_event = threading.Event()
+        self._writer_thread = threading.Thread(target=self._background_writer, daemon=True)
+        self._writer_thread.start()
+
+    def _background_writer(self):
+        """Flush dirty progress to S3 every BACKGROUND_WRITE_INTERVAL seconds."""
+        while not self._stop_event.wait(timeout=self.BACKGROUND_WRITE_INTERVAL):
+            with self._lock:
+                if not self._dirty:
+                    continue
+                self._dirty = False
+                payload = self._build_payload()
+            self._put_progress(payload)  # S3 call outside the lock
+
+    def mark_dirty(self):
+        """Signal that progress state has changed and should be flushed on the next interval."""
+        with self._lock:
+            self._dirty = True
 
     def record_error(self, row_num: int, column: str, value: str, error: str):
         self.errors_found += 1
@@ -190,7 +216,7 @@ class ProgressTracker:
 
     def _build_payload(self) -> dict:
         pct = (self.rows_processed / self.total_rows * 100) if self.total_rows > 0 else 0.0
-        return {
+        payload = {
             "status": self.status,
             "total_rows": self.total_rows,
             "rows_processed": self.rows_processed,
@@ -200,17 +226,30 @@ class ProgressTracker:
             "started_at": self.started_at,
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
+        if self.status == "downloading":
+            payload["download_bytes"] = self.download_bytes
+            payload["download_total"] = self.download_total
+        return payload
 
-    def write_progress(self):
-        payload = json.dumps(self._build_payload())
+    def _put_progress(self, payload: dict):
+        """Write a progress payload to S3 (blocking). Always called outside the lock."""
         self._s3.put_object(
             Bucket=self._bucket,
             Key=self._progress_key,
-            Body=payload.encode("utf-8"),
+            Body=json.dumps(payload).encode("utf-8"),
             ContentType="application/json",
         )
 
+    def write_progress(self):
+        """Synchronously write progress to S3. Use for explicit status transitions."""
+        with self._lock:
+            self._dirty = False
+            payload = self._build_payload()
+        self._put_progress(payload)
+
     def finalize(self, status: str = "completed"):
+        self._stop_event.set()
+        self._writer_thread.join()
         self.status = status
         self._error_file.close()
         if self.errors_found > 0:
@@ -288,7 +327,7 @@ def validate_file(file_path: str, column_mapping: dict, tracker: ProgressTracker
             tracker.rows_processed += 1
 
             if tracker.rows_processed % PROGRESS_INTERVAL == 0:
-                tracker.write_progress()
+                tracker.mark_dirty()
 
     tracker.finalize("completed")
 
@@ -316,18 +355,35 @@ def main(s3_path: str, column_mapping: str, progress_s3_key: str, bucket: str, m
     # Download file to temp directory
     with tempfile.TemporaryDirectory() as tmpdir:
         local_file = os.path.join(tmpdir, os.path.basename(s3_path))
-        print(f"Downloading s3://{bucket}/{s3_path} -> {local_file}")
-        s3_client.download_file(bucket, s3_path, local_file)
+        error_file_path = os.path.join(tmpdir, "errors.tsv")
 
-        # Count total rows for progress tracking
+        # Create tracker early so we can report status during download and count phases
+        tracker = ProgressTracker(s3_client, bucket, progress_s3_key, 0, error_file_path)
+
+        # Phase 1: download with periodic progress updates
+        file_size = s3_client.head_object(Bucket=bucket, Key=s3_path)["ContentLength"]
+        tracker.download_total = file_size
+        tracker.status = "downloading"
+        tracker.write_progress()
+        print(f"Downloading s3://{bucket}/{s3_path} -> {local_file} ({file_size / (1024*1024):.1f} MB)")
+
+        def _download_callback(bytes_transferred):
+            tracker.download_bytes += bytes_transferred
+            tracker.mark_dirty()
+
+        s3_client.download_file(bucket, s3_path, local_file, Callback=_download_callback)
+
+        # Phase 2: count rows
+        tracker.status = "counting"
+        tracker.write_progress()
         print("Counting rows...")
         total_rows = count_lines(local_file)
+        tracker.total_rows = total_rows
         print(f"Total data rows: {total_rows}")
 
-        # Set up progress tracker and run validation
-        error_file_path = os.path.join(tmpdir, "errors.tsv")
-        tracker = ProgressTracker(s3_client, bucket, progress_s3_key, total_rows, error_file_path)
-        tracker.write_progress()  # initial "running" status
+        # Phase 3: validate
+        tracker.status = "running"
+        tracker.write_progress()
 
         try:
             validate_file(local_file, col_map, tracker, max_n=max_n)

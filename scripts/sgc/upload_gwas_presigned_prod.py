@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Upload GWAS file via presigned URL (3-step process):
+Upload GWAS file to production via presigned URL (3-step process):
   1. Request presigned URL from /api/sgc/gwas-upload-url
   2. Upload file directly to S3 using presigned URL
   3. Confirm upload via /api/sgc/confirm-gwas-upload
@@ -36,20 +36,11 @@ Metadata JSON file:
       "assoc_test_model_and_settings": "mixed model logistic"
     }
 
-Usage examples:
-  # QA
-  ./upload_gwas_presigned.py \
-    --env qa \
-    --dataset test_presigned \
-    --metadata /path/to/metadata.json \
-    /path/to/gwas_file.tsv.gz
-
-  # PRD (file can have any extension, will be validated as tab-delimited)
-  ./upload_gwas_presigned.py \
-    --env prd \
+Usage example:
+  ./upload_gwas_presigned_prod.py \
     --dataset my_dataset \
     --metadata metadata.json \
-    file.txt
+    file.tsv.gz
 """
 
 import argparse
@@ -69,6 +60,11 @@ REQUIRED_COL_FIELDS = [
     'col_chromosome', 'col_position', 'col_effect_allele', 'col_non_effect_allele',
     'col_beta', 'col_se', 'col_pvalue', 'col_effect_allele_freq', 'col_imputation_quality',
 ]
+
+API_BASE = "https://api.kpndataregistry.org"
+UI_BASE = "https://kpndataregistry.org"
+USER_SERVICE_URL = "https://users.kpndataregistry.org"
+AUTH_GROUP = "sgc-prod"
 
 
 class ProgressFileReader:
@@ -96,23 +92,13 @@ class ProgressFileReader:
     def close(self):
         self._pbar.close()
 
-DEFAULT_API_BY_ENV = {
-    "qa": "https://api.kpndataregistry.org:8000",
-    "prd": "https://api.kpndataregistry.org",
-}
-DEFAULT_UI_BY_ENV = {
-    "qa": "https://kpndataregistry.org:8000",
-    "prd": "https://kpndataregistry.org",
-}
-DEFAULT_USER_SERVICE_URL = "https://users.kpndataregistry.org"
 
-
-def login(user_service_url: str, username: str, password: str, group: str = "sgc") -> Optional[str]:
+def login(username: str, password: str) -> Optional[str]:
     """Authenticate and return JWT access token (or None)."""
     try:
         r = requests.post(
-            f"{user_service_url}/api/auth/login/",
-            json={"username": username, "password": password, "group": group},
+            f"{USER_SERVICE_URL}/api/auth/login/",
+            json={"username": username, "password": password, "group": AUTH_GROUP},
             timeout=30,
         )
         if r.status_code == 200:
@@ -139,11 +125,11 @@ def load_credentials() -> Optional[tuple]:
     return None
 
 
-def fetch_valid_sex_values(api_base: str, token: str) -> list:
+def fetch_valid_sex_values(token: str) -> list:
     """Fetch the list of valid sex stratification values from the API."""
     try:
         resp = requests.get(
-            f"{api_base}/api/sgc/gwas-sex-values",
+            f"{API_BASE}/api/sgc/gwas-sex-values",
             headers={"Authorization": f"Bearer {token}"},
             timeout=30,
         )
@@ -154,11 +140,11 @@ def fetch_valid_sex_values(api_base: str, token: str) -> list:
         return []
 
 
-def fetch_valid_ancestries(api_base: str, token: str) -> list:
+def fetch_valid_ancestries(token: str) -> list:
     """Fetch the list of valid ancestry codes from the API."""
     try:
         resp = requests.get(
-            f"{api_base}/api/sgc/gwas-ancestries",
+            f"{API_BASE}/api/sgc/gwas-ancestries",
             headers={"Authorization": f"Bearer {token}"},
             timeout=30,
         )
@@ -169,11 +155,11 @@ def fetch_valid_ancestries(api_base: str, token: str) -> list:
         return []
 
 
-def fetch_valid_phenotypes(api_base: str, token: str) -> set:
+def fetch_valid_phenotypes(token: str) -> set:
     """Fetch the set of valid phenotype codes from the API."""
     try:
         resp = requests.get(
-            f"{api_base}/api/sgc/phenotypes",
+            f"{API_BASE}/api/sgc/phenotypes",
             headers={"Authorization": f"Bearer {token}"},
             timeout=30,
         )
@@ -184,11 +170,11 @@ def fetch_valid_phenotypes(api_base: str, token: str) -> set:
         return set()
 
 
-def lookup_cohort_id(api_base: str, token: str, cohort_name: str) -> Optional[str]:
+def lookup_cohort_id(token: str, cohort_name: str) -> Optional[str]:
     """Look up cohort ID by name from the API."""
     try:
         resp = requests.get(
-            f"{api_base}/api/sgc/cohorts",
+            f"{API_BASE}/api/sgc/cohorts",
             headers={"Authorization": f"Bearer {token}"},
             timeout=30,
         )
@@ -202,12 +188,12 @@ def lookup_cohort_id(api_base: str, token: str, cohort_name: str) -> Optional[st
         return None
 
 
-def check_for_existing_gwas_file(api_base: str, token: str, cohort_id: str,
+def check_for_existing_gwas_file(token: str, cohort_id: str,
                                   dataset: str, phenotype: str, filename: str) -> Optional[Dict]:
     """Return the existing GWAS file record if one matches dataset/phenotype/filename, else None."""
     try:
         resp = requests.get(
-            f"{api_base}/api/sgc/gwas-files/{cohort_id}",
+            f"{API_BASE}/api/sgc/gwas-files/{cohort_id}",
             headers={"Authorization": f"Bearer {token}"},
             timeout=30,
         )
@@ -221,11 +207,11 @@ def check_for_existing_gwas_file(api_base: str, token: str, cohort_id: str,
         return None
 
 
-def fetch_gwas_metadata(api_base: str, token: str, cohort_id: str) -> Optional[Dict]:
+def fetch_gwas_metadata(token: str, cohort_id: str) -> Optional[Dict]:
     """Fetch GWAS metadata for a cohort. Returns None if not saved yet."""
     try:
         resp = requests.get(
-            f"{api_base}/api/sgc/cohorts/{cohort_id}/gwas-metadata",
+            f"{API_BASE}/api/sgc/cohorts/{cohort_id}/gwas-metadata",
             headers={"Authorization": f"Bearer {token}"},
             timeout=30,
         )
@@ -237,11 +223,7 @@ def fetch_gwas_metadata(api_base: str, token: str, cohort_id: str) -> Optional[D
 
 
 def extract_column_mapping(gwas_metadata: Dict) -> Dict[str, str]:
-    """Extract col_* fields from GWAS metadata as the column mapping.
-
-    The metadata dict contains fields like col_chromosome, col_position, etc.
-    whose values are the actual column header names expected in the GWAS file.
-    """
+    """Extract col_* fields from GWAS metadata as the column mapping."""
     meta = gwas_metadata.get('metadata') or {}
     return {k: v for k, v in meta.items() if k.startswith('col_') and v}
 
@@ -334,42 +316,15 @@ def validate_file_headers(file_path: str, column_mapping: Dict[str, str]) -> tup
 
 
 def main():
-    p = argparse.ArgumentParser(description="Upload GWAS via presigned URL (3-step)")
+    p = argparse.ArgumentParser(description="Upload GWAS to production via presigned URL (3-step)")
     p.add_argument("file", help="Path to GWAS file (e.g., .tsv.gz)")
-
-    # Target API selection
-    p.add_argument("--env", choices=["qa", "prd"], help="Environment: qa or prd")
-    p.add_argument("--api-base-url", help="Override API base URL")
-    p.add_argument("--user-service-url", default=DEFAULT_USER_SERVICE_URL, help="User service URL")
-
-    # Auth group
-    p.add_argument("--group", default=None, help="Auth group (default: sgc for qa, sgc-prod for prd)")
-
-    # Required GWAS metadata
     p.add_argument("--dataset", required=True)
-
-    # Dataset-level metadata
     p.add_argument("--metadata", required=True,
                    help="Path to JSON file with dataset-level metadata (must include cohort_name, phenotype, ancestry)")
     p.add_argument("--validate", action="store_true",
                    help="Submit a batch QA validation job after upload and poll until it completes")
 
     args = p.parse_args()
-
-    # Default group based on environment
-    if args.group is None:
-        args.group = "sgc-prod" if args.env == "prd" else "sgc"
-
-    # Resolve endpoints
-    if args.api_base_url:
-        api_base = args.api_base_url.rstrip("/")
-    elif args.env:
-        api_base = DEFAULT_API_BY_ENV[args.env]
-    else:
-        p.error("Either --env or --api-base-url is required")
-        return
-
-    user_service_url = args.user_service_url.rstrip("/")
 
     if not os.path.isfile(args.file):
         sys.stderr.write(f"File not found: {args.file}\n")
@@ -390,13 +345,13 @@ def main():
         username = input("Username: ").strip()
         password = getpass.getpass("Password: ")
 
-    token = login(user_service_url, username, password, args.group)
+    token = login(username, password)
     if not token:
         sys.stderr.write("Authentication failed\n")
         sys.exit(1)
 
     # Fetch valid sex values and validate metadata
-    valid_sex_values = fetch_valid_sex_values(api_base, token)
+    valid_sex_values = fetch_valid_sex_values(token)
     if not valid_sex_values:
         sys.stderr.write("Could not fetch valid sex values from API\n")
         sys.exit(1)
@@ -416,7 +371,7 @@ def main():
 
     # Validate ancestry against allowed values
     print("Validating ancestry...")
-    valid_ancestries = fetch_valid_ancestries(api_base, token)
+    valid_ancestries = fetch_valid_ancestries(token)
     if not valid_ancestries:
         sys.stderr.write("Could not fetch valid ancestries from API\n")
         sys.exit(1)
@@ -431,29 +386,28 @@ def main():
 
     # Validate phenotype against allowed values
     print("Validating phenotype...")
-    valid_phenotypes = fetch_valid_phenotypes(api_base, token)
+    valid_phenotypes = fetch_valid_phenotypes(token)
     if not valid_phenotypes:
         sys.stderr.write("Could not fetch valid phenotypes from API\n")
         sys.exit(1)
     if phenotype not in valid_phenotypes:
-        ui_base = DEFAULT_UI_BY_ENV.get(args.env, "https://kpndataregistry.org")
         sys.stderr.write(
             f"Invalid phenotype: '{phenotype}'\n"
             f"Valid phenotypes: {sorted(valid_phenotypes)}\n"
-            f"See {ui_base}/sgc/phenotypes for the full list of allowed phenotypes.\n"
+            f"See {UI_BASE}/sgc/phenotypes for the full list of allowed phenotypes.\n"
         )
         sys.exit(1)
     print(f"Phenotype '{phenotype}' is valid.")
 
     # Look up cohort ID by name
-    cohort_id = lookup_cohort_id(api_base, token, cohort_name)
+    cohort_id = lookup_cohort_id(token, cohort_name)
     if not cohort_id:
         sys.stderr.write(f"Cohort not found: '{cohort_name}'\n")
         sys.exit(1)
     print(f"Found cohort '{cohort_name}' -> {cohort_id}")
 
     # Check for an existing GWAS file with the same dataset/phenotype/filename before uploading
-    existing = check_for_existing_gwas_file(api_base, token, cohort_id, args.dataset, phenotype, filename)
+    existing = check_for_existing_gwas_file(token, cohort_id, args.dataset, phenotype, filename)
     if existing:
         sys.stderr.write(
             f"A GWAS file already exists for dataset='{args.dataset}', phenotype='{phenotype}', "
@@ -464,7 +418,7 @@ def main():
 
     # Fetch GWAS metadata and extract column mapping
     print("Fetching GWAS metadata for cohort...")
-    gwas_metadata = fetch_gwas_metadata(api_base, token, cohort_id)
+    gwas_metadata = fetch_gwas_metadata(token, cohort_id)
     if not gwas_metadata:
         sys.stderr.write(
             "No GWAS metadata found for this cohort. "
@@ -513,7 +467,7 @@ def main():
 
     try:
         resp = requests.post(
-            f"{api_base}/api/sgc/gwas-upload-url",
+            f"{API_BASE}/api/sgc/gwas-upload-url",
             headers=headers,
             json=request_data,
             timeout=30,
@@ -589,7 +543,7 @@ def main():
 
     try:
         confirm_resp = requests.post(
-            f"{api_base}/api/sgc/confirm-gwas-upload",
+            f"{API_BASE}/api/sgc/confirm-gwas-upload",
             headers=headers,
             json=confirm_data,
             timeout=30,
@@ -599,7 +553,7 @@ def main():
         print(json.dumps(result, indent=2))
         file_id = result.get("file_id")
         if file_id and args.validate:
-            start_validation(api_base, token, file_id)
+            start_validation(token, file_id)
     except requests.RequestException as e:
         sys.stderr.write(f"Confirm upload failed: {e}\n")
         if hasattr(e, "response") and e.response is not None:
@@ -607,12 +561,12 @@ def main():
         sys.exit(1)
 
 
-def start_validation(api_base: str, token: str, file_id: str):
+def start_validation(token: str, file_id: str):
     """Kick off the batch QA validation job for the uploaded file, then poll until done."""
     print("\nSubmitting batch QA validation job...")
     try:
         r = requests.post(
-            f"{api_base}/api/sgc/gwas-validate/{file_id}",
+            f"{API_BASE}/api/sgc/gwas-validate/{file_id}",
             headers={"Authorization": f"Bearer {token}"},
             timeout=30,
         )
@@ -623,14 +577,14 @@ def start_validation(api_base: str, token: str, file_id: str):
 
     result = r.json()
     print(f"Validation job submitted: {result.get('validation_job_id')}")
-    poll_validation_progress(api_base, token, file_id)
+    poll_validation_progress(token, file_id)
 
 
-def fetch_errors_url(api_base: str, token: str, file_id: str) -> Optional[str]:
+def fetch_errors_url(token: str, file_id: str) -> Optional[str]:
     """Fetch a presigned download URL for the full validation error log."""
     try:
         r = requests.get(
-            f"{api_base}/api/sgc/gwas-validate/{file_id}/errors",
+            f"{API_BASE}/api/sgc/gwas-validate/{file_id}/errors",
             headers={"Authorization": f"Bearer {token}"},
             timeout=30,
         )
@@ -641,11 +595,9 @@ def fetch_errors_url(api_base: str, token: str, file_id: str) -> Optional[str]:
     return None
 
 
-def poll_validation_progress(api_base: str, token: str, file_id: str, poll_interval: int = 10):
+def poll_validation_progress(token: str, file_id: str, poll_interval: int = 10):
     """Poll the validation progress endpoint until the batch QA job completes or fails."""
-    import time
-
-    url = f"{api_base}/api/sgc/gwas-validate/{file_id}/progress"
+    url = f"{API_BASE}/api/sgc/gwas-validate/{file_id}/progress"
     headers = {"Authorization": f"Bearer {token}"}
 
     print("Waiting for batch QA validation to start...")
@@ -728,7 +680,7 @@ def poll_validation_progress(api_base: str, token: str, file_id: str, poll_inter
                     print(f"    Row {err.get('row')}: [{err.get('column')}] {err.get('error')} (value: {err.get('value')!r})")
 
             if latest.get("errors_found"):
-                errors_url = fetch_errors_url(api_base, token, file_id)
+                errors_url = fetch_errors_url(token, file_id)
                 if errors_url:
                     print(f"\n  Full error log (TSV, expires in 1 hour):\n  {errors_url}")
 
