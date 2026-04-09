@@ -232,6 +232,7 @@ def test_start_meta_analysis(mocker, api_client: TestClient):
         'Body': io.BytesIO(file_bytes),
         'ContentLength': len(file_bytes)
     }
+    mocker.patch('dataregistry.api.api.get_phenotypes').return_value = {'T2D': {'dichotomous': True}}
     res = api_client.post('api/validate-hermes', headers={AUTHORIZATION: auth_token}, json={'file_name': 'foo.csv',
                                                          'dataset': 'unit-test-dataset',
                                                          'metadata': {'b': 1, 'phenotype': 'T2D',
