@@ -77,7 +77,7 @@ Per subject (sorted by `exp.minute`):
 GET /calr/sessions/{session_id}/enriched
 ```
 
-- **Auth:** Optional (same pattern as analysis endpoints — public sessions accessible without token)
+- **Auth:** Optional token via `get_calr_user_optional`. Public sessions are accessible without a token; non-public sessions require a valid token from the owning user (enforced by `_load_session_and_standard_df`, same as all analysis endpoints).
 - **Loads:** session JSON + standard file from S3 via `_load_session_and_standard_df`
 - **Returns:** Streaming CSV response of the full enriched DataFrame (all rows, no filtering)
 - **No caching:** Session is mutable (groups, diet_kcal, subjects, exclusions all editable); computing on the fly avoids stale cache invalidation complexity. S3 fetch is the dominant latency, not the enrichment computation.
