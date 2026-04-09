@@ -891,6 +891,148 @@ async def download_calr_session_csv(
     )
 
 
+def _enrich_df(df: 'pd.DataFrame', session: dict) -> 'pd.DataFrame':
+    """
+    Port of the JS processDetail pipeline (calr-vue/src/utils/process.js).
+
+    Adds derived columns to the standard DataFrame using session metadata.
+    Steps match the JS order exactly:
+      1. Numeric parsing of exp.minute → hour / exp.hour
+      2. enviro.light inference from timestamp when all values blank
+      3. light / dark / clockHour / day / exp.day
+      4. Subject mass fallbacks from session subjects
+      5. Group metadata (group, groupIndex, color, diet)
+      6. Kcal conversion on feed / feed.acc per group diet_kcal
+      7. ee.acc fill (per-subject cumulative sum) when absent
+      8. eb = feed - ee; eb.acc = feed.acc - ee.acc
+
+    Does NOT zero-base accumulators — that is QC-specific and stays in
+    run_quality_control after the hour-range window is applied.
+    """
+    import pandas as pd
+    import numpy as np
+
+    df = df.copy()
+
+    light_cycle_start = session.get('light_cycle_start', 7)
+    dark_cycle_start = session.get('dark_cycle_start', 19)
+    groups = session.get('groups', [])
+    subjects = session.get('subjects', [])
+
+    # ── 1. Numeric parsing ────────────────────────────────────────────────────
+    df['exp.minute'] = pd.to_numeric(df.get('exp.minute'), errors='coerce')
+    df['hour'] = df['exp.minute'] / 60
+    df['exp.hour'] = df['hour']
+
+    # ── 2. enviro.light inference ─────────────────────────────────────────────
+    enviro_col = 'enviro.light'
+    if enviro_col not in df.columns:
+        df[enviro_col] = np.nan
+    df[enviro_col] = pd.to_numeric(df[enviro_col], errors='coerce')
+
+    if df[enviro_col].isna().all():
+        time_col = next((c for c in ('Date.Time', 'Time.Date') if c in df.columns), None)
+        if time_col:
+            ts = pd.to_datetime(df[time_col], errors='coerce')
+            h = ts.dt.hour
+            df[enviro_col] = np.where(
+                (h >= light_cycle_start) & (h < dark_cycle_start), 5.0, 0.0
+            )
+
+    # ── 3. Derived time columns ───────────────────────────────────────────────
+    clock_hour = (df['exp.minute'] / 60) % 24
+    enviro_light = df[enviro_col]
+    light_from_enviro = (enviro_light > 1).astype(float)
+    light_from_clock = (
+        (clock_hour >= light_cycle_start) & (clock_hour < dark_cycle_start)
+    ).astype(float)
+    df['light'] = np.where(enviro_light.notna(), light_from_enviro, light_from_clock)
+    df['dark'] = 1.0 - df['light']
+    df['clockHour'] = clock_hour
+    df['day'] = np.floor((df['exp.hour'] - light_cycle_start) / 24)
+    df['exp.day'] = df['day']
+
+    # ── 4. Subject mass fallbacks ─────────────────────────────────────────────
+    subject_map = {str(s['subject']): s for s in subjects}
+    for out_col, src_key in [
+        ('subject.mass', 'total_mass'),
+        ('subject.lean.mass', 'lean_mass'),
+        ('subject.fat.mass', 'fat_mass'),
+    ]:
+        if out_col not in df.columns:
+            df[out_col] = np.nan
+        df[out_col] = pd.to_numeric(df[out_col], errors='coerce')
+        for subj_id, subj in subject_map.items():
+            val = subj.get(src_key)
+            if val is not None:
+                mask = (df['subject.id'].astype(str) == subj_id) & df[out_col].isna()
+                df.loc[mask, out_col] = float(val)
+
+    # ── 5. Group metadata ─────────────────────────────────────────────────────
+    def _group_attr(idx, attr, default=None):
+        try:
+            i = int(idx)
+            return groups[i].get(attr, default) if 0 <= i < len(groups) else default
+        except (TypeError, ValueError, IndexError):
+            return default
+
+    subject_to_group_idx = {str(s['subject']): s['groupIndex'] for s in subjects}
+    df['groupIndex'] = df['subject.id'].astype(str).map(subject_to_group_idx)
+    df['group'] = df['groupIndex'].map(lambda i: _group_attr(i, 'name'))
+    df['color'] = df['groupIndex'].map(lambda i: _group_attr(i, 'color', '#888'))
+    df['diet'] = df['groupIndex'].map(lambda i: _group_attr(i, 'diet_name'))
+
+    # ── 6. Kcal conversion ────────────────────────────────────────────────────
+    for g in groups:
+        kcal = g.get('diet_kcal')
+        if kcal:
+            mask = df['group'] == g['name']
+            if 'feed' in df.columns:
+                df.loc[mask, 'feed'] = (
+                    pd.to_numeric(df.loc[mask, 'feed'], errors='coerce') * kcal
+                )
+            if 'feed.acc' in df.columns:
+                df.loc[mask, 'feed.acc'] = (
+                    pd.to_numeric(df.loc[mask, 'feed.acc'], errors='coerce') * kcal
+                )
+
+    # ── 7. Accumulator fill ───────────────────────────────────────────────────
+    # minute_bin = 60 / modal row-to-row interval in minutes (JS: computeMinuteBin)
+    minute_bin = 1.0
+    valid_minutes = df['exp.minute'].dropna().sort_values()
+    if len(valid_minutes) >= 2:
+        diffs = valid_minutes.diff().dropna()
+        pos_diffs = diffs[diffs > 0]
+        if not pos_diffs.empty:
+            modal_diff = float(pos_diffs.mode().iloc[0])
+            minute_bin = 60.0 / modal_diff if modal_diff > 0 else 1.0
+
+    # Fill ee.acc per subject when absent or entirely null
+    if 'ee.acc' not in df.columns or df['ee.acc'].isna().all():
+        if 'ee' in df.columns:
+            def _cumsum_ee(grp):
+                grp = grp.sort_values('exp.minute').copy()
+                ee = pd.to_numeric(grp['ee'], errors='coerce')
+                grp['ee.acc'] = (ee / minute_bin).cumsum()
+                return grp
+            df = df.groupby('subject.id', group_keys=False).apply(_cumsum_ee)
+
+    # ── 8. eb / eb.acc ────────────────────────────────────────────────────────
+    feed = pd.to_numeric(df['feed'], errors='coerce') if 'feed' in df.columns else None
+    ee = pd.to_numeric(df['ee'], errors='coerce') if 'ee' in df.columns else None
+    feed_acc = pd.to_numeric(df['feed.acc'], errors='coerce') if 'feed.acc' in df.columns else None
+    ee_acc = pd.to_numeric(df['ee.acc'], errors='coerce') if 'ee.acc' in df.columns else None
+
+    if feed is not None and ee is not None:
+        df['eb'] = np.where(feed.notna() & ee.notna(), feed - ee, np.nan)
+    if feed_acc is not None and ee_acc is not None:
+        df['eb.acc'] = np.where(
+            feed_acc.notna() & ee_acc.notna(), feed_acc - ee_acc, np.nan
+        )
+
+    return df
+
+
 def _load_session_and_standard_df(session_id: str, username: str):
     """
     Load a CalR session from S3 and its associated standard file as a DataFrame.
@@ -959,19 +1101,45 @@ async def run_ancova(
 
     # Assign groups from session
     groups = session['groups']
+    subjects = session['subjects']
     subject_to_group = {
         s['subject']: groups[s['groupIndex']]['name']
-        for s in session['subjects']
+        for s in subjects
     }
     df['group'] = df['subject.id'].astype(str).map(subject_to_group)
     df = df[df['group'].notna()]
 
-    # Apply hour range from session
+    # Apply hour range — mirrors R: anovcalcdataFrame uses >= x1 & <= x2, then
+    # anovaTab further filters < x2, so the net window is start_hour <= exp.hour < end_hour.
     start_hour, end_hour = session['hour_range']
-    df = df[(df['exp.hour'] >= start_hour) & (df['exp.hour'] <= end_hour)]
+    df = df[(df['exp.hour'] >= start_hour) & (df['exp.hour'] < end_hour)]
 
     if df.empty:
         raise fastapi.HTTPException(status_code=422, detail="No data remaining after filters")
+
+    # Subject exclusions — mirrors R's dataFrame() exclusion loop.
+    # Rows where the subject is excluded and exp.hour >= exc_hour are dropped.
+    import pandas as pd
+    df = df.copy()
+    for s in subjects:
+        exc_hour = s.get('exc_hour')
+        if exc_hour is not None:
+            subj_id = str(s['subject'])
+            mask = (df['subject.id'].astype(str) == subj_id) & (df['exp.hour'] >= exc_hour)
+            df = df[~mask]
+
+    if df.empty:
+        raise fastapi.HTTPException(status_code=422, detail="No data remaining after exclusions")
+
+    # Caloric conversion — mirrors R's perAve feed *= cal_i, feed.acc *= cal_i.
+    # Converts food from grams to kcal using per-group diet density.
+    group_diet_kcal = {g['name']: g.get('diet_kcal') for g in groups}
+    for group_name, kcal_per_g in group_diet_kcal.items():
+        if kcal_per_g:
+            mask = df['group'] == group_name
+            df.loc[mask, 'feed'] = df.loc[mask, 'feed'] * kcal_per_g
+            if 'feed.acc' in df.columns:
+                df.loc[mask, 'feed.acc'] = df.loc[mask, 'feed.acc'] * kcal_per_g
 
     try:
         result = ancova_table(
@@ -1010,16 +1178,37 @@ async def run_power_calc(
 
     # Assign groups from session
     groups = session['groups']
+    subjects = session['subjects']
     subject_to_group = {
         s['subject']: groups[s['groupIndex']]['name']
-        for s in session['subjects']
+        for s in subjects
     }
     df['group'] = df['subject.id'].astype(str).map(subject_to_group)
     df = df[df['group'].notna()]
 
-    # Apply hour range from session
+    # Apply hour range — mirrors R: powrcalcdataFrame uses >= x1 & <= x2, then
+    # overallData further filters < x2, so the net window is start_hour <= exp.hour < end_hour.
     start_hour, end_hour = session['hour_range']
-    df = df[(df['exp.hour'] >= start_hour) & (df['exp.hour'] <= end_hour)]
+    df = df[(df['exp.hour'] >= start_hour) & (df['exp.hour'] < end_hour)]
+
+    # Subject exclusions — mirrors R's powrcalcdataFrame() exclusion loop.
+    import pandas as pd
+    df = df.copy()
+    for s in subjects:
+        exc_hour = s.get('exc_hour')
+        if exc_hour is not None:
+            subj_id = str(s['subject'])
+            mask = (df['subject.id'].astype(str) == subj_id) & (df['exp.hour'] >= exc_hour)
+            df = df[~mask]
+
+    # Caloric conversion — mirrors R's perAve feed *= cal_i.
+    group_diet_kcal = {g['name']: g.get('diet_kcal') for g in groups}
+    for group_name, kcal_per_g in group_diet_kcal.items():
+        if kcal_per_g:
+            mask = df['group'] == group_name
+            df.loc[mask, 'feed'] = df.loc[mask, 'feed'] * kcal_per_g
+            if 'feed.acc' in df.columns:
+                df.loc[mask, 'feed.acc'] = df.loc[mask, 'feed.acc'] * kcal_per_g
 
     df = filter_by_time_of_day(
         df,
