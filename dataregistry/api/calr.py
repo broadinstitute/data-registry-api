@@ -1124,8 +1124,6 @@ async def run_ancova(
       - ANOVA variables (pedmeter, allmeter, rer, xytot, body.temp, eb):
           var ~ group
         Returns per-period p-value for group.
-
-    Energy balance (eb) is computed on the fly as feed − ee when not present.
     """
     session, df = _load_session_and_standard_df(request.session_id, user.user_name if user else None)
 
@@ -1135,29 +1133,18 @@ async def run_ancova(
             detail=f"Mass variable '{request.mass_variable}' not found in standard file"
         )
 
-    # Assign groups from session
-    groups = session['groups']
-    subjects = session['subjects']
-    subject_to_group = {
-        s['subject']: groups[s['groupIndex']]['name']
-        for s in subjects
-    }
-    df['group'] = df['subject.id'].astype(str).map(subject_to_group)
-    df = df[df['group'].notna()]
+    df = _enrich_df(df, session)
+    df = df[df['group'].notna()].copy()
 
-    # Apply hour range — mirrors R: anovcalcdataFrame uses >= x1 & <= x2, then
-    # anovaTab further filters < x2, so the net window is start_hour <= exp.hour < end_hour.
+    # Apply hour range — net window: start_hour <= exp.hour < end_hour
     start_hour, end_hour = session['hour_range']
     df = df[(df['exp.hour'] >= start_hour) & (df['exp.hour'] < end_hour)]
 
     if df.empty:
         raise fastapi.HTTPException(status_code=422, detail="No data remaining after filters")
 
-    # Subject exclusions — mirrors R's dataFrame() exclusion loop.
-    # Rows where the subject is excluded and exp.hour >= exc_hour are dropped.
-    import pandas as pd
-    df = df.copy()
-    for s in subjects:
+    # Subject exclusions
+    for s in session['subjects']:
         exc_hour = s.get('exc_hour')
         if exc_hour is not None:
             subj_id = str(s['subject'])
@@ -1166,16 +1153,6 @@ async def run_ancova(
 
     if df.empty:
         raise fastapi.HTTPException(status_code=422, detail="No data remaining after exclusions")
-
-    # Caloric conversion — mirrors R's perAve feed *= cal_i, feed.acc *= cal_i.
-    # Converts food from grams to kcal using per-group diet density.
-    group_diet_kcal = {g['name']: g.get('diet_kcal') for g in groups}
-    for group_name, kcal_per_g in group_diet_kcal.items():
-        if kcal_per_g:
-            mask = df['group'] == group_name
-            df.loc[mask, 'feed'] = df.loc[mask, 'feed'] * kcal_per_g
-            if 'feed.acc' in df.columns:
-                df.loc[mask, 'feed.acc'] = df.loc[mask, 'feed.acc'] * kcal_per_g
 
     try:
         result = ancova_table(
