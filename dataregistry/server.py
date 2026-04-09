@@ -12,7 +12,7 @@ from dataregistry.api.hcm import get_hcm_user
 MultiPartParser.max_part_size = 5 * 1024 * 1024 * 1024  # 5GB
 
 SGC_ROUTES_WITHOUT_AUTH = {'hello_sgc'}
-CALR_ROUTES_WITHOUT_AUTH = {'download_calr_file', 'get_calr_file_info', 'list_public_calr_submissions', 'convert_calr_files', 'get_calr_session', 'download_calr_session_csv', 'run_ancova', 'run_power_calc', 'run_quality_control', 'create_calr_user'}
+CALR_ROUTES_WITHOUT_AUTH = {'download_calr_file', 'get_calr_file_info', 'list_public_calr_submissions', 'convert_calr_files', 'get_calr_session', 'download_calr_session_csv', 'run_ancova', 'run_power_calc', 'run_quality_control', 'create_calr_user', 'get_enriched_session_data'}
 HCM_ROUTES_WITHOUT_AUTH = set()
 ROUTES_WITHOUT_AUTH = {'stream_file', 'version', 'login', 'google_login', 'start_aggregator', 'search_phenotypes', 'search_terms', 'preview_files', 'download_sgc_phenotypes'}
 

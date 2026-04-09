@@ -12,8 +12,11 @@ Verifies that each enrichment step matches the JS processDetail pipeline:
   8. eb / eb.acc computed from feed - ee / feed.acc - ee.acc
 """
 
+import io
+import json
 import os
 import sys
+from unittest.mock import patch
 import pytest
 import numpy as np
 import pandas as pd
@@ -207,3 +210,46 @@ class TestAccumulatorFill:
         result = _enrich_df(_df(), _session())
         a1 = result[result['subject.id'] == 'A1'].iloc[0]
         assert pytest.approx(a1['eb.acc']) == a1['feed.acc'] - a1['ee.acc']
+
+
+class TestEnrichedEndpoint:
+    """Smoke-tests for GET /calr/sessions/{session_id}/enriched."""
+
+    def _session_dict(self):
+        return {
+            'groups': [{'name': 'G1', 'color': '#000', 'diet_name': 'D1', 'diet_kcal': None}],
+            'subjects': [{'subject': 'S1', 'groupIndex': 0, 'total_mass': 20.0, 'lean_mass': None, 'fat_mass': None}],
+            'light_cycle_start': 7,
+            'dark_cycle_start': 19,
+            'hour_range': [0, 24],
+        }
+
+    def _standard_df(self):
+        return pd.DataFrame({
+            'subject.id': ['S1', 'S1'],
+            'exp.minute': [15.0, 30.0],
+            'feed': [0.5, 0.6],
+            'feed.acc': [0.5, 1.1],
+            'ee': [2.0, 2.1],
+            'ee.acc': [2.0, 4.1],
+            'subject.mass': [20.0, 19.9],
+        })
+
+    @patch('dataregistry.api.calr._load_session_and_standard_df')
+    def test_returns_csv_with_enriched_columns(self, mock_load):
+        mock_load.return_value = (self._session_dict(), self._standard_df())
+
+        from dataregistry.server import app
+        from fastapi.testclient import TestClient
+        client = TestClient(app)
+
+        # Adjust the URL prefix to match what main.py registers — check with:
+        # grep include_router dataregistry/main.py
+        response = client.get('/api/calr/sessions/test-session-id/enriched')
+
+        assert response.status_code == 200
+        assert 'text/csv' in response.headers['content-type']
+
+        result_df = pd.read_csv(io.StringIO(response.text))
+        for col in ('exp.hour', 'light', 'dark', 'day', 'group', 'eb'):
+            assert col in result_df.columns, f"Expected column '{col}' in enriched output"

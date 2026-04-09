@@ -1075,6 +1075,41 @@ def _load_session_and_standard_df(session_id: str, username: str):
     return session_data, standard_df
 
 
+@router.get("/calr/sessions/{session_id}/enriched")
+async def get_enriched_session_data(
+    session_id: str,
+    user: Optional[User] = Depends(get_calr_user_optional)
+):
+    """
+    Return the full enriched standard file for a session as CSV.
+
+    Applies the _enrich_df pipeline (derived columns, group metadata, kcal
+    conversion, accumulator fill) to the raw converted file and streams the
+    result. All rows are returned — no hour-range or exclusion filtering.
+
+    Auth: public sessions are accessible without a token; non-public sessions
+    require a valid token from the owning user (enforced by
+    _load_session_and_standard_df).
+    """
+    import pandas as pd
+
+    session, df = _load_session_and_standard_df(session_id, user.user_name if user else None)
+    enriched = _enrich_df(df, session)
+
+    csv_buffer = io.StringIO()
+    enriched.to_csv(csv_buffer, index=False)
+    csv_bytes = csv_buffer.getvalue().encode('utf-8')
+
+    return StreamingResponse(
+        io.BytesIO(csv_bytes),
+        media_type='text/csv',
+        headers={
+            'Content-Disposition': f'attachment; filename="enriched_{session_id}.csv"',
+            'Content-Length': str(len(csv_bytes)),
+        }
+    )
+
+
 @router.post("/calr/analysis/ancova")
 async def run_ancova(
     request: AncovaTableRequest,
