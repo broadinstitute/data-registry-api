@@ -1189,39 +1189,20 @@ async def run_power_calc(
     if request.mass_variable not in df.columns:
         raise fastapi.HTTPException(status_code=422, detail=f"Mass variable '{request.mass_variable}' not found in standard file")
 
-    # Assign groups from session
-    groups = session['groups']
-    subjects = session['subjects']
-    subject_to_group = {
-        s['subject']: groups[s['groupIndex']]['name']
-        for s in subjects
-    }
-    df['group'] = df['subject.id'].astype(str).map(subject_to_group)
-    df = df[df['group'].notna()]
+    df = _enrich_df(df, session)
+    df = df[df['group'].notna()].copy()
 
-    # Apply hour range — mirrors R: powrcalcdataFrame uses >= x1 & <= x2, then
-    # overallData further filters < x2, so the net window is start_hour <= exp.hour < end_hour.
+    # Apply hour range — net window: start_hour <= exp.hour < end_hour
     start_hour, end_hour = session['hour_range']
     df = df[(df['exp.hour'] >= start_hour) & (df['exp.hour'] < end_hour)]
 
-    # Subject exclusions — mirrors R's powrcalcdataFrame() exclusion loop.
-    import pandas as pd
-    df = df.copy()
-    for s in subjects:
+    # Subject exclusions
+    for s in session['subjects']:
         exc_hour = s.get('exc_hour')
         if exc_hour is not None:
             subj_id = str(s['subject'])
             mask = (df['subject.id'].astype(str) == subj_id) & (df['exp.hour'] >= exc_hour)
             df = df[~mask]
-
-    # Caloric conversion — mirrors R's perAve feed *= cal_i.
-    group_diet_kcal = {g['name']: g.get('diet_kcal') for g in groups}
-    for group_name, kcal_per_g in group_diet_kcal.items():
-        if kcal_per_g:
-            mask = df['group'] == group_name
-            df.loc[mask, 'feed'] = df.loc[mask, 'feed'] * kcal_per_g
-            if 'feed.acc' in df.columns:
-                df.loc[mask, 'feed.acc'] = df.loc[mask, 'feed.acc'] * kcal_per_g
 
     df = filter_by_time_of_day(
         df,
@@ -1263,16 +1244,10 @@ async def run_quality_control(
         if col not in df.columns:
             raise fastapi.HTTPException(status_code=422, detail=f"Required column '{col}' not found in standard file")
 
-    groups = session['groups']
-    subjects = session['subjects']
-    subject_to_group = {
-        s['subject']: groups[s['groupIndex']]['name']
-        for s in subjects
-    }
-    df['group'] = df['subject.id'].astype(str).map(subject_to_group)
-    df = df[df['group'].notna()]
+    df = _enrich_df(df, session)
+    df = df[df['group'].notna()].copy()
 
-    # Use QC-specific hour range from the request if provided; fall back to session range.
+    # QC-specific hour range (independent slider from main xranges)
     # Mirrors R: qc_x1/qc_x2 from the QC slider, independent of the main xranges.
     session_start, session_end = session['hour_range']
     start_hour = request.min_hour if request.min_hour is not None else session_start
@@ -1285,10 +1260,8 @@ async def run_quality_control(
     if df.empty:
         raise fastapi.HTTPException(status_code=422, detail="No data remaining after filters")
 
-    # Apply subject exclusions — mirrors R's qc_dataFrame exclusion loop.
-    # Rows where the subject is excluded and exp.hour >= exc_hour are dropped.
-    import pandas as pd
-    for s in subjects:
+    # Subject exclusions — mirrors R's qc_dataFrame exclusion loop.
+    for s in session['subjects']:
         exc_hour = s.get('exc_hour')
         if exc_hour is not None:
             subj_id = str(s['subject'])
@@ -1298,26 +1271,19 @@ async def run_quality_control(
     if df.empty:
         raise fastapi.HTTPException(status_code=422, detail="No data remaining after exclusions")
 
-    # Mirrors retrofitCalR(): add ee.acc as cumulative EE when absent.
-    # fixFeed will then zero-base it so the window starts at 0 — same as R.
-    df = df.copy()
-    if 'ee.acc' not in df.columns and 'ee' in df.columns:
-        df['ee.acc'] = df.groupby('subject.id')['ee'].transform('cumsum')
-
-    # fixFeed equivalent — mirrors R's fixFeed()/setZero().
-    # Subtracts each accumulated column's first value per subject so they start at 0
-    # within the QC window, preventing pre-window accumulation from inflating totals.
+    # QC-specific: zero-base acc columns within the analysis window.
+    # Mirrors R's fixFeed()/setZero() — subtracts each subject's first value so
+    # accumulators start at 0 within the window, not from experiment start.
     for acc_col in ('feed.acc', 'ee.acc', 'drink.acc', 'wheel.acc'):
         if acc_col in df.columns:
             df[acc_col] = df.groupby('subject.id')[acc_col].transform(
                 lambda x: x - x.dropna().iloc[0] if x.dropna().size > 0 else x
             )
 
-    # Build per-group caloric density map (kcal/g) — mirrors R's cal1/cal2/... parameters
-    group_diet_kcal = {g['name']: g.get('diet_kcal') for g in groups}
-
+    # Pass group_diet_kcal=None: _enrich_df already applied kcal conversion.
+    # quality_control() skips its internal conversion when the argument is falsy.
     try:
-        result = quality_control(df, request.n_mass_measurements, group_diet_kcal)
+        result = quality_control(df, request.n_mass_measurements)
     except Exception as e:
         raise fastapi.HTTPException(status_code=500, detail=f"QC analysis failed: {str(e)}")
 
