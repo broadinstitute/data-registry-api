@@ -1450,7 +1450,7 @@ def get_peg_studies(engine, created_by: Optional[str] = None) -> list:
         return studies
 
 
-def get_peg_study(engine, study_id: str) -> Optional[dict]:
+def get_peg_study(engine, study_id: Union[str, uuid.UUID]) -> Optional[dict]:
     """Get a specific PEG study by ID."""
     with engine.connect() as conn:
         result = conn.execute(text("""
@@ -1468,7 +1468,7 @@ def get_peg_study(engine, study_id: str) -> Optional[dict]:
         return None
 
 
-def update_peg_study(engine, study_id: str, name: str, metadata: dict):
+def update_peg_study(engine, study_id: Union[str, uuid.UUID], name: str, metadata: dict):
     """Update a PEG study's metadata."""
     with engine.connect() as conn:
         conn.execute(text("""
@@ -1483,7 +1483,7 @@ def update_peg_study(engine, study_id: str, name: str, metadata: dict):
         conn.commit()
 
 
-def delete_peg_study(engine, study_id: str):
+def delete_peg_study(engine, study_id: Union[str, uuid.UUID]):
     """Delete a PEG study and all associated files."""
     with engine.connect() as conn:
         study_id_hex = str(study_id).replace('-', '')
@@ -1496,7 +1496,7 @@ def delete_peg_study(engine, study_id: str):
         conn.commit()
 
 
-def create_peg_file(engine, study_id: str, file_type: str, file_name: str, 
+def create_peg_file(engine, study_id: Union[str, uuid.UUID], file_type: str, file_name: str,
                     file_path: str, file_size: int) -> str:
     """Create a PEG file record. Returns the file ID (as hex string without dashes)."""
     with engine.connect() as conn:
@@ -1516,7 +1516,7 @@ def create_peg_file(engine, study_id: str, file_type: str, file_name: str,
         return file_id
 
 
-def get_peg_files(engine, study_id: str) -> list:
+def get_peg_files(engine, study_id: Union[str, uuid.UUID]) -> list:
     """Get all files for a PEG study."""
     with engine.connect() as conn:
         results = conn.execute(text("""
@@ -1529,7 +1529,7 @@ def get_peg_files(engine, study_id: str) -> list:
         return [dict(row) for row in results]
 
 
-def get_peg_file(engine, file_id: str):
+def get_peg_file(engine, file_id: Union[str, uuid.UUID]):
     """Get a single PEG file by ID."""
     with engine.connect() as conn:
         result = conn.execute(text("""
@@ -1541,7 +1541,7 @@ def get_peg_file(engine, file_id: str):
         return dict(result) if result else None
 
 
-def delete_peg_file(engine, file_id: str):
+def delete_peg_file(engine, file_id: Union[str, uuid.UUID]):
     """Delete a PEG file."""
     with engine.connect() as conn:
         conn.execute(text("DELETE FROM peg_files WHERE id = :file_id"), 

@@ -2,13 +2,13 @@ import io
 import os
 import re
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Optional
 from uuid import UUID
 
 import boto3
 import fastapi
 import httpx
-import pandas as pd
+import pandas as pd  # type: ignore[import]
 from fastapi import UploadFile, File, Depends, Header
 from pydantic import BaseModel
 
@@ -26,7 +26,7 @@ USER_SERVICE_URL = os.getenv('USER_SERVICE_URL', 'https://users.kpndataregistry.
 _SAFE_FILENAME = re.compile(r'^[\w\-\.]+$')
 
 
-def _validate_filename(filename: str) -> None:
+def _validate_filename(filename: Optional[str]) -> None:
     """Reject filenames that could escape the intended S3 prefix."""
     if not filename or not _SAFE_FILENAME.match(filename) or '..' in filename:
         raise fastapi.HTTPException(
@@ -66,7 +66,14 @@ async def get_peg_user(authorization: Optional[str] = Header(None)):
                     user_name=user.get('username'),
                     email=user.get('email'),
                     roles=user.get('roles', []),
-                    permissions=user.get('permissions', [])
+                    permissions=user.get('permissions', []),
+                    first_name=None,
+                    last_name=None,
+                    avatar=None,
+                    is_active=None,
+                    groups=None,
+                    is_internal=None,
+                    api_token=None,
                 )
             else:
                 raise fastapi.HTTPException(status_code=401, detail='Invalid token')
@@ -116,10 +123,7 @@ class CreatePEGStudyRequest(BaseModel):
 @router.get("/peg/is-logged-in")
 async def peg_is_logged_in(user: User = Depends(get_peg_user)):
     """Check if the user is logged in to PEG."""
-    if user:
-        return user
-    else:
-        raise fastapi.HTTPException(status_code=401, detail='Not logged in')
+    return user
 
 
 @router.post("/peg/studies")
@@ -130,7 +134,7 @@ async def create_peg_study(request: CreatePEGStudyRequest, user: User = Depends(
             engine=engine,
             name=request.name,
             created_by=user.user_name,
-            metadata=request.metadata.dict()
+            metadata=request.metadata.model_dump()
         )
 
         return {
@@ -214,7 +218,7 @@ async def update_peg_study(study_id: UUID, request: CreatePEGStudyRequest, user:
             engine=engine,
             study_id=study_id,
             name=request.name,
-            metadata=request.metadata.dict()
+            metadata=request.metadata.model_dump()
         )
         return {"message": "PEG study updated successfully"}
     except fastapi.HTTPException:
@@ -264,7 +268,7 @@ async def upload_peg_list(study_id: UUID, file: UploadFile = File(...), user: Us
     # Read and validate file
     try:
         contents = await file.read()
-        df = pd.read_csv(io.BytesIO(contents), sep='\t')
+        pd.read_csv(io.BytesIO(contents), sep='\t')
 
         # Upload to S3 using boto3
         s3_path = f"peg/{study_id}/peg_list/{file.filename}"
@@ -282,7 +286,7 @@ async def upload_peg_list(study_id: UUID, file: UploadFile = File(...), user: Us
             engine=engine,
             study_id=study_id,
             file_type="peg_list",
-            file_name=file.filename,
+            file_name=file.filename or '',
             file_path=f"s3://{s3.BASE_BUCKET}/{s3_path}",
             file_size=len(contents)
         )
@@ -313,7 +317,7 @@ async def upload_peg_matrix(study_id: UUID, file: UploadFile = File(...), user: 
     # Read and validate file
     try:
         contents = await file.read()
-        df = pd.read_csv(io.BytesIO(contents), sep='\t')
+        pd.read_csv(io.BytesIO(contents), sep='\t')
 
         # Upload to S3 using boto3
         s3_path = f"peg/{study_id}/peg_matrix/{file.filename}"
@@ -331,7 +335,7 @@ async def upload_peg_matrix(study_id: UUID, file: UploadFile = File(...), user: 
             engine=engine,
             study_id=study_id,
             file_type="peg_matrix",
-            file_name=file.filename,
+            file_name=file.filename or '',
             file_path=f"s3://{s3.BASE_BUCKET}/{s3_path}",
             file_size=len(contents)
         )
@@ -364,7 +368,7 @@ async def upload_peg_metadata(study_id: UUID, file: UploadFile = File(...), user
         contents = await file.read()
 
         # Only accept XLSX files
-        if not file.filename.endswith('.xlsx'):
+        if not (file.filename or '').endswith('.xlsx'):
             raise fastapi.HTTPException(
                 status_code=400, 
                 detail="Invalid file format. Please upload an .xlsx file."
@@ -416,7 +420,7 @@ async def upload_peg_metadata(study_id: UUID, file: UploadFile = File(...), user
             engine=engine,
             study_id=study_id,
             file_type="peg_metadata",
-            file_name=file.filename,
+            file_name=file.filename or '',
             file_path=f"s3://{s3.BASE_BUCKET}/{s3_path}",
             file_size=len(contents)
         )
