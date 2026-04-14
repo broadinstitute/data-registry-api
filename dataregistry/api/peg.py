@@ -77,7 +77,9 @@ async def get_peg_user(authorization: Optional[str] = Header(None)):
 class PEGStudyMetadata(BaseModel):
     """Metadata for a PEG study"""
     study_author: str
+    phenotype: str
     gwas_source: str
+    gwas_source_type: str
     published: str
     publication_ref: Optional[str] = None
     phenotype_is_custom: bool = False
