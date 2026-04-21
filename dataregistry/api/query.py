@@ -645,12 +645,12 @@ def list_mskkp_datasets(engine):
                    file_name, file_size, s3_path, readme_s3_path,
                    uploaded_at, uploaded_by, status
             FROM mskkp_datasets
-            WHERE file_size > 0
+            WHERE status != 'pending'
             ORDER BY uploaded_at DESC
         """))
         rows = []
         for row in result:
-            d = dict(row._mapping)
+            d = row._asdict()
             # Ensure id is a plain string (handles BINARY column type)
             if isinstance(d.get('id'), bytes):
                 d['id'] = d['id'].hex()
