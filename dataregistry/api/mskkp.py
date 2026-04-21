@@ -245,7 +245,7 @@ async def create_mskkp_dataset(request: MSKKPDatasetCreateRequest):
         if 'Duplicate entry' in str(e.orig) or 'mskkp_datasets_name_unique' in str(e.orig):
             raise fastapi.HTTPException(
                 status_code=409,
-                detail=f"A dataset with the name '{request.name}' already exists. Please choose a different name."
+                detail=f"A cohort with the name '{request.name}' already exists. Please choose a different name."
             )
         # Re-raise if it's a different integrity error
         raise
