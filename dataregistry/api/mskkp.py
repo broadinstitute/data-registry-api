@@ -333,6 +333,63 @@ async def finalize_mskkp_dataset_upload(dataset_id: str, filename: str = Body(..
         )
 
 
+@router.get("/mskkp/datasets/{dataset_id}/readme-presigned-url")
+async def get_mskkp_readme_presigned_url(dataset_id: str, filename: str):
+    """Get presigned URL for uploading a README file directly to S3."""
+    dataset = query.fetch_mskkp_dataset_by_id(engine, dataset_id)
+    if not dataset:
+        raise fastapi.HTTPException(
+            status_code=404,
+            detail=f"Dataset with ID '{dataset_id}' not found"
+        )
+
+    dataset_name = dataset['name']
+    _validate_s3_component(dataset_name, 'dataset name')
+    _validate_s3_component(filename, 'readme filename')
+
+    s3_path = f"mskkp/{dataset_name}/readme/{filename}"
+    return s3.generate_presigned_url_with_path(s3_path)
+
+
+@router.post("/mskkp/datasets/{dataset_id}/finalize-readme")
+async def finalize_mskkp_readme_upload(dataset_id: str, filename: str = Body(...)):
+    """Finalize README upload after the file has been uploaded to S3."""
+    dataset = query.fetch_mskkp_dataset_by_id(engine, dataset_id)
+    if not dataset:
+        raise fastapi.HTTPException(
+            status_code=404,
+            detail=f"Dataset with ID '{dataset_id}' not found"
+        )
+
+    dataset_name = dataset['name']
+    _validate_s3_component(dataset_name, 'dataset name')
+    _validate_s3_component(filename, 'readme filename')
+    readme_s3_path = f"mskkp/{dataset_name}/readme/{filename}"
+
+    try:
+        s3_client = boto3.client('s3', region_name=s3.S3_REGION)
+        s3_client.head_object(Bucket=s3.BASE_BUCKET, Key=readme_s3_path)
+
+        query.update_mskkp_readme_path(engine, dataset_id, readme_s3_path)
+
+        return {
+            "dataset_id": dataset_id,
+            "readme_file": filename,
+            "readme_s3_path": readme_s3_path,
+            "message": "README uploaded successfully"
+        }
+    except Exception as e:
+        if 'Not Found' in str(e) or '404' in str(e):
+            raise fastapi.HTTPException(
+                status_code=404,
+                detail="README file not found in S3. Please upload the file first."
+            )
+        raise fastapi.HTTPException(
+            status_code=500,
+            detail=f"Error finalizing README upload: {str(e)}"
+        )
+
+
 @router.get("/mskkp/get-presigned-url")
 async def get_mskkp_presigned_url(request: Request):
     """Generate a presigned URL for uploading MSKKP dataset to S3

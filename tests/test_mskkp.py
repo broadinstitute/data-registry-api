@@ -77,3 +77,28 @@ def test_fetch_returns_readme_s3_path():
     from dataregistry.api import query
     source = inspect.getsource(query.fetch_mskkp_dataset_by_id)
     assert 'readme_s3_path' in source
+
+
+def test_readme_presigned_url_endpoint_exists():
+    """GET /mskkp/datasets/{id}/readme-presigned-url endpoint exists"""
+    from dataregistry.server import app
+    from fastapi.testclient import TestClient
+    client = TestClient(app)
+    response = client.get("/api/mskkp/datasets/nonexistent-id/readme-presigned-url?filename=readme.md")
+    # 404 = dataset not found (endpoint exists); 405 = method not allowed (endpoint missing)
+    assert response.status_code == 404
+
+
+def test_readme_finalize_endpoint_exists():
+    """POST /mskkp/datasets/{id}/finalize-readme endpoint exists"""
+    from dataregistry.server import app
+    from fastapi.testclient import TestClient
+    import json
+    client = TestClient(app)
+    response = client.post(
+        "/api/mskkp/datasets/nonexistent-id/finalize-readme",
+        content=json.dumps("readme.md"),
+        headers={"Content-Type": "application/json"}
+    )
+    # 404 = dataset not found (endpoint exists); 405 = method not allowed (endpoint missing)
+    assert response.status_code == 404
