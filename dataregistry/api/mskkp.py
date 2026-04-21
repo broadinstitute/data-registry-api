@@ -458,10 +458,10 @@ async def validate_mskkp_dataset(request: MSKKPDatasetRequest):
 
 
 @router.get("/mskkp/datasets")
-async def list_mskkp_datasets():
-    """List all MSKKP GWAS datasets"""
-    # TODO: Implement database query to list MSKKP datasets
-    return {"datasets": []}
+async def list_mskkp_datasets_endpoint():
+    """List all MSKKP GWAS datasets that have been uploaded."""
+    datasets = query.list_mskkp_datasets(engine)
+    return {"datasets": datasets}
 
 
 @router.delete("/mskkp/datasets/{dataset_id}")

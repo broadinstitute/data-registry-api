@@ -637,6 +637,27 @@ def update_mskkp_readme_path(engine, dataset_id: str, readme_s3_path: str) -> bo
         return result.rowcount > 0
 
 
+def list_mskkp_datasets(engine):
+    """List all MSKKP datasets that have a file uploaded, newest first."""
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+            SELECT id, name, phenotype, ancestry, genome_build, effective_n,
+                   file_name, file_size, s3_path, readme_s3_path,
+                   uploaded_at, uploaded_by, status
+            FROM mskkp_datasets
+            WHERE file_size > 0
+            ORDER BY uploaded_at DESC
+        """))
+        rows = []
+        for row in result:
+            d = dict(row._mapping)
+            # Ensure id is a plain string (handles BINARY column type)
+            if isinstance(d.get('id'), bytes):
+                d['id'] = d['id'].hex()
+            rows.append(d)
+        return rows
+
+
 def update_file_qc_status(engine, file_id, qc_status):
     with engine.connect() as conn:
         conn.execute(text("UPDATE file_uploads set qc_status = :qc_status where id = :file_id"),

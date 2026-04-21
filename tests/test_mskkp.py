@@ -127,3 +127,34 @@ def test_readme_finalize_endpoint_exists():
     )
     # 404 = dataset not found (endpoint exists); 405 = method not allowed (endpoint missing)
     assert response.status_code == 404
+
+
+def test_list_mskkp_datasets_function_exists():
+    """list_mskkp_datasets function exists in query module"""
+    import inspect
+    from dataregistry.api import query
+    assert hasattr(query, 'list_mskkp_datasets'), "list_mskkp_datasets not found in query module"
+    sig = inspect.signature(query.list_mskkp_datasets)
+    assert 'engine' in sig.parameters
+
+
+def test_list_mskkp_datasets_sql():
+    """list_mskkp_datasets SELECT includes required columns"""
+    import inspect
+    from dataregistry.api import query
+    source = inspect.getsource(query.list_mskkp_datasets)
+    for col in ['name', 'ancestry', 'genome_build', 'file_name', 'file_size',
+                'uploaded_at', 'uploaded_by', 'readme_s3_path', 'status']:
+        assert col in source, f"Expected column '{col}' in list_mskkp_datasets SQL"
+
+
+def test_list_endpoint_returns_datasets_key():
+    """GET /api/mskkp/datasets returns a dict with 'datasets' key"""
+    from dataregistry.server import app
+    from fastapi.testclient import TestClient
+    client = TestClient(app)
+    response = client.get('/api/mskkp/datasets')
+    assert response.status_code == 200
+    body = response.json()
+    assert 'datasets' in body
+    assert isinstance(body['datasets'], list)
