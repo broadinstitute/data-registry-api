@@ -653,7 +653,7 @@ def list_mskkp_datasets(engine):
             d = row._asdict()
             # Ensure id is a plain string (handles BINARY column type)
             if isinstance(d.get('id'), bytes):
-                d['id'] = d['id'].hex()
+                d['id'] = d['id'].decode('ascii')
             rows.append(d)
         return rows
 
