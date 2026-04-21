@@ -548,7 +548,7 @@ def get_file_owner(engine, file_id):
 
 def save_mskkp_dataset(engine, dataset_id: str, name: str, metadata: dict, s3_path: str,
                        filename: str, file_size: int, uploader: str,
-                       readme_s3_path: str = None) -> str:
+                       readme_s3_path: Optional[str] = None) -> str:
     """Save MSKKP dataset information to the database."""
     status = 'uploaded' if file_size > 0 else 'pending'
     with engine.connect() as conn:
