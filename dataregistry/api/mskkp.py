@@ -35,18 +35,20 @@ COLUMN_ALIASES = {
     "position": "position",
     "base_pair_location": "position",
     "bp_pos": "position",
-    # reference allele
-    "ref": "reference",
-    "a1": "reference",
-    "reference": "reference",
-    "effect_allele": "reference",
-    "allele1": "reference",
-    # alt allele
-    "alt": "alt",
-    "a2": "alt",
-    "other_allele": "alt",
-    "non_effect_allele": "alt",
-    "allele2": "alt",
+    # effect allele (previously "reference")
+    "ref": "effectAllele",
+    "a1": "effectAllele",
+    "reference": "effectAllele",
+    "effect_allele": "effectAllele",
+    "allele1": "effectAllele",
+    "effectallele": "effectAllele",
+    # non-effect allele (previously "alt")
+    "alt": "nonEffectAllele",
+    "a2": "nonEffectAllele",
+    "other_allele": "nonEffectAllele",
+    "non_effect_allele": "nonEffectAllele",
+    "allele2": "nonEffectAllele",
+    "noneffectallele": "nonEffectAllele",
     # p-value
     "p": "pValue",
     "pval": "pValue",
@@ -68,6 +70,26 @@ COLUMN_ALIASES = {
     "sample_size": "n",
     "samplesize": "n",
     "neff": "n",
+    # standard error (new)
+    "se": "standardError",
+    "stderr": "standardError",
+    "sebeta": "standardError",
+    "standard_error": "standardError",
+    "std_err": "standardError",
+    # HWE p-value (new, optional)
+    "hwe": "hweP",
+    "hwe_p": "hweP",
+    "p_hwe": "hweP",
+    "hwe_pvalue": "hweP",
+    # imputation quality (new, optional)
+    "info": "imputationQuality",
+    "rsq": "imputationQuality",
+    "r2": "imputationQuality",
+    "imputation_quality": "imputationQuality",
+    # is imputed (new, optional)
+    "imputed": "isImputed",
+    "is_imputed": "isImputed",
+    "genotyped": "isImputed",
 }
 
 SIMILARITY_THRESHOLD = 0.6
@@ -103,6 +125,13 @@ def suggest_column_map(columns: List[str], target_fields: List[str], aliases: Di
     for col in columns:
         col_lower = col.lower().strip()
 
+        # Check alias dict first (allows multiple columns to map to the same target)
+        alias_target = aliases.get(col_lower)
+        if alias_target and alias_target in target_fields:
+            suggested[col] = alias_target
+            matched_targets.add(alias_target)
+            continue
+
         # Check exact match against target fields
         for target in target_fields:
             if target in matched_targets:
@@ -111,12 +140,6 @@ def suggest_column_map(columns: List[str], target_fields: List[str], aliases: Di
                 suggested[col] = target
                 matched_targets.add(target)
                 break
-        else:
-            # Check alias dict
-            alias_target = aliases.get(col_lower)
-            if alias_target and alias_target in target_fields and alias_target not in matched_targets:
-                suggested[col] = alias_target
-                matched_targets.add(alias_target)
 
     # Pass 2: fuzzy match remaining columns against remaining targets
     unmatched_cols = [c for c in columns if c not in suggested]
@@ -144,7 +167,7 @@ class MSKKPDatasetMetadata(BaseModel):
     """Metadata for MSKKP GWAS dataset"""
     name: str
     ancestry: str
-    phenotype: Optional[str] = None
+    phenotype: str  # Required: describe the phenotype/trait and how it was defined
     effective_n: Optional[int] = None
     genome_build: str
     column_map: Dict[str, str]
@@ -161,7 +184,7 @@ class MSKKPDatasetCreateRequest(BaseModel):
     """Request to create MSKKP dataset metadata before file upload"""
     name: str
     ancestry: str
-    phenotype: Optional[str] = None
+    phenotype: str  # Required
     effective_n: Optional[int] = None
     genome_build: str
     column_map: Dict[str, str]
