@@ -266,7 +266,7 @@ async def get_mskkp_dataset_presigned_url(dataset_id: str, filename: str):
         )
     
     dataset_name = dataset['name']
-    _validate_s3_component(dataset_name, 'dataset name')
+    _validate_s3_component(dataset_name, 'cohort name')
     _validate_s3_component(filename, 'filename')
 
     # Construct S3 path
@@ -288,7 +288,7 @@ async def finalize_mskkp_dataset_upload(dataset_id: str, filename: str = Body(..
         )
     
     dataset_name = dataset['name']
-    _validate_s3_component(dataset_name, 'dataset name')
+    _validate_s3_component(dataset_name, 'cohort name')
     _validate_s3_component(filename, 'filename')
     s3_path = f"mskkp/{dataset_name}/{filename}"
 
@@ -345,7 +345,7 @@ async def get_mskkp_readme_presigned_url(dataset_id: str, filename: str):
         )
 
     dataset_name = dataset['name']
-    _validate_s3_component(dataset_name, 'dataset name')
+    _validate_s3_component(dataset_name, 'cohort name')
     _validate_s3_component(filename, 'readme filename')
 
     s3_path = f"mskkp/{dataset_name}/readme/{filename}"
@@ -363,7 +363,7 @@ async def finalize_mskkp_readme_upload(dataset_id: str, filename: str = Body(...
         )
 
     dataset_name = dataset['name']
-    _validate_s3_component(dataset_name, 'dataset name')
+    _validate_s3_component(dataset_name, 'cohort name')
     _validate_s3_component(filename, 'readme filename')
     readme_s3_path = f"mskkp/{dataset_name}/readme/{filename}"
 
@@ -406,7 +406,7 @@ async def get_mskkp_presigned_url(request: Request):
             detail="Filename and Dataset headers are required"
         )
     _validate_s3_component(filename, 'filename')
-    _validate_s3_component(dataset_name, 'dataset name')
+    _validate_s3_component(dataset_name, 'cohort name')
 
     # Create S3 path: mskkp/{dataset_name}/{filename}
     s3_path = f"mskkp/{dataset_name}/{filename}"
@@ -420,7 +420,7 @@ async def validate_mskkp_dataset(request: MSKKPDatasetRequest):
     dataset_name = request.dataset_name
     filename = request.file_name
     metadata = request.metadata
-    _validate_s3_component(dataset_name, 'dataset name')
+    _validate_s3_component(dataset_name, 'cohort name')
     _validate_s3_component(filename, 'filename')
 
     # Construct S3 path
