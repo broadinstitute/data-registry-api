@@ -61,3 +61,19 @@ def test_existing_aliases_still_work():
     assert result["chr"] == "chromosome"
     assert result["bp"] == "position"
     assert result["pval"] == "pValue"
+
+
+def test_save_function_signature():
+    """save_mskkp_dataset accepts readme_s3_path parameter"""
+    import inspect
+    from dataregistry.api.query import save_mskkp_dataset
+    sig = inspect.signature(save_mskkp_dataset)
+    assert 'readme_s3_path' in sig.parameters
+
+
+def test_fetch_returns_readme_s3_path():
+    """fetch_mskkp_dataset_by_id includes readme_s3_path in its SELECT"""
+    import inspect
+    from dataregistry.api import query
+    source = inspect.getsource(query.fetch_mskkp_dataset_by_id)
+    assert 'readme_s3_path' in source
