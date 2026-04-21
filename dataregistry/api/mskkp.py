@@ -8,6 +8,7 @@ from typing import Dict, List, Optional
 from uuid import UUID, uuid4
 
 import boto3
+import botocore.exceptions
 import fastapi
 import pandas as pd
 from fastapi import Request, Header, Body
@@ -321,11 +322,11 @@ async def finalize_mskkp_dataset_upload(dataset_id: str, filename: str = Body(..
             "s3_path": s3_path,
             "message": "File uploaded successfully"
         }
-    except Exception as e:
-        if 'Not Found' in str(e) or '404' in str(e):
+    except botocore.exceptions.ClientError as e:
+        if e.response['Error']['Code'] == '404':
             raise fastapi.HTTPException(
                 status_code=404,
-                detail=f"File not found in S3. Please upload the file first."
+                detail="File not found in S3. Please upload the file first."
             )
         raise fastapi.HTTPException(
             status_code=500,
@@ -378,8 +379,8 @@ async def finalize_mskkp_readme_upload(dataset_id: str, filename: str = Body(...
             "readme_s3_path": readme_s3_path,
             "message": "README uploaded successfully"
         }
-    except Exception as e:
-        if 'Not Found' in str(e) or '404' in str(e):
+    except botocore.exceptions.ClientError as e:
+        if e.response['Error']['Code'] == '404':
             raise fastapi.HTTPException(
                 status_code=404,
                 detail="README file not found in S3. Please upload the file first."
