@@ -158,3 +158,27 @@ def test_list_endpoint_returns_datasets_key():
     body = response.json()
     assert 'datasets' in body
     assert isinstance(body['datasets'], list)
+
+
+def test_download_endpoint_exists():
+    """GET /api/mskkp/datasets/{id}/download returns 404 for unknown id, not 405"""
+    from dataregistry.server import app
+    from fastapi.testclient import TestClient
+    client = TestClient(app)
+    response = client.get('/api/mskkp/datasets/nonexistent-id/download')
+    assert response.status_code == 404, (
+        f"Expected 404 (dataset not found) but got {response.status_code}. "
+        "405 means the endpoint doesn't exist."
+    )
+
+
+def test_download_readme_endpoint_exists():
+    """GET /api/mskkp/datasets/{id}/download-readme returns 404 for unknown id, not 405"""
+    from dataregistry.server import app
+    from fastapi.testclient import TestClient
+    client = TestClient(app)
+    response = client.get('/api/mskkp/datasets/nonexistent-id/download-readme')
+    assert response.status_code == 404, (
+        f"Expected 404 (dataset not found) but got {response.status_code}. "
+        "405 means the endpoint doesn't exist."
+    )

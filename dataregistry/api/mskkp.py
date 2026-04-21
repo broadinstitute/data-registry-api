@@ -464,6 +464,49 @@ async def list_mskkp_datasets_endpoint():
     return {"datasets": datasets}
 
 
+@router.get("/mskkp/datasets/{dataset_id}/download")
+async def download_mskkp_dataset(dataset_id: str):
+    """Get a presigned download URL for an MSKKP GWAS file."""
+    dataset = query.fetch_mskkp_dataset_by_id(engine, dataset_id)
+    if not dataset:
+        raise fastapi.HTTPException(
+            status_code=404,
+            detail=f"Dataset with ID '{dataset_id}' not found"
+        )
+    if not dataset.get('s3_path'):
+        raise fastapi.HTTPException(
+            status_code=404,
+            detail="No file has been uploaded for this dataset"
+        )
+    presigned_url = s3.get_signed_url(s3.BASE_BUCKET, dataset['s3_path'])
+    return {
+        "presigned_url": presigned_url,
+        "file_name": dataset['file_name'],
+        "file_size": dataset['file_size'],
+    }
+
+
+@router.get("/mskkp/datasets/{dataset_id}/download-readme")
+async def download_mskkp_readme(dataset_id: str):
+    """Get a presigned download URL for an MSKKP README file."""
+    dataset = query.fetch_mskkp_dataset_by_id(engine, dataset_id)
+    if not dataset:
+        raise fastapi.HTTPException(
+            status_code=404,
+            detail=f"Dataset with ID '{dataset_id}' not found"
+        )
+    if not dataset.get('readme_s3_path'):
+        raise fastapi.HTTPException(
+            status_code=404,
+            detail="No README has been uploaded for this dataset"
+        )
+    presigned_url = s3.get_signed_url(s3.BASE_BUCKET, dataset['readme_s3_path'])
+    return {
+        "presigned_url": presigned_url,
+        "file_name": dataset['readme_s3_path'].split('/')[-1],
+    }
+
+
 @router.delete("/mskkp/datasets/{dataset_id}")
 async def delete_mskkp_dataset(dataset_id: str):
     """Delete an MSKKP GWAS dataset"""
