@@ -565,7 +565,7 @@ def save_mskkp_dataset(engine, dataset_id: str, name: str, metadata: dict, s3_pa
         """), {
             'id': dataset_id.replace('-', ''),
             'name': name,
-            'phenotype': metadata.get('phenotype', ''),
+            'phenotype': metadata['phenotype'],
             'ancestry': metadata['ancestry'],
             'genome_build': metadata['genome_build'],
             'effective_n': metadata.get('effective_n'),
@@ -622,10 +622,10 @@ def update_mskkp_dataset_file_info(engine, dataset_id: str, s3_path: str, filena
         conn.commit()
 
 
-def update_mskkp_readme_path(engine, dataset_id: str, readme_s3_path: str):
-    """Update the README S3 path for an MSKKP dataset."""
+def update_mskkp_readme_path(engine, dataset_id: str, readme_s3_path: str) -> bool:
+    """Update the README S3 path for an MSKKP dataset. Returns True if a row was updated."""
     with engine.connect() as conn:
-        conn.execute(text("""
+        result = conn.execute(text("""
             UPDATE mskkp_datasets
             SET readme_s3_path = :readme_s3_path
             WHERE id = :id
@@ -634,6 +634,7 @@ def update_mskkp_readme_path(engine, dataset_id: str, readme_s3_path: str):
             'id': dataset_id.replace('-', '')
         })
         conn.commit()
+        return result.rowcount > 0
 
 
 def update_file_qc_status(engine, file_id, qc_status):
