@@ -84,12 +84,10 @@ COLUMN_ALIASES = {
     # imputation quality (new, optional)
     "info": "imputationQuality",
     "rsq": "imputationQuality",
-    "r2": "imputationQuality",
     "imputation_quality": "imputationQuality",
     # is imputed (new, optional)
     "imputed": "isImputed",
     "is_imputed": "isImputed",
-    "genotyped": "isImputed",
 }
 
 SIMILARITY_THRESHOLD = 0.6
@@ -106,7 +104,7 @@ def _validate_s3_component(value: str, field: str) -> None:
         )
 
 
-def suggest_column_map(columns: List[str], target_fields: List[str], aliases: Dict[str, str] = None) -> Dict[str, str]:
+def suggest_column_map(columns: List[str], target_fields: List[str], aliases: Optional[Dict[str, str]] = None) -> Dict[str, str]:
     """Suggest mappings from file columns to target fields using aliases and string similarity.
 
     Args:
@@ -125,7 +123,9 @@ def suggest_column_map(columns: List[str], target_fields: List[str], aliases: Di
     for col in columns:
         col_lower = col.lower().strip()
 
-        # Check alias dict first (allows multiple columns to map to the same target)
+        # Alias pass: check alias dict first, before exact match.
+        # Multiple input columns may alias to the same canonical target (e.g., both "ref" and "effect_allele"
+        # can map to "effectAllele"). This is intentional for suggestion use: the user picks which one to keep.
         alias_target = aliases.get(col_lower)
         if alias_target and alias_target in target_fields:
             suggested[col] = alias_target
