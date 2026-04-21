@@ -1,3 +1,4 @@
+import pytest
 from dataregistry.api.mskkp import suggest_column_map
 
 
@@ -69,6 +70,30 @@ def test_save_function_signature():
     from dataregistry.api.query import save_mskkp_dataset
     sig = inspect.signature(save_mskkp_dataset)
     assert 'readme_s3_path' in sig.parameters
+
+
+def test_column_map_requires_standard_error():
+    """MSKKPDatasetCreateRequest rejects column_map missing standardError"""
+    from pydantic import ValidationError
+    from dataregistry.api.mskkp import MSKKPDatasetCreateRequest
+    complete_map = {
+        "chromosome": "chr", "position": "bp", "effectAllele": "effect_allele",
+        "nonEffectAllele": "non_effect_allele", "pValue": "pval", "standardError": "se"
+    }
+    # Should pass with all required columns
+    req = MSKKPDatasetCreateRequest(
+        name="test", ancestry="EUR", phenotype="T2D", genome_build="GRCh38",
+        column_map=complete_map
+    )
+    assert req.column_map == complete_map
+
+    # Should fail without standardError
+    with pytest.raises(ValidationError) as exc_info:
+        MSKKPDatasetCreateRequest(
+            name="test", ancestry="EUR", phenotype="T2D", genome_build="GRCh38",
+            column_map={k: v for k, v in complete_map.items() if k != "standardError"}
+        )
+    assert "standardError" in str(exc_info.value)
 
 
 def test_fetch_returns_readme_s3_path():

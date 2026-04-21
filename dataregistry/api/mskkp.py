@@ -12,7 +12,7 @@ import botocore.exceptions
 import fastapi
 import pandas as pd
 from fastapi import Request, Header, Body
-from pydantic import BaseModel
+from pydantic import BaseModel, validator
 from sqlalchemy.exc import IntegrityError
 
 from dataregistry.api import query
@@ -181,6 +181,9 @@ class MSKKPDatasetRequest(BaseModel):
     metadata: MSKKPDatasetMetadata
 
 
+REQUIRED_COLUMN_MAPPINGS = {"chromosome", "position", "effectAllele", "nonEffectAllele", "pValue", "standardError"}
+
+
 class MSKKPDatasetCreateRequest(BaseModel):
     """Request to create MSKKP dataset metadata before file upload"""
     name: str
@@ -189,6 +192,13 @@ class MSKKPDatasetCreateRequest(BaseModel):
     effective_n: Optional[int] = None
     genome_build: str
     column_map: Dict[str, str]
+
+    @validator('column_map')
+    def required_columns_present(cls, v):
+        missing = REQUIRED_COLUMN_MAPPINGS - set(v.keys())
+        if missing:
+            raise ValueError(f"column_map is missing required fields: {', '.join(sorted(missing))}")
+        return v
 
 
 class ColumnMapSuggestionRequest(BaseModel):
