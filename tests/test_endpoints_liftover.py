@@ -10,7 +10,6 @@ Endpoints tested:
 import uuid
 
 import boto3
-import pytest
 from moto import mock_aws
 from sqlalchemy import text
 from starlette.status import (

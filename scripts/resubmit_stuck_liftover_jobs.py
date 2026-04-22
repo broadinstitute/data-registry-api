@@ -15,7 +15,6 @@ Usage:
 import argparse
 import os
 import sys
-import time
 
 # Make the repo root importable when this script is run directly.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
