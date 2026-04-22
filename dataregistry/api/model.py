@@ -276,7 +276,7 @@ class QCHermesFileRequest(BaseModel):
     dataset: str
     metadata: dict
     qc_script_options: QCScriptOptions
-    genome_build: str = 'na'
+    genome_build: GenomeBuild = GenomeBuild.na
 
 class HermesPhenotype(BaseModel):
     name: str
@@ -368,7 +368,7 @@ class FileUpload(BaseModel):
     phenotype: Union[str, None]
     ancestry: Union[str, None]
     metadata: Union[dict, None]
-    genome_build: str = 'na'
+    genome_build: GenomeBuild = GenomeBuild.na
     qc_status: HermesFileStatus
     s3_path: Union[str, None]
     qc_log: Union[str, None]
@@ -426,10 +426,10 @@ class SGCGWASCohort(BaseModel):
 class LiftoverJob(BaseModel):
     id: Union[UUID, None] = None
     file_id: UUID
-    source_genome_build: str
-    target_genome_build: str
+    source_genome_build: GenomeBuild
+    target_genome_build: GenomeBuild
     batch_job_id: Union[str, None] = None
-    status: str = 'SUBMITTED'
+    status: str = 'SUBMITTED'  # SUBMITTED, RUNNING, COMPLETE, FAILED
     submitted_at: Union[datetime, None] = None
     completed_at: Union[datetime, None] = None
     submitted_by: str = ''
@@ -441,7 +441,7 @@ class LiftoverJob(BaseModel):
 
 class PortalLiftoverConfig(BaseModel):
     portal_id: str
-    target_genome_build: str
+    target_genome_build: GenomeBuild
     updated_at: Union[datetime, None] = None
     updated_by: str = ''
 

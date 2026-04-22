@@ -38,7 +38,7 @@ def upgrade() -> None:
         `target_genome_build` VARCHAR(16) NOT NULL,
         `batch_job_id` VARCHAR(128) NULL,
         `status` VARCHAR(64) NOT NULL,
-        `submitted_at` DATETIME NULL,
+        `submitted_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         `completed_at` DATETIME NULL,
         `submitted_by` VARCHAR(255) NOT NULL,
         `original_s3_path` VARCHAR(1024) NULL,
@@ -47,7 +47,8 @@ def upgrade() -> None:
         `log` MEDIUMTEXT NULL,
         PRIMARY KEY (`id`),
         KEY `liftover_jobs_file_id_idx` (`file_id`),
-        CONSTRAINT `liftover_jobs_file_fk` FOREIGN KEY (`file_id`) REFERENCES `file_uploads` (`id`)
+        KEY `liftover_jobs_status_idx` (`status`),
+        CONSTRAINT `liftover_jobs_file_fk` FOREIGN KEY (`file_id`) REFERENCES `file_uploads` (`id`) ON DELETE CASCADE
         )
     """))
 
@@ -59,8 +60,8 @@ def upgrade() -> None:
 
     # Seed hermes portal config row
     conn.execute(text("""
-        INSERT INTO `portal_liftover_config` (`portal_id`, `target_genome_build`, `updated_at`, `updated_by`)
-        VALUES ('hermes', 'grch37', NOW(), 'system')
+        INSERT IGNORE INTO `portal_liftover_config` (`portal_id`, `target_genome_build`, `updated_at`, `updated_by`)
+        VALUES ('hermes', 'hg19', NOW(), 'system')
     """))
 
 
