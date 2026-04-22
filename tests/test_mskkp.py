@@ -182,3 +182,48 @@ def test_download_readme_endpoint_exists():
         f"Expected 404 (dataset not found) but got {response.status_code}. "
         "405 means the endpoint doesn't exist."
     )
+
+
+def test_fetch_by_name_helper_exists():
+    """fetch_mskkp_dataset_by_name is available and looks up by name, returning status."""
+    import inspect
+    from dataregistry.api import query
+    assert hasattr(query, 'fetch_mskkp_dataset_by_name')
+    source = inspect.getsource(query.fetch_mskkp_dataset_by_name)
+    assert 'WHERE name = :name' in source
+    assert 'status' in source
+
+
+def test_update_metadata_helper_only_touches_pending_rows():
+    """update_mskkp_dataset_metadata guards on status='pending' so uploaded rows can't be clobbered."""
+    import inspect
+    from dataregistry.api import query
+    assert hasattr(query, 'update_mskkp_dataset_metadata')
+    source = inspect.getsource(query.update_mskkp_dataset_metadata)
+    assert "status = 'pending'" in source
+    # Must not alter file_name / file_size / s3_path / status
+    for forbidden in ['file_name =', 'file_size =', 's3_path =', 'status =']:
+        assert forbidden not in source, f"update_mskkp_dataset_metadata must not SET {forbidden}"
+
+
+def test_create_dataset_reuses_pending_stub_on_name_collision():
+    """create_mskkp_dataset source reuses a pending stub instead of 409-ing on name collision."""
+    import inspect
+    from dataregistry.api import mskkp
+    source = inspect.getsource(mskkp.create_mskkp_dataset)
+    assert 'fetch_mskkp_dataset_by_name' in source
+    assert 'update_mskkp_dataset_metadata' in source
+    assert "'pending'" in source
+
+
+def test_delete_endpoint_removed():
+    """The unimplemented DELETE /api/mskkp/datasets/{id} stub has been removed."""
+    from dataregistry.server import app
+    from fastapi.testclient import TestClient
+    client = TestClient(app)
+    response = client.delete('/api/mskkp/datasets/nonexistent-id')
+    # 405 = method not allowed (route absent, as intended)
+    assert response.status_code == 405, (
+        f"Expected 405 (no DELETE route) but got {response.status_code}. "
+        "The DELETE stub was lying about success without deleting anything."
+    )

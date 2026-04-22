@@ -603,6 +603,58 @@ def fetch_mskkp_dataset_by_id(engine, dataset_id: str):
         return None
 
 
+def fetch_mskkp_dataset_by_name(engine, name: str):
+    """Fetch an MSKKP dataset by cohort name. Returns None if not found."""
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+            SELECT id, name, phenotype, ancestry, genome_build, effective_n,
+                   file_name, file_size, s3_path, readme_s3_path, uploaded_at, uploaded_by,
+                   column_map, metadata, status
+            FROM mskkp_datasets
+            WHERE name = :name
+        """), {'name': name}).first()
+
+        if result:
+            row_dict = result._asdict()
+            if isinstance(row_dict.get('id'), bytes):
+                row_dict['id'] = row_dict['id'].decode('ascii')
+            if row_dict.get('column_map'):
+                row_dict['column_map'] = json.loads(row_dict['column_map'])
+            if row_dict.get('metadata'):
+                row_dict['metadata'] = json.loads(row_dict['metadata'])
+            return row_dict
+        return None
+
+
+def update_mskkp_dataset_metadata(engine, dataset_id: str, metadata: dict):
+    """Overwrite metadata fields on a pending (stub) MSKKP dataset row.
+
+    Does not touch file_name / file_size / s3_path / status — those are set by
+    the upload finalize step. Used to let a user retry with the same cohort
+    name when a prior attempt failed before the file was uploaded.
+    """
+    with engine.connect() as conn:
+        conn.execute(text("""
+            UPDATE mskkp_datasets
+            SET phenotype = :phenotype,
+                ancestry = :ancestry,
+                genome_build = :genome_build,
+                effective_n = :effective_n,
+                column_map = :column_map,
+                metadata = :metadata
+            WHERE id = :id AND status = 'pending'
+        """), {
+            'id': dataset_id.replace('-', ''),
+            'phenotype': metadata['phenotype'],
+            'ancestry': metadata['ancestry'],
+            'genome_build': metadata['genome_build'],
+            'effective_n': metadata.get('effective_n'),
+            'column_map': json.dumps(metadata['column_map']),
+            'metadata': json.dumps(metadata),
+        })
+        conn.commit()
+
+
 def update_mskkp_dataset_file_info(engine, dataset_id: str, s3_path: str, filename: str, file_size: int):
     """Update file information for an MSKKP dataset after upload."""
     with engine.connect() as conn:

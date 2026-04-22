@@ -241,15 +241,27 @@ async def create_mskkp_dataset(request: MSKKPDatasetCreateRequest):
             uploader='anonymous'
         )
     except IntegrityError as e:
-        # Check if it's a duplicate key error
-        if 'Duplicate entry' in str(e.orig) or 'mskkp_datasets_name_unique' in str(e.orig):
-            raise fastapi.HTTPException(
-                status_code=409,
-                detail=f"A cohort with the name '{request.name}' already exists. Please choose a different name."
-            )
-        # Re-raise if it's a different integrity error
-        raise
-    
+        # Name collision: if the existing row is a never-finalized stub from a
+        # prior failed attempt, reuse it so the user can retry with the same
+        # cohort name. Only reject if a file was actually uploaded.
+        is_duplicate_name = 'Duplicate entry' in str(e.orig) or 'mskkp_datasets_name_unique' in str(e.orig)
+        if not is_duplicate_name:
+            raise
+
+        existing = query.fetch_mskkp_dataset_by_name(engine, request.name)
+        if existing and existing.get('status') == 'pending':
+            query.update_mskkp_dataset_metadata(engine, existing['id'], metadata)
+            return {
+                "dataset_id": existing['id'],
+                "name": request.name,
+                "message": "Resumed prior upload attempt. You can now upload the file."
+            }
+
+        raise fastapi.HTTPException(
+            status_code=409,
+            detail=f"A cohort with the name '{request.name}' already exists. Please choose a different name."
+        )
+
     return {
         "dataset_id": dataset_id,
         "name": request.name,
@@ -517,8 +529,3 @@ async def download_mskkp_readme(dataset_id: str):
         raise fastapi.HTTPException(status_code=500, detail=f"Error generating README download URL: {str(e)}")
 
 
-@router.delete("/mskkp/datasets/{dataset_id}")
-async def delete_mskkp_dataset(dataset_id: str):
-    """Delete an MSKKP GWAS dataset"""
-    # TODO: Implement deletion logic
-    return {"message": f"Dataset {dataset_id} deleted successfully"}
