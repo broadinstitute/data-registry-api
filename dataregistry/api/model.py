@@ -446,3 +446,7 @@ class PortalLiftoverConfig(BaseModel):
     updated_by: str = ''
 
 
+class PortalConfigUpdateRequest(BaseModel):
+    target_genome_build: GenomeBuild
+
+

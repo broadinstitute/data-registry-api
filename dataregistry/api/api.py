@@ -21,7 +21,7 @@ from starlette.responses import StreamingResponse, Response, RedirectResponse
 from streaming_form_data import StreamingFormDataParser
 from streaming_form_data.targets import S3Target
 
-from dataregistry.api import query, s3, file_utils, ecs, bioidx, batch
+from dataregistry.api import query, s3, file_utils, ecs, bioidx, batch, liftover
 from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api.google_oauth import get_google_user
 from dataregistry.api.hermes_file_validation import validate_file
@@ -29,7 +29,7 @@ from dataregistry.api.jwt_utils import get_encoded_jwt_data, get_decoded_jwt_dat
 from dataregistry.api.model import DataSet, Study, SavedDatasetInfo, SavedDataset, UserCredentials, User, SavedStudy, \
     CreateBiondexRequest, CsvBioIndexRequest, BioIndexCreationStatus, SavedCsvBioIndexRequest, HermesFileStatus, \
     HermesUploadStatus, NewUserRequest, StartAggregatorRequest, MetaAnalysisRequest, QCHermesFileRequest, \
-    QCScriptOptions, HermesPhenotype, FileType
+    QCScriptOptions, HermesPhenotype, FileType, PortalConfigUpdateRequest, GenomeBuild
 from dataregistry.api.phenotypes import get_phenotypes
 from dataregistry.api.validators import HermesValidator
 
@@ -409,10 +409,41 @@ async def validate_hermes_csv(request: QCHermesFileRequest, background_tasks: Ba
 
     script_options = {k: v for k, v in request.qc_script_options.dict().items() if v is not None}
     s3.upload_metadata(metadata, f"hermes/{dataset}")
-    file_guid = query.save_file_upload_info(engine, dataset, metadata, s3_path, filename, file_size, user.user_name,
-                                            script_options)
 
-    # Submit the batch job for further processing
+    # Determine whether a liftover is needed before inserting so we can set
+    # the correct initial qc_status in one write.
+    target_build = query.get_portal_target_build(engine, 'hermes')
+    needs_liftover = (
+        target_build is not None and liftover.should_liftover(request.genome_build, target_build)
+    )
+    initial_qc_status = (
+        HermesFileStatus.SUBMITTED_TO_LIFTOVER.value if needs_liftover else 'SUBMITTED TO QC'
+    )
+
+    file_guid = query.save_file_upload_info(
+        engine, dataset, metadata, s3_path, filename, file_size, user.user_name,
+        script_options,
+        genome_build=request.genome_build.value,
+        initial_qc_status=initial_qc_status,
+    )
+
+    if needs_liftover:
+        # Liftover flow — the callback chains into QC on SUCCEEDED.
+        liftover.submit_liftover_then_qc(
+            engine, file_guid, request.genome_build, target_build,
+            dataset, filename, metadata['column_map'], script_options,
+            user.user_name, background_tasks,
+        )
+        return {
+            "file_size": file_size,
+            "s3_path": s3_path,
+            "file_id": file_guid,
+            "liftover_pending": True,
+            "source_build": request.genome_build.value,
+            "target_build": target_build.value,
+        }
+
+    # Existing path — submit QC directly.
     background_tasks.add_task(batch.submit_and_await_job, engine, {
         'jobName': 'hermes-qc-job',
         'jobQueue': 'hermes-qc-job-queue',
@@ -425,6 +456,65 @@ async def validate_hermes_csv(request: QCHermesFileRequest, background_tasks: Ba
         }}, query.update_file_upload_qc_log, file_guid, True)
 
     return {"file_size": file_size, "s3_path": s3_path, "file_id": file_guid}
+
+
+@router.get("/hermes/liftover/{file_id}")
+async def get_liftover_job(file_id: UUID, user: User = Depends(get_current_user)):
+    """Return the most recent liftover_jobs row for a file.
+
+    Auth: owner OR any VIEW_ALL_ROLES member (mirrors fetch_single_file_upload).
+    """
+    if not (VIEW_ALL_ROLES.intersection(user.roles) or
+            query.get_file_owner(engine, file_id) == user.user_name):
+        raise fastapi.HTTPException(status_code=401, detail='you aren\'t authorized to view this dataset')
+
+    liftover_job = query.fetch_liftover_job_by_file_id(engine, str(file_id))
+    if liftover_job is None:
+        raise fastapi.HTTPException(status_code=404, detail='no liftover job found for this file')
+    return liftover_job
+
+
+@router.get("/hermes/liftover/{file_id}/unmapped-url")
+async def get_liftover_unmapped_url(file_id: UUID, user: User = Depends(get_current_user)):
+    """Return a presigned GET URL for the unmapped-variants TSV produced by liftover.
+
+    Auth: owner OR any VIEW_ALL_ROLES member.
+    """
+    if not (VIEW_ALL_ROLES.intersection(user.roles) or
+            query.get_file_owner(engine, file_id) == user.user_name):
+        raise fastapi.HTTPException(status_code=401, detail='you aren\'t authorized to view this dataset')
+
+    liftover_job = query.fetch_liftover_job_by_file_id(engine, str(file_id))
+    if liftover_job is None or not liftover_job.unmapped_s3_path:
+        raise fastapi.HTTPException(status_code=404, detail='no unmapped file available for this liftover job')
+
+    # Strip the s3://bucket/ prefix to get the key for presigned URL generation.
+    prefix = f"s3://{s3.BASE_BUCKET}/"
+    key = liftover_job.unmapped_s3_path[len(prefix):] if liftover_job.unmapped_s3_path.startswith(prefix) \
+        else liftover_job.unmapped_s3_path
+    return s3.generate_presigned_url_with_path(key)
+
+
+@router.get("/hermes/portal-config")
+async def get_hermes_portal_config():
+    """Public endpoint — returns the portal target genome build (or null).
+
+    The upload form uses this to decide whether to display the liftover notice.
+    """
+    target = query.get_portal_target_build(engine, 'hermes')
+    return {"target_genome_build": target.value if target is not None else None}
+
+
+@router.put("/hermes/portal-config")
+async def set_hermes_portal_config(
+    request: PortalConfigUpdateRequest,
+    user: User = Depends(get_current_user),
+):
+    """Admin-only — set the portal target genome build for automatic liftover."""
+    if SUPER_USER not in user.roles:
+        raise fastapi.HTTPException(status_code=401, detail='admin role required')
+    query.set_portal_target_build(engine, 'hermes', request.target_genome_build, user.user_name)
+    return {"target_genome_build": request.target_genome_build.value}
 
 
 @router.get("/upload-hermes/{file_id}")
