@@ -22,9 +22,9 @@ import subprocess
 import sys
 import tempfile
 import time
-from typing import Optional
 
 import boto3
+import numpy as np
 import pandas as pd
 
 logging.basicConfig(
@@ -137,28 +137,41 @@ def tsv_to_bed(df: pd.DataFrame, column_mapping: dict) -> list[str]:
     ref_col = column_mapping["ref"]
     alt_col = column_mapping["alt"]
 
-    seen_varids: set[str] = set()
-    bed_lines = []
+    # Vectorized chromosome standardization
+    std_chr = df[chr_col].astype(str).apply(standardize_chromosome)
 
-    for _, row in df.iterrows():
-        std_chr = standardize_chromosome(str(row[chr_col]))
-        pos = int(row[pos_col])
-        ref = str(row[ref_col])
-        alt = str(row[alt_col])
+    pos = df[pos_col].astype(int)
 
-        varid = f"{std_chr}_{pos}_{ref}_{alt}"
+    # Build varid column vectorially
+    varid = std_chr + "_" + pos.astype(str) + "_" + df[ref_col].astype(str) + "_" + df[alt_col].astype(str)
 
-        if varid in seen_varids:
-            log.warning("Duplicate varid encountered and skipped: %s", varid)
-            continue
-        seen_varids.add(varid)
+    bed = pd.DataFrame({
+        "chr": std_chr,
+        "start": pos - 1,
+        "end": pos,
+        "varid": varid,
+        "score": ".",
+        "strand": "+",
+    })
 
-        start = pos - 1  # 0-based
-        end = pos        # 1-based end (== 0-based exclusive)
+    before = len(bed)
+    bed = bed.drop_duplicates(subset=["varid"], keep="first")
+    after = len(bed)
+    dropped = before - after
+    if dropped > 0:
+        log.warning("Duplicate varids dropped from BED: %d", dropped)
 
-        bed_lines.append(f"{std_chr}\t{start}\t{end}\t{varid}\t.\t+")
+    # Build list of tab-separated BED line strings
+    lines = (
+        bed["chr"] + "\t" +
+        bed["start"].astype(str) + "\t" +
+        bed["end"].astype(str) + "\t" +
+        bed["varid"] + "\t" +
+        bed["score"] + "\t" +
+        bed["strand"]
+    ).tolist()
 
-    return bed_lines
+    return lines
 
 
 def run_liftover(
@@ -170,19 +183,41 @@ def run_liftover(
     """
     Execute the UCSC liftOver binary.
 
-    NOTE: liftOver exits non-zero when there are unmapped records — this is
-    normal. We do NOT pass check=True. Instead we verify output files exist.
+    NOTE: liftOver exits with code 1 when there are unmapped records — this is
+    normal. Exit codes other than 0 or 1 indicate a real error; we log stderr
+    at ERROR level and call sys.exit(1).
+
+    After execution we also verify the output files are consistent: if
+    lifted.bed is missing or empty AND there are no unmapped records, something
+    went wrong silently — also sys.exit(1).
     """
     cmd = ["liftOver", bed_path, chain_path, lifted_path, unmapped_path]
     log.info("Running: %s", " ".join(cmd))
     result = subprocess.run(cmd, check=False, capture_output=True, text=True)
     if result.stdout:
         log.info("liftOver stdout: %s", result.stdout.strip())
-    if result.stderr:
-        log.info("liftOver stderr: %s", result.stderr.strip())
     if result.returncode not in (0, 1):
         # Return code 1 = partial mapping (normal). Anything else is a real error.
-        log.warning("liftOver returned unexpected exit code: %d", result.returncode)
+        log.error(
+            "liftOver returned unexpected exit code %d. stderr: %s",
+            result.returncode,
+            result.stderr.strip(),
+        )
+        sys.exit(1)
+    if result.stderr:
+        log.info("liftOver stderr: %s", result.stderr.strip())
+
+    # Sanity check: if lifted.bed is absent/empty AND unmapped is also absent/empty,
+    # liftOver failed silently (e.g. corrupt chain file).
+    lifted_empty = not os.path.exists(lifted_path) or os.path.getsize(lifted_path) == 0
+    unmapped_empty = not os.path.exists(unmapped_path) or os.path.getsize(unmapped_path) == 0
+    if lifted_empty and unmapped_empty:
+        log.error(
+            "liftOver produced no output: lifted.bed and unmapped.bed are both "
+            "absent or empty. The chain file may be corrupt."
+        )
+        sys.exit(1)
+
     return result
 
 
@@ -242,6 +277,7 @@ def apply_lifted_positions(
     - Reverse-complements ref/alt alleles for strand-flipped variants (strand=='-').
     - Drops variants where the lifted chromosome differs from the original
       (after standardization). These are collected as chr_mismatch varids.
+    - Deduplicates on varid (keeps first) to match tsv_to_bed semantics.
 
     Returns:
         (lifted_df, chr_mismatch_varids)
@@ -252,98 +288,71 @@ def apply_lifted_positions(
     ref_col = column_mapping["ref"]
     alt_col = column_mapping["alt"]
 
-    # Build varid for each row in original df (same logic as tsv_to_bed)
-    orig_varids = []
-    orig_std_chrs = []
-    for _, row in df.iterrows():
-        std_chr = standardize_chromosome(str(row[chr_col]))
-        pos = int(row[pos_col])
-        ref = str(row[ref_col])
-        alt = str(row[alt_col])
-        orig_varids.append(f"{std_chr}_{pos}_{ref}_{alt}")
-        orig_std_chrs.append(std_chr)
-
+    # Build _varid and _orig_std_chr columns vectorially
     working = df.copy()
-    working["_varid"] = orig_varids
-    working["_orig_std_chr"] = orig_std_chrs
+    std_chr_series = working[chr_col].astype(str).apply(standardize_chromosome)
+    pos_series = working[pos_col].astype(int)
+    working["_varid"] = (
+        std_chr_series + "_" +
+        pos_series.astype(str) + "_" +
+        working[ref_col].astype(str) + "_" +
+        working[alt_col].astype(str)
+    )
+    working["_orig_std_chr"] = std_chr_series
 
-    # Build lookup from varid -> (new_chr, new_pos, strand)
-    lifted_lookup: dict[str, tuple[str, int, str]] = {}
-    if not lifted_bed_df.empty:
-        for _, row in lifted_bed_df.iterrows():
-            # BED end column = 1-based position (end of half-open [start, end))
-            lifted_lookup[row["varid"]] = (
-                str(row["chr"]),
-                int(row["end"]),  # new 1-based position
-                str(row["strand"]),
-            )
+    # Deduplicate on _varid (keep first) to honour same semantics as tsv_to_bed
+    working = working.drop_duplicates(subset=["_varid"], keep="first")
 
-    # Apply lifted positions; track chr mismatches
-    chr_mismatch_varids: set[str] = set()
-    new_chrs = []
-    new_positions = []
-    new_refs = []
-    new_alts = []
-    keep_mask = []
+    if lifted_bed_df.empty:
+        return df.iloc[0:0].copy(), set()
 
-    for _, row in working.iterrows():
-        varid = row["_varid"]
-        orig_chr = row["_orig_std_chr"]
+    # Standardize lifted chromosome column
+    lifted = lifted_bed_df.copy()
+    lifted["_lifted_std_chr"] = lifted["chr"].astype(str).apply(standardize_chromosome)
 
-        if varid not in lifted_lookup:
-            # This variant was not lifted (handled separately via unmapped BED)
-            keep_mask.append(False)
-            new_chrs.append(None)
-            new_positions.append(None)
-            new_refs.append(None)
-            new_alts.append(None)
-            continue
+    # Merge: inner join keeps only successfully-lifted rows
+    merged = working.merge(
+        lifted[["varid", "_lifted_std_chr", "end", "strand"]],
+        left_on="_varid",
+        right_on="varid",
+        how="inner",
+        suffixes=("", "_lifted"),
+    )
 
-        new_chr, new_pos, strand = lifted_lookup[varid]
+    # Identify chr-mismatch rows (lifted to a different chromosome)
+    chr_mismatch_mask = merged["_lifted_std_chr"] != merged["_orig_std_chr"]
+    chr_mismatch_varids: set[str] = set(merged.loc[chr_mismatch_mask, "_varid"].tolist())
 
-        # Drop if lifted chromosome differs from original (chr mismatch)
-        if standardize_chromosome(new_chr) != standardize_chromosome(orig_chr):
-            chr_mismatch_varids.add(varid)
-            keep_mask.append(False)
-            new_chrs.append(new_chr)
-            new_positions.append(new_pos)
-            new_refs.append(None)
-            new_alts.append(None)
-            continue
+    # Keep only rows without chr mismatch
+    merged = merged[~chr_mismatch_mask].copy()
 
-        # Strand flip: reverse-complement ref and alt
-        ref = str(row[ref_col])
-        alt = str(row[alt_col])
-        if strand == "-":
-            ref = reverse_complement(ref)
-            alt = reverse_complement(alt)
+    # Reverse-complement ref/alt for strand-flipped variants
+    flip_mask = merged["strand"] == "-"
+    if flip_mask.any():
+        merged.loc[flip_mask, ref_col] = merged.loc[flip_mask, ref_col].astype(str).apply(reverse_complement)
+        merged.loc[flip_mask, alt_col] = merged.loc[flip_mask, alt_col].astype(str).apply(reverse_complement)
 
-        keep_mask.append(True)
-        new_chrs.append(new_chr)
-        new_positions.append(new_pos)
-        new_refs.append(ref)
-        new_alts.append(alt)
+    # Update chr and pos with lifted values
+    merged[chr_col] = merged["_lifted_std_chr"]
+    merged[pos_col] = merged["end"].astype(int)  # BED end = new 1-based position
 
-    working["_new_chr"] = new_chrs
-    working["_new_pos"] = new_positions
-    working["_new_ref"] = new_refs
-    working["_new_alt"] = new_alts
-    working["_keep"] = keep_mask
+    # Drop all internal/merge columns
+    drop_cols = ["_varid", "_orig_std_chr", "_lifted_std_chr", "varid", "end", "strand"]
+    merged = merged.drop(columns=[c for c in drop_cols if c in merged.columns])
 
-    lifted_df = working[working["_keep"]].copy()
+    return merged, chr_mismatch_varids
 
-    # Apply new values back to original column names
-    lifted_df[chr_col] = lifted_df["_new_chr"]
-    lifted_df[pos_col] = lifted_df["_new_pos"].astype(int)
-    lifted_df[ref_col] = lifted_df["_new_ref"]
-    lifted_df[alt_col] = lifted_df["_new_alt"]
 
-    # Drop working columns
-    internal_cols = ["_varid", "_orig_std_chr", "_new_chr", "_new_pos",
-                     "_new_ref", "_new_alt", "_keep"]
-    lifted_df = lifted_df.drop(columns=internal_cols)
+def validate_column_mapping(df: pd.DataFrame, column_mapping: dict) -> None:
+    """
+    Validate that all values in column_mapping exist as columns in df.
 
-    return lifted_df, chr_mismatch_varids
+    Raises SystemExit with a clear error message listing missing columns.
+    """
+    missing_cols = [v for v in column_mapping.values() if v not in df.columns]
+    if missing_cols:
+        log.error("--column-mapping references columns not in input: %s", missing_cols)
+        sys.exit(1)
 
 
 def compute_summary(
@@ -465,8 +474,6 @@ def copy_to_archive(s3_client, source_s3_path: str, archive_s3_path: str) -> Non
 def compute_per_chromosome_stats(
     original_df: pd.DataFrame,
     lifted_df: pd.DataFrame,
-    unmapped_varids: set[str],
-    chr_mismatch_varids: set[str],
     column_mapping: dict,
     lifted_bed_df: pd.DataFrame,
 ) -> tuple[dict[str, dict], int]:
@@ -477,30 +484,37 @@ def compute_per_chromosome_stats(
     """
     chr_col = column_mapping["chromosome"]
 
-    # Count input per original chromosome
-    input_counts: dict[str, int] = {}
-    for _, row in original_df.iterrows():
-        std_chr = standardize_chromosome(str(row[chr_col]))
-        input_counts[std_chr] = input_counts.get(std_chr, 0) + 1
+    # Count input per original chromosome (vectorized)
+    input_counts = (
+        original_df[chr_col].astype(str)
+        .apply(standardize_chromosome)
+        .value_counts()
+        .to_dict()
+    )
 
-    # Count lifted per new chromosome (use the lifted df's chr column)
-    lifted_counts: dict[str, int] = {}
-    for _, row in lifted_df.iterrows():
-        std_chr = standardize_chromosome(str(row[chr_col]))
-        lifted_counts[std_chr] = lifted_counts.get(std_chr, 0) + 1
+    # Count lifted per new chromosome (vectorized)
+    lifted_counts = (
+        lifted_df[chr_col].astype(str)
+        .apply(standardize_chromosome)
+        .value_counts()
+        .to_dict()
+    ) if not lifted_df.empty else {}
 
-    # Count strand flips from lifted BED
+    # Count strand flips from lifted BED (vectorized)
     strand_flip_counts: dict[str, int] = {}
     total_strand_flips = 0
     if not lifted_bed_df.empty:
-        for _, row in lifted_bed_df.iterrows():
-            if row["strand"] == "-":
-                # Use original chromosome (from varid: chr_pos_ref_alt)
-                parts = str(row["varid"]).split("_", 1)
-                orig_chr = parts[0] if parts else "unknown"
-                std_chr = standardize_chromosome(orig_chr)
-                strand_flip_counts[std_chr] = strand_flip_counts.get(std_chr, 0) + 1
-                total_strand_flips += 1
+        flipped = lifted_bed_df[lifted_bed_df["strand"] == "-"]
+        if not flipped.empty:
+            total_strand_flips = len(flipped)
+            # Derive original chromosome from varid prefix (chr_pos_ref_alt)
+            orig_chrs = (
+                flipped["varid"].astype(str)
+                .str.split("_", n=1)
+                .str[0]
+                .apply(standardize_chromosome)
+            )
+            strand_flip_counts = orig_chrs.value_counts().to_dict()
 
     # Build combined per-chromosome dict
     all_chrs = set(input_counts) | set(lifted_counts)
@@ -609,7 +623,10 @@ def main(argv=None) -> None:
         total_input = len(original_df)
         log.info("Total input variants: %d", total_input)
 
-        # 4. Build BED
+        # 4. Validate column mapping against the loaded DataFrame
+        validate_column_mapping(original_df, column_mapping)
+
+        # 5. Build BED
         bed_lines = tsv_to_bed(original_df, column_mapping)
         bed_path = os.path.join(tmpdir, "input.bed")
         with open(bed_path, "w") as fh:
@@ -618,20 +635,20 @@ def main(argv=None) -> None:
                 fh.write("\n")
         log.info("Wrote %d BED lines to %s", len(bed_lines), bed_path)
 
-        # 5. Run liftOver
+        # 6. Run liftOver
         lifted_bed_path = os.path.join(tmpdir, "lifted.bed")
         unmapped_bed_path = os.path.join(tmpdir, "unmapped.bed")
         run_liftover(bed_path, chain_file, lifted_bed_path, unmapped_bed_path)
 
-        # 6. Parse lifted BED
+        # 7. Parse lifted BED
         lifted_bed_df = _parse_lifted_bed(lifted_bed_path)
         log.info("Lifted BED rows: %d", len(lifted_bed_df))
 
-        # 7. Parse unmapped BED
+        # 8. Parse unmapped BED
         liftover_unmapped_varids = _parse_unmapped_bed(unmapped_bed_path)
         log.info("Unmapped by liftOver: %d", len(liftover_unmapped_varids))
 
-        # 8. Apply lifted positions to original DataFrame
+        # 9. Apply lifted positions to original DataFrame
         lifted_df, chr_mismatch_varids = apply_lifted_positions(
             original_df, lifted_bed_df, column_mapping
         )
@@ -640,43 +657,45 @@ def main(argv=None) -> None:
             len(lifted_df), len(chr_mismatch_varids),
         )
 
-        # 9. Build unmapped output (both liftOver-unmapped and chr-mismatch)
-        all_unmapped_varids = liftover_unmapped_varids | chr_mismatch_varids
+        # 10. Build unmapped output (vectorized varid construction + boolean masks)
+        chr_col = column_mapping["chromosome"]
+        pos_col = column_mapping["position"]
+        ref_col = column_mapping["ref"]
+        alt_col = column_mapping["alt"]
 
-        # Rebuild varid for original_df rows to look up unmapped
-        orig_varid_map: dict[str, int] = {}  # varid -> integer index
-        for idx, row in original_df.iterrows():
-            std_chr = standardize_chromosome(str(row[column_mapping["chromosome"]]))
-            pos = int(row[column_mapping["position"]])
-            ref = str(row[column_mapping["ref"]])
-            alt = str(row[column_mapping["alt"]])
-            varid = f"{std_chr}_{pos}_{ref}_{alt}"
-            if varid not in orig_varid_map:
-                orig_varid_map[varid] = idx
+        orig_varid_series = (
+            original_df[chr_col].astype(str).apply(standardize_chromosome) + "_" +
+            original_df[pos_col].astype(int).astype(str) + "_" +
+            original_df[ref_col].astype(str) + "_" +
+            original_df[alt_col].astype(str)
+        )
 
-        unmapped_rows = []
-        for varid, orig_idx in orig_varid_map.items():
-            if varid in liftover_unmapped_varids:
-                row = original_df.loc[orig_idx].to_dict()
-                row["_unmapped_reason"] = "liftover_unmapped"
-                unmapped_rows.append(row)
-            elif varid in chr_mismatch_varids:
-                row = original_df.loc[orig_idx].to_dict()
-                row["_unmapped_reason"] = "chr_mismatch"
-                unmapped_rows.append(row)
+        # Deduplicate: keep first occurrence of each varid (matching tsv_to_bed)
+        first_occurrence_mask = ~orig_varid_series.duplicated(keep="first")
+        deduped_df = original_df[first_occurrence_mask].copy()
+        deduped_varids = orig_varid_series[first_occurrence_mask]
 
-        if unmapped_rows:
-            unmapped_df = pd.DataFrame(unmapped_rows)
+        # Rows whose varid appears in liftover_unmapped_varids
+        lo_unmapped_mask = deduped_varids.isin(liftover_unmapped_varids)
+        lo_unmapped_df = deduped_df[lo_unmapped_mask].copy()
+        lo_unmapped_df["_unmapped_reason"] = "liftover_unmapped"
+
+        # Rows whose varid appears in chr_mismatch_varids
+        mismatch_mask = deduped_varids.isin(chr_mismatch_varids)
+        mismatch_df = deduped_df[mismatch_mask].copy()
+        mismatch_df["_unmapped_reason"] = "chr_mismatch"
+
+        if len(lo_unmapped_df) > 0 or len(mismatch_df) > 0:
+            unmapped_df = pd.concat([lo_unmapped_df, mismatch_df], ignore_index=True)
             # Put _unmapped_reason first
             cols = ["_unmapped_reason"] + [c for c in unmapped_df.columns if c != "_unmapped_reason"]
             unmapped_df = unmapped_df[cols]
         else:
             unmapped_df = pd.DataFrame(columns=["_unmapped_reason"] + list(original_df.columns))
 
-        # 10. Compute statistics
+        # 11. Compute statistics
         per_chr, total_strand_flips = compute_per_chromosome_stats(
-            original_df, lifted_df, liftover_unmapped_varids,
-            chr_mismatch_varids, column_mapping, lifted_bed_df,
+            original_df, lifted_df, column_mapping, lifted_bed_df,
         )
 
         total_lifted = len(lifted_df)
@@ -686,16 +705,16 @@ def main(argv=None) -> None:
             "chr_mismatch": len(chr_mismatch_varids),
         }
 
-        # 11. Write lifted TSV back to output S3 path
+        # 12. Write lifted TSV back to output S3 path
         lifted_bytes = df_to_bytes(lifted_df, sep=input_sep, compress=input_is_gzipped)
         content_type = "application/gzip" if input_is_gzipped else "text/tab-separated-values"
         upload_bytes(s3_client, lifted_bytes, args.output_s3_path, content_type)
 
-        # 12. Write unmapped TSV
+        # 13. Write unmapped TSV
         unmapped_bytes = df_to_bytes(unmapped_df, sep="\t", compress=False)
         upload_bytes(s3_client, unmapped_bytes, args.unmapped_s3_path, "text/tab-separated-values")
 
-        # 13. Write summary JSON
+        # 14. Write summary JSON
         duration = time.monotonic() - start_time
         summary = compute_summary(
             job_id=args.job_id,
@@ -718,7 +737,7 @@ def main(argv=None) -> None:
             "application/json",
         )
 
-    # 14. Print summary as final stdout line for CloudWatch log parsing
+    # 15. Print summary as final stdout line for CloudWatch log parsing
     print(f"LIFTOVER_SUMMARY_JSON: {summary_json}", flush=True)
     log.info("Liftover complete. Lifted: %d / %d  Unmapped: %d  Strand flips: %d",
              total_lifted, total_input, total_unmapped, total_strand_flips)

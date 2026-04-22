@@ -25,6 +25,7 @@ from gwas_liftover import (
     pick_chain_file,
     tsv_to_bed,
     apply_lifted_positions,
+    validate_column_mapping,
 )
 
 
@@ -395,3 +396,50 @@ class TestApplyLiftedPositions:
         assert "se" in lifted_df.columns
         assert "pval" in lifted_df.columns
         assert lifted_df.iloc[0]["beta"] == "0.01"
+
+    def test_duplicate_variants_deduplicated_in_output(self):
+        """
+        Two rows with identical chr/pos/ref/alt must produce exactly one row
+        in the lifted output — 'keep first' semantics.
+        """
+        orig = pd.DataFrame([
+            {"chr": "chr1", "pos": "10177", "ref": "A", "alt": "AC", "beta": "0.01"},
+            {"chr": "chr1", "pos": "10177", "ref": "A", "alt": "AC", "beta": "0.99"},  # duplicate
+        ])
+        lifted_bed = pd.DataFrame([
+            {"chr": "chr1", "start": 10200, "end": 10201,
+             "varid": "chr1_10177_A_AC", "score": ".", "strand": "+"},
+        ])
+        lifted_df, mismatch = apply_lifted_positions(orig, lifted_bed, COLUMN_MAPPING)
+        assert len(lifted_df) == 1, f"Expected 1 row, got {len(lifted_df)}"
+        assert len(mismatch) == 0
+        # The kept row should be the first one (beta=0.01)
+        assert lifted_df.iloc[0]["beta"] == "0.01"
+
+
+# ---------------------------------------------------------------------------
+# validate_column_mapping
+# ---------------------------------------------------------------------------
+
+class TestValidateColumnMapping:
+    """Tests for the column-mapping validation helper."""
+
+    def test_valid_mapping_does_not_exit(self):
+        df = pd.DataFrame(columns=["chr", "pos", "ref", "alt", "pval"])
+        # Should not raise
+        validate_column_mapping(df, COLUMN_MAPPING)
+
+    def test_missing_column_exits(self):
+        df = pd.DataFrame(columns=["chr", "pos", "ref"])  # 'alt' missing
+        with pytest.raises(SystemExit):
+            validate_column_mapping(df, COLUMN_MAPPING)
+
+    def test_all_columns_missing_exits(self):
+        df = pd.DataFrame(columns=["snp_id", "p_value"])
+        with pytest.raises(SystemExit):
+            validate_column_mapping(df, COLUMN_MAPPING)
+
+    def test_extra_columns_in_df_are_fine(self):
+        df = pd.DataFrame(columns=["chr", "pos", "ref", "alt", "beta", "se", "pval"])
+        # All mapping values present — should not raise
+        validate_column_mapping(df, COLUMN_MAPPING)
