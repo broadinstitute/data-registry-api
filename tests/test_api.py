@@ -6,10 +6,13 @@ import boto3
 import pytest
 from fastapi.testclient import TestClient
 from moto import mock_aws
+from sqlalchemy import text
 from starlette.status import HTTP_422_UNPROCESSABLE_ENTITY, HTTP_200_OK, HTTP_404_NOT_FOUND, HTTP_401_UNAUTHORIZED, \
     HTTP_400_BAD_REQUEST
 
-from dataregistry.api.model import DataFormat, User, HermesFileStatus
+from dataregistry.api import query
+from dataregistry.api.db import DataRegistryReadWriteDB
+from dataregistry.api.model import DataFormat, User, HermesFileStatus, GenomeBuild, LiftoverJobStatus
 from dataregistry.api.jwt_utils import get_encoded_jwt_data
 
 AUTHORIZATION = "Authorization"
@@ -418,3 +421,159 @@ def test_download_all_hermes_metadata_csv(mocker, api_client: TestClient):
     assert 'ancestry' in headers
     assert 'phenotype' in headers
     assert any('sample_size' in header for header in headers)  # Handle potential \r at end
+
+
+# ---------------------------------------------------------------------------
+# validate-hermes liftover / no-liftover branch tests
+# ---------------------------------------------------------------------------
+
+_HERMES_BASE_PAYLOAD = {
+    'file_name': 'foo.csv',
+    'dataset': 'unit-test-dataset',
+    'metadata': {
+        'phenotype': 'T2D',
+        'column_map': {
+            'chromosome': 'CHR',
+            'position': 'BP',
+            'eaf': 'EAF',
+            'beta': 'BETA',
+            'se': 'SE',
+            'pValue': 'P',
+        },
+    },
+    'qc_script_options': {'fd': 0.2, 'noind': True},
+}
+
+
+def _set_up_hermes_mocks(mocker):
+    """Common mocking for validate-hermes integration tests."""
+    set_up_moto_bucket()
+    mock_batch = mocker.patch('dataregistry.api.batch.submit_and_await_job')
+    mock_batch.return_value = None
+    mocker.patch('boto3.client').return_value.generate_presigned_url.return_value = (
+        'http://mocked-presigned-url'
+    )
+    mock_aiohttp_put = mocker.patch('aiohttp.ClientSession.put')
+    mock_aiohttp_put.return_value.__aenter__.return_value.status = 200
+    with open('tests/test_csv_upload.csv', 'rb') as f:
+        file_bytes = f.read()
+    mocker.patch('boto3.client').return_value.get_object.return_value = {
+        'Body': io.BytesIO(file_bytes),
+        'ContentLength': len(file_bytes),
+    }
+    return mock_batch
+
+
+@mock_aws
+def test_validate_hermes_build_mismatch_triggers_liftover(mocker, api_client: TestClient):
+    """grch38 upload with portal target hg19 → liftover_pending path."""
+    mock_batch = _set_up_hermes_mocks(mocker)
+
+    # Portal default from conftest is hg19; request grch38 to force mismatch.
+    payload = {**_HERMES_BASE_PAYLOAD, 'genome_build': 'grch38'}
+    res = api_client.post('api/validate-hermes', headers={AUTHORIZATION: auth_token}, json=payload)
+    assert res.status_code == HTTP_200_OK
+
+    data = res.json()
+    assert data.get('liftover_pending') is True
+    assert data.get('source_build') == 'grch38'
+    assert data.get('target_build') == 'hg19'
+    assert 'file_id' in data
+
+    engine = DataRegistryReadWriteDB().get_engine()
+    file_id = data['file_id']
+
+    # file_uploads row has correct initial state
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT qc_status, genome_build FROM file_uploads WHERE id = :id"),
+            {'id': file_id.replace('-', '')},
+        ).first()
+    assert row.qc_status == HermesFileStatus.SUBMITTED_TO_LIFTOVER.value
+    assert row.genome_build == GenomeBuild.grch38.value
+
+    # liftover_jobs row was created
+    lj = query.fetch_liftover_job_by_file_id(engine, file_id)
+    assert lj is not None
+    assert lj.status == LiftoverJobStatus.SUBMITTED.value
+
+    # batch.submit_and_await_job was called with gwas-liftover-job config
+    mock_batch.assert_called_once()
+    call_args = mock_batch.call_args[0]
+    job_config = call_args[1]
+    assert job_config['jobName'] == 'gwas-liftover-job'
+    assert job_config['jobQueue'] == 'gwas-liftover-job-queue'
+    assert job_config['jobDefinition'] == 'gwas-liftover-job'
+    params = job_config['parameters']
+    assert 'input-s3-path' in params
+    assert 'output-s3-path' in params
+    assert 'archive-s3-path' in params
+    assert 'unmapped-s3-path' in params
+    assert 'summary-s3-path' in params
+    assert params['source-build'] == 'grch38'
+    assert params['target-build'] == 'hg19'
+    assert 'column-mapping' in params
+    assert 'job-id' in params
+
+
+@mock_aws
+def test_validate_hermes_build_match_goes_to_qc(mocker, api_client: TestClient):
+    """hg19 upload with portal target hg19 → direct QC path (regression guard)."""
+    mock_batch = _set_up_hermes_mocks(mocker)
+
+    # Sends hg19 — same as the portal default seed from conftest.
+    payload = {**_HERMES_BASE_PAYLOAD, 'genome_build': 'hg19'}
+    res = api_client.post('api/validate-hermes', headers={AUTHORIZATION: auth_token}, json=payload)
+    assert res.status_code == HTTP_200_OK
+
+    data = res.json()
+    assert 'liftover_pending' not in data
+    assert 'file_id' in data
+
+    engine = DataRegistryReadWriteDB().get_engine()
+    file_id = data['file_id']
+
+    # file_uploads row should go directly to SUBMITTED TO QC
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT qc_status, genome_build FROM file_uploads WHERE id = :id"),
+            {'id': file_id.replace('-', '')},
+        ).first()
+    assert row.qc_status == HermesFileStatus.SUBMITTED_TO_QC.value
+
+    # NO liftover_jobs row
+    lj = query.fetch_liftover_job_by_file_id(engine, file_id)
+    assert lj is None
+
+    # batch.submit_and_await_job called with hermes-qc-job
+    mock_batch.assert_called_once()
+    call_args = mock_batch.call_args[0]
+    job_config = call_args[1]
+    assert job_config['jobName'] == 'hermes-qc-job'
+
+
+@mock_aws
+def test_validate_hermes_na_source_goes_to_qc(mocker, api_client: TestClient):
+    """genome_build=n/a (default) → direct QC path regardless of portal target."""
+    mock_batch = _set_up_hermes_mocks(mocker)
+
+    # Omit genome_build so it defaults to n/a
+    res = api_client.post('api/validate-hermes', headers={AUTHORIZATION: auth_token},
+                          json=_HERMES_BASE_PAYLOAD)
+    assert res.status_code == HTTP_200_OK
+
+    data = res.json()
+    assert 'liftover_pending' not in data
+    assert 'file_id' in data
+
+    engine = DataRegistryReadWriteDB().get_engine()
+    file_id = data['file_id']
+
+    # No liftover_jobs row
+    lj = query.fetch_liftover_job_by_file_id(engine, file_id)
+    assert lj is None
+
+    # Direct QC submission
+    mock_batch.assert_called_once()
+    call_args = mock_batch.call_args[0]
+    assert call_args[1]['jobName'] == 'hermes-qc-job'
