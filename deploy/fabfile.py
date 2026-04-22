@@ -39,23 +39,33 @@ def update_source(c, env, commit=None):
 @task
 def restart(c, env):
     """
-    Restart the server by terminating existing screen sessions and starting a new session.
+    Restart the server by restarting the systemd service.
 
     Parameters:
         c: The connection context.
         env: The environment (e.g., 'dev', 'prd').
     """
-    directory = get_checkout_directory(env)
-    screen_session = "dr-api-dev" if env == 'dev' else "dr-api-prd"
-    port = 8000 if env == 'dev' else 443
+    service = "dr-api-dev" if env == 'dev' else "dr-api-prd"
+    c.run(f"sudo systemctl restart {service}")
 
-    with c.cd(directory):
-        # terminate running screen sessions
-        c.run(
-            f"screen -ls | grep -o '[0-9]*\.{screen_session}' | while read -r line; do screen -S \"${{line}}\" -X quit; done")
-        c.run("python3 -m pip install -r requirements.txt")
-        c.run(
-            f"screen -dmS {screen_session} bash -c 'python3 -m dataregistry.main -e .env serve --port {port}'")
+
+@task
+def setup(c, env):
+    """
+    Install and enable the systemd service for the specified environment.
+    Run once to set up the service on the server. Subsequent deploys use
+    the restart task.
+
+    Parameters:
+        c: The connection context.
+        env: The environment (e.g., 'dev', 'prd').
+    """
+    service = "dr-api-dev" if env == 'dev' else "dr-api-prd"
+    c.put(f"deploy/{service}.service", f"/tmp/{service}.service")
+    c.run(f"sudo mv /tmp/{service}.service /etc/systemd/system/{service}.service")
+    c.run("sudo systemctl daemon-reload")
+    c.run(f"sudo systemctl enable {service}")
+    c.run(f"sudo systemctl start {service}")
 
 
 def get_checkout_directory(env):
