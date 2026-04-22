@@ -277,9 +277,12 @@ def convert_sable(sable_data: pd.DataFrame) -> pd.DataFrame:
 
         return g
 
+    subject_id = sable_df['subject.id']
     sable_df = sable_df.groupby('subject.id', group_keys=False).apply(
         compute_increments
-    ).reset_index(drop=True)
+    )
+    sable_df['subject.id'] = subject_id
+    sable_df = sable_df.reset_index(drop=True)
 
     # Make subject.id a categorical/factor (matching R)
     sable_df['subject.id'] = sable_df['subject.id'].astype(str)

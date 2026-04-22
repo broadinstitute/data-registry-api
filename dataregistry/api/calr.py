@@ -1018,7 +1018,9 @@ def _enrich_df(df: 'pd.DataFrame', session: dict) -> 'pd.DataFrame':
                 ee = pd.to_numeric(grp['ee'], errors='coerce')
                 grp['ee.acc'] = (ee / minute_bin).cumsum()
                 return grp
+            subject_id = df['subject.id']
             df = df.groupby('subject.id', group_keys=False).apply(_cumsum_ee)
+            df['subject.id'] = subject_id
 
     # ── 8. eb / eb.acc ────────────────────────────────────────────────────────
     feed = pd.to_numeric(df['feed'], errors='coerce') if 'feed' in df.columns else None

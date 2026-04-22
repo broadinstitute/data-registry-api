@@ -219,7 +219,7 @@ def convert_tse(tse_data: List[Dict]) -> pd.DataFrame:
     
     # Create time bins
     tse_df['minute'] = tse_df['DATE.TIME'].dt.floor('min')
-    tse_df['hour'] = tse_df['DATE.TIME'].dt.floor('H')
+    tse_df['hour'] = tse_df['DATE.TIME'].dt.floor('h')
     tse_df['day'] = tse_df['DATE.TIME'].dt.floor('D')
     
     # Calculate experimental time offsets (each uses its own bin minimum, matching R)
