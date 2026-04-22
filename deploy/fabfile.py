@@ -1,3 +1,4 @@
+import os
 from fabric import task
 
 
@@ -41,6 +42,8 @@ def restart(c, env):
     """
     Restart the server by restarting the systemd service.
 
+    Note: Does not install dependencies. Run 'fab migrate' first when deploying new code.
+
     Parameters:
         c: The connection context.
         env: The environment (e.g., 'dev', 'prd').
@@ -61,7 +64,8 @@ def setup(c, env):
         env: The environment (e.g., 'dev', 'prd').
     """
     service = "dr-api-dev" if env == 'dev' else "dr-api-prd"
-    c.put(f"deploy/{service}.service", f"/tmp/{service}.service")
+    deploy_dir = os.path.dirname(os.path.abspath(__file__))
+    c.put(os.path.join(deploy_dir, f"{service}.service"), f"/tmp/{service}.service")
     c.run(f"sudo mv /tmp/{service}.service /etc/systemd/system/{service}.service")
     c.run("sudo systemctl daemon-reload")
     c.run(f"sudo systemctl enable {service}")
