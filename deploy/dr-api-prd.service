@@ -5,7 +5,7 @@ After=network.target
 [Service]
 User=ec2-user
 WorkingDirectory=/home/ec2-user/data-registry-api-prd
-ExecStart=/usr/bin/python3 -m dataregistry.main -e .env serve --port 443
+ExecStart=/home/ec2-user/data-registry-api-prd/venv/bin/python -m dataregistry.main -e .env serve --port 443
 Restart=on-failure
 RestartSec=5
 
