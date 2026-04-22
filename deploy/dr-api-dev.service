@@ -1,0 +1,13 @@
+[Unit]
+Description=Data Registry API (dev)
+After=network.target
+
+[Service]
+User=ec2-user
+WorkingDirectory=/home/ec2-user/data-registry-api-qa
+ExecStart=/usr/bin/python3 -m dataregistry.main -e .env serve --port 8000
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
