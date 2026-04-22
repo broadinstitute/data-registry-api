@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """
-Build a ZIP archive of all SGC files (cohort files + GWAS files) and upload to S3.
+Build a ZIP archive of SGC cohort files and upload to S3.
 
 Intended to be run on a schedule (e.g. nightly cron). The resulting archive is
 served to reviewers via the GET /sgc/download-all-files API endpoint.
+
+GWAS summary-stat files are intentionally excluded — they are large and
+reviewers fetch them individually through the SGC UI.
 
 The script computes a checksum of the current file list and skips rebuilding
 if nothing has changed since the last run.
@@ -53,17 +56,14 @@ def extract_s3_key(file_path: str) -> str:
     return file_path
 
 
-def compute_file_list_checksum(cohort_files, gwas_files):
+def compute_file_list_checksum(cohort_files):
     """Compute a SHA-256 checksum of the sorted file list.
 
     This captures additions, deletions, and path changes. If any file
     record is added, removed, or has its path changed, the checksum
     will differ and the archive will be rebuilt.
     """
-    paths = sorted(
-        [f['file_path'] for f in cohort_files] +
-        [f['s3_path'] for f in gwas_files]
-    )
+    paths = sorted(f['file_path'] for f in cohort_files)
     return hashlib.sha256(json.dumps(paths).encode()).hexdigest()
 
 
@@ -83,17 +83,14 @@ def store_checksum(s3_client, checksum):
 
 def build_archive(engine, s3_client, dry_run=False, force=False):
     cohort_files = query.get_all_sgc_cohort_files_with_cohort_names(engine)
-    gwas_files = query.get_all_sgc_gwas_files_with_cohort_names(engine)
-
-    total_files = len(cohort_files) + len(gwas_files)
-    logger.info(f"Found {len(cohort_files)} cohort files and {len(gwas_files)} GWAS files ({total_files} total)")
+    total_files = len(cohort_files)
+    logger.info(f"Found {total_files} cohort files")
 
     if total_files == 0:
         logger.warning("No files found. Skipping archive build.")
         return
 
-    # Check if file list has changed since last build
-    current_checksum = compute_file_list_checksum(cohort_files, gwas_files)
+    current_checksum = compute_file_list_checksum(cohort_files)
     logger.info(f"Current file list checksum: {current_checksum[:12]}...")
 
     if not dry_run and not force:
@@ -112,10 +109,6 @@ def build_archive(engine, s3_client, dry_run=False, force=False):
             cohort_name = sanitize_name(f['cohort_name'])
             zip_path = f"sgc-all-files/{cohort_name}/cohort-files/{f['file_type']}_{f['file_name']}"
             logger.info(f"  {zip_path}  <-  {f['file_path']}")
-        for f in gwas_files:
-            cohort_name = sanitize_name(f['cohort_name'])
-            zip_path = f"sgc-all-files/{cohort_name}/gwas/{f['dataset']}/{f['phenotype']}/{f['file_name']}"
-            logger.info(f"  {zip_path}  <-  {f['s3_path']}")
         return
 
     start_time = time.time()
@@ -127,7 +120,6 @@ def build_archive(engine, s3_client, dry_run=False, force=False):
 
     try:
         with zipfile.ZipFile(tmp_path, 'w', zipfile.ZIP_DEFLATED) as zf:
-            # Add cohort files
             for f in cohort_files:
                 cohort_name = sanitize_name(f['cohort_name'])
                 s3_key = extract_s3_key(f['file_path'])
@@ -143,32 +135,21 @@ def build_archive(engine, s3_client, dry_run=False, force=False):
                 except Exception as e:
                     logger.error(f"  Failed to fetch {s3_key}: {e}")
 
-            # Add GWAS files
-            for f in gwas_files:
-                cohort_name = sanitize_name(f['cohort_name'])
-                s3_key = f['s3_path']
-                zip_entry = f"sgc-all-files/{cohort_name}/gwas/{f['dataset']}/{f['phenotype']}/{f['file_name']}"
-
-                try:
-                    response = s3_client.get_object(Bucket=s3.BASE_BUCKET, Key=s3_key)
-                    data = response['Body'].read()
-                    zf.writestr(zip_entry, data)
-                    total_bytes += len(data)
-                    files_added += 1
-                    logger.info(f"  Added GWAS file ({files_added}/{total_files}): {zip_entry}")
-                except Exception as e:
-                    logger.error(f"  Failed to fetch {s3_key}: {e}")
+        if files_added == 0:
+            raise RuntimeError(
+                f"All {total_files} files failed to fetch from s3://{s3.BASE_BUCKET}. "
+                "Refusing to upload an empty archive or update the checksum. "
+                "Verify DATA_REGISTRY_BUCKET matches the environment the DB records point to."
+            )
 
         archive_size = os.path.getsize(tmp_path)
         logger.info(f"Archive built: {archive_size / (1024*1024):.1f} MB compressed, "
                      f"{total_bytes / (1024*1024):.1f} MB uncompressed, "
                      f"{files_added}/{total_files} files")
 
-        # Upload to S3
         logger.info(f"Uploading archive to s3://{s3.BASE_BUCKET}/{ARCHIVE_S3_KEY}")
         s3_client.upload_file(tmp_path, s3.BASE_BUCKET, ARCHIVE_S3_KEY)
 
-        # Store the checksum so the next run can detect changes
         store_checksum(s3_client, current_checksum)
         logger.info("Checksum stored.")
 
