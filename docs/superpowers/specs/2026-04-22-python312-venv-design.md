@@ -118,10 +118,15 @@ WorkingDirectory=/home/ec2-user/data-registry-api-prd
 ExecStart=/home/ec2-user/data-registry-api-prd/venv/bin/python -m dataregistry.main -e .env serve --port 443
 Restart=on-failure
 RestartSec=5
+NoNewPrivileges=true
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 
 [Install]
 WantedBy=multi-user.target
 ```
+
+Note: `AmbientCapabilities` replaces the old `setcap CAP_NET_BIND_SERVICE` on `/usr/bin/python3`. This attaches the capability grant to the service unit rather than the binary, so it survives venv recreation. `NoNewPrivileges=true` prevents child processes from gaining additional capabilities.
 
 ## CI Change
 
