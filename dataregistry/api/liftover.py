@@ -22,6 +22,15 @@ from dataregistry.api.model import GenomeBuild, HermesFileStatus, LiftoverJobSta
 
 logger = logging.getLogger(__name__)
 
+# The worker container's argparse only accepts UCSC-style build names
+# (the chain files are named hg38ToHg19.over.chain.gz etc.). Translate from
+# the GenomeBuild enum's canonical values when populating the Batch job
+# parameters. Keep this map in sync with liftover_docker/gwas_liftover.py.
+_UCSC_BUILD_NAME = {
+    GenomeBuild.grch38: "hg38",
+    GenomeBuild.hg19: "hg19",
+}
+
 
 def should_liftover(source: GenomeBuild, target: GenomeBuild) -> bool:
     """Return True iff a liftover is needed.
@@ -82,8 +91,8 @@ def submit_liftover_then_qc(
             'archive-s3-path': archive_s3_path,
             'unmapped-s3-path': unmapped_s3_path,
             'summary-s3-path': summary_s3_path,
-            'source-build': source_build.value,
-            'target-build': target_build.value,
+            'source-build': _UCSC_BUILD_NAME[source_build],
+            'target-build': _UCSC_BUILD_NAME[target_build],
             'column-mapping': json.dumps(column_mapping),
             'job-id': liftover_job_id,
         },

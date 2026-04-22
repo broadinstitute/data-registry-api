@@ -509,7 +509,10 @@ def test_validate_hermes_build_mismatch_triggers_liftover(mocker, api_client: Te
     assert 'archive-s3-path' in params
     assert 'unmapped-s3-path' in params
     assert 'summary-s3-path' in params
-    assert params['source-build'] == 'grch38'
+    # Worker uses UCSC build names (hg38/hg19); the API stores canonical
+    # GenomeBuild values (grch38/hg19) but liftover.py translates to UCSC
+    # names before submitting to Batch.
+    assert params['source-build'] == 'hg38'
     assert params['target-build'] == 'hg19'
     assert 'column-mapping' in params
     assert 'job-id' in params
