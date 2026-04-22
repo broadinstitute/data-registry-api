@@ -141,6 +141,12 @@ class HermesFileStatus(str, Enum):
     LIFTOVER_FAILED = "LIFTOVER FAILED"
 
 
+class LiftoverJobStatus(str, Enum):
+    SUBMITTED = "SUBMITTED"
+    COMPLETE = "COMPLETE"
+    FAILED = "FAILED"
+
+
 class HermesMetaAnalysisStatus(str, Enum):
     SUBMITTED = "SUBMITTED"
     FAILED = "FAILED"
@@ -429,7 +435,7 @@ class LiftoverJob(BaseModel):
     source_genome_build: GenomeBuild
     target_genome_build: GenomeBuild
     batch_job_id: Union[str, None] = None
-    status: str = 'SUBMITTED'  # SUBMITTED, RUNNING, COMPLETE, FAILED
+    status: str = LiftoverJobStatus.SUBMITTED.value  # SUBMITTED, RUNNING, COMPLETE, FAILED
     submitted_at: Union[datetime, None] = None
     completed_at: Union[datetime, None] = None
     submitted_by: str = ''

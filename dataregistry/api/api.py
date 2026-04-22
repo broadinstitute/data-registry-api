@@ -417,7 +417,7 @@ async def validate_hermes_csv(request: QCHermesFileRequest, background_tasks: Ba
         target_build is not None and liftover.should_liftover(request.genome_build, target_build)
     )
     initial_qc_status = (
-        HermesFileStatus.SUBMITTED_TO_LIFTOVER.value if needs_liftover else 'SUBMITTED TO QC'
+        HermesFileStatus.SUBMITTED_TO_LIFTOVER.value if needs_liftover else HermesFileStatus.SUBMITTED_TO_QC.value
     )
 
     file_guid = query.save_file_upload_info(
@@ -492,7 +492,7 @@ async def get_liftover_unmapped_url(file_id: UUID, user: User = Depends(get_curr
     prefix = f"s3://{s3.BASE_BUCKET}/"
     key = liftover_job.unmapped_s3_path[len(prefix):] if liftover_job.unmapped_s3_path.startswith(prefix) \
         else liftover_job.unmapped_s3_path
-    return s3.generate_presigned_url_with_path(key)
+    return s3.get_signed_url(s3.BASE_BUCKET, key)
 
 
 @router.get("/hermes/portal-config")

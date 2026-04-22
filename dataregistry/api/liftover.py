@@ -18,7 +18,7 @@ import uuid
 from starlette.background import BackgroundTasks
 
 from dataregistry.api import batch, query, s3
-from dataregistry.api.model import GenomeBuild, HermesFileStatus
+from dataregistry.api.model import GenomeBuild, HermesFileStatus, LiftoverJobStatus
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +96,6 @@ def submit_liftover_then_qc(
         column_mapping=column_mapping,
         qc_script_options=qc_script_options,
         target_build=target_build,
-        engine=engine,
     )
 
     # Submit with is_qc=False so batch.submit_and_await_job passes the raw
@@ -124,7 +123,6 @@ def _build_callback(
     column_mapping: dict,
     qc_script_options: dict,
     target_build: GenomeBuild,
-    engine,
 ):
     """Return the closure invoked by batch.submit_and_await_job on completion.
 
@@ -136,9 +134,12 @@ def _build_callback(
     def liftover_completion_callback(
         cb_engine, complete_log: str, liftover_job_id: str, job_status: str
     ):
-        # --- Parse the trailing summary JSON from the worker log ---
+        # --- Parse the summary JSON from the worker log ---
+        # The JSON is a compact single line; use a non-greedy match and no
+        # re.DOTALL so trailing log lines after the JSON do not confuse the
+        # anchor.
         summary = None
-        match = re.search(r'LIFTOVER_SUMMARY_JSON:\s*(\{.*\})\s*$', complete_log or '', re.DOTALL)
+        match = re.search(r'LIFTOVER_SUMMARY_JSON:\s*(\{.*?\})', complete_log or '')
         if match:
             try:
                 summary = json.loads(match.group(1))
@@ -146,11 +147,11 @@ def _build_callback(
                 logger.warning("Could not parse LIFTOVER_SUMMARY_JSON from log")
 
         if job_status == 'SUCCEEDED':
-            liftover_status = 'COMPLETE'
+            liftover_status = LiftoverJobStatus.COMPLETE.value
             new_qc_status = HermesFileStatus.SUBMITTED_TO_QC
             new_genome_build = target_build
         else:
-            liftover_status = 'FAILED'
+            liftover_status = LiftoverJobStatus.FAILED.value
             new_qc_status = HermesFileStatus.LIFTOVER_FAILED
             new_genome_build = None  # do NOT flip on failure
 
@@ -185,12 +186,25 @@ def _build_callback(
             }
             # Synchronous call — we are already inside the background task, so
             # nesting submit_and_await_job here is intentional.
-            batch.submit_and_await_job(
-                cb_engine,
-                qc_job_config,
-                query.update_file_upload_qc_log,
-                file_id,
-                True,  # is_qc=True → HermesFileStatus converted inside batch.py
-            )
+            try:
+                batch.submit_and_await_job(
+                    cb_engine,
+                    qc_job_config,
+                    query.update_file_upload_qc_log,
+                    file_id,
+                    True,  # is_qc=True → HermesFileStatus converted inside batch.py
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to submit QC job after successful liftover for file %s; "
+                    "marking as SUBMISSION_TO_QC_FAILED",
+                    file_id,
+                )
+                query.update_file_upload_after_liftover(
+                    cb_engine,
+                    file_id,
+                    qc_status=HermesFileStatus.SUBMISSION_TO_QC_FAILED.value,
+                )
+                raise
 
     return liftover_completion_callback

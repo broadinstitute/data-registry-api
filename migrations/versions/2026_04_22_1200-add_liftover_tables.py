@@ -55,7 +55,7 @@ def upgrade() -> None:
     # Add genome_build column to file_uploads
     conn.execute(text("""
         ALTER TABLE `file_uploads`
-        ADD COLUMN `genome_build` VARCHAR(16) NOT NULL DEFAULT 'na' AFTER `qc_job_completed_at`
+        ADD COLUMN `genome_build` VARCHAR(16) NOT NULL DEFAULT 'n/a' AFTER `qc_job_completed_at`
     """))
 
     # Seed hermes portal config row

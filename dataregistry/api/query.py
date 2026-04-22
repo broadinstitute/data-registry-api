@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from dataregistry.api.model import SavedDataset, DataSet, Study, SavedStudy, SavedPhenotypeDataSet, SavedCredibleSet, \
     CsvBioIndexRequest, SavedCsvBioIndexRequest, User, FileUpload, NewUserRequest, HermesUser, MetaAnalysisRequest, \
     HermesMetaAnalysisStatus, SavedMetaAnalysisRequest, HermesPhenotype, SGCPhenotype, SGCGWASFile, \
-    SGCGWASCohort, SGCGWASValidationJob, LiftoverJob, GenomeBuild
+    SGCGWASCohort, SGCGWASValidationJob, LiftoverJob, LiftoverJobStatus, GenomeBuild
 from dataregistry.id_shortener import shorten_uuid
 
 
@@ -531,13 +531,14 @@ def create_liftover_job(engine, job_id: str, file_id: str, source_build: GenomeB
                 (id, file_id, source_genome_build, target_genome_build, status,
                  original_s3_path, unmapped_s3_path, submitted_by)
             VALUES
-                (:id, :file_id, :source_build, :target_build, 'SUBMITTED',
+                (:id, :file_id, :source_build, :target_build, :status,
                  :original_s3_path, :unmapped_s3_path, :submitted_by)
         """), {
             'id': job_id.replace('-', ''),
             'file_id': str(file_id).replace('-', ''),
             'source_build': source_build.value,
             'target_build': target_build.value,
+            'status': LiftoverJobStatus.SUBMITTED.value,
             'original_s3_path': original_s3_path,
             'unmapped_s3_path': unmapped_s3_path,
             'submitted_by': submitted_by,
