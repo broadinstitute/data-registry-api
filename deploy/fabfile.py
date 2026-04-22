@@ -69,7 +69,7 @@ def setup(c, env):
     c.run(f"sudo mv /tmp/{service}.service /etc/systemd/system/{service}.service")
     c.run("sudo systemctl daemon-reload")
     c.run(f"sudo systemctl enable {service}")
-    c.run(f"sudo systemctl start {service}")
+    c.run(f"sudo systemctl restart {service}")
 
 
 def get_checkout_directory(env):
