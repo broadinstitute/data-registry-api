@@ -5,7 +5,7 @@ import re
 import boto3
 import pytest
 from fastapi.testclient import TestClient
-from moto import mock_s3, mock_batch
+from moto import mock_aws
 from starlette.status import HTTP_422_UNPROCESSABLE_ENTITY, HTTP_200_OK, HTTP_404_NOT_FOUND, HTTP_401_UNAUTHORIZED, \
     HTTP_400_BAD_REQUEST
 
@@ -47,12 +47,12 @@ def test_get_datasets(api_client: TestClient):
     assert len(response.json()) == 0
 
 
-@mock_s3
+@mock_aws
 def test_post_dataset(api_client: TestClient):
     create_new_dataset(api_client)
 
 
-@mock_s3
+@mock_aws
 def test_update_dataset(api_client: TestClient):
     copy, new_ds_id = create_new_dataset(api_client)
     copy.update({'id': new_ds_id, 'name': 'Updated Dataset Name'})
@@ -62,7 +62,7 @@ def test_update_dataset(api_client: TestClient):
     assert response.json()['dataset']['name'] == 'Updated Dataset Name'
 
 
-@mock_s3
+@mock_aws
 def test_update_dataset_fk_failure(api_client: TestClient):
     copy, new_ds_id = create_new_dataset(api_client)
     copy.update({'id': new_ds_id, 'study_id': 'missing_id'})
@@ -95,7 +95,7 @@ def set_up_moto_bucket():
     conn.create_bucket(Bucket="dig-data-registry")
 
 
-@mock_s3
+@mock_aws
 def test_post_then_retrieve_by_id(api_client: TestClient):
     set_up_moto_bucket()
     new_dataset = example_dataset_json.copy()
@@ -106,7 +106,7 @@ def test_post_then_retrieve_by_id(api_client: TestClient):
     assert response.status_code == HTTP_200_OK
 
 
-@mock_s3
+@mock_aws
 def test_upload_file(api_client: TestClient):
     new_record = add_ds_with_file(api_client)
     s3_conn = boto3.resource("s3", region_name="us-east-1")
@@ -116,7 +116,7 @@ def test_upload_file(api_client: TestClient):
     assert file_text == "The answer is 47!\n"
 
 
-@mock_s3
+@mock_aws
 def test_uploaded_file_is_not_public(api_client: TestClient):
     new_record = add_ds_with_file(api_client)
     response = api_client.get(f"/api/d/{new_record['phenotypes'][0]['short_id']}",
@@ -124,7 +124,7 @@ def test_uploaded_file_is_not_public(api_client: TestClient):
     assert response.status_code == HTTP_404_NOT_FOUND
 
 
-@mock_s3
+@mock_aws
 def test_list_files(api_client: TestClient):
     new_record = add_ds_with_file(api_client, public=True)
     response = api_client.get(f"/api/filelist/{new_record['dataset']['id']}", headers={AUTHORIZATION: auth_token})
@@ -150,7 +150,7 @@ def add_ds_with_file(api_client, public=False):
     return new_record
 
 
-@mock_s3
+@mock_aws
 def test_upload_credible_set(api_client: TestClient):
     ds = add_ds_with_file(api_client, public=True)
     with open("tests/sample_upload.txt", "rb") as f:
@@ -167,7 +167,7 @@ def test_upload_credible_set(api_client: TestClient):
 
 
 @pytest.mark.parametrize("df", DataFormat.__members__.values())
-@mock_s3
+@mock_aws
 def test_valid_data_formats_post(api_client: TestClient, df: DataFormat):
     new_record = example_dataset_json.copy()
     new_record['data_type'] = df
@@ -181,7 +181,7 @@ def test_invalid_record_post(api_client: TestClient):
     assert response.status_code == HTTP_422_UNPROCESSABLE_ENTITY
 
 
-@mock_s3
+@mock_aws
 def test_delete_dataset(api_client: TestClient):
     ds_with_file = add_ds_with_file(api_client)['dataset']
     ds_id = ds_with_file['id']
@@ -191,7 +191,7 @@ def test_delete_dataset(api_client: TestClient):
     assert saved_dataset_response.status_code == HTTP_404_NOT_FOUND
 
 
-@mock_s3
+@mock_aws
 def test_delete_dataset_without_auth(api_client: TestClient):
     ds_with_file = add_ds_with_file(api_client)['dataset']
     ds_id = ds_with_file['id']
@@ -199,7 +199,7 @@ def test_delete_dataset_without_auth(api_client: TestClient):
     assert response.status_code == HTTP_401_UNAUTHORIZED
 
 
-@mock_s3
+@mock_aws
 def test_delete_without_access(api_client: TestClient):
     ds_with_file = add_ds_with_file(api_client)['dataset']
     ds_id = ds_with_file['id']
@@ -214,8 +214,7 @@ def test_preview_delimited_file(api_client: TestClient):
         assert res.json() == {'columns': ["ID","CHR","BP","OA","EA","EAF","BETA","SE","P","EUR_EAF","SNP"]}
 
 
-@mock_s3
-@mock_batch
+@mock_aws
 def test_start_meta_analysis(mocker, api_client: TestClient):
     set_up_moto_bucket()
     patch = mocker.patch('dataregistry.api.batch.submit_and_await_job')
@@ -256,8 +255,7 @@ def test_start_meta_analysis(mocker, api_client: TestClient):
     assert ma_results[0].get("name") == "Test Metadata"
     assert ma_results[0].get("dataset_names") == ['unit-test-dataset']
 
-@mock_s3
-@mock_batch
+@mock_aws
 def test_upload_hermes_csv(mocker, api_client: TestClient):
     set_up_moto_bucket()
     patch = mocker.patch('dataregistry.api.batch.submit_and_await_job')
@@ -311,7 +309,7 @@ def test_upload_hermes_csv(mocker, api_client: TestClient):
     assert len(file_uploads) == 1
 
 
-@mock_s3
+@mock_aws
 def test_upload_csv(api_client: TestClient):
     set_up_moto_bucket()
     with open('tests/test_csv_upload.csv', mode='rb') as f:
@@ -321,7 +319,7 @@ def test_upload_csv(api_client: TestClient):
         assert "file_size" in response.json()
 
 
-@mock_s3
+@mock_aws
 def test_delete_phenotype(api_client: TestClient):
     ds_info = add_ds_with_file(api_client)
     p_id = ds_info['phenotypes'][0]['id']
@@ -368,8 +366,7 @@ def test_api_publications(mocker, api_client: TestClient):
     assert response.json()['title'] == 'Debated issues in major psychoses.'
 
 
-@mock_s3
-@mock_batch 
+@mock_aws 
 def test_download_all_hermes_metadata_csv(mocker, api_client: TestClient):
     set_up_moto_bucket()
     patch = mocker.patch('dataregistry.api.batch.submit_and_await_job')
