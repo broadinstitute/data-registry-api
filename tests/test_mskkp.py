@@ -200,10 +200,16 @@ def test_update_metadata_helper_only_touches_pending_rows():
     from dataregistry.api import query
     assert hasattr(query, 'update_mskkp_dataset_metadata')
     source = inspect.getsource(query.update_mskkp_dataset_metadata)
+    # Must WHERE-guard on pending status.
     assert "status = 'pending'" in source
-    # Must not alter file_name / file_size / s3_path / status
-    for forbidden in ['file_name =', 'file_size =', 's3_path =', 'status =']:
+    # Must not SET file_name / file_size / s3_path — those belong to the finalize step.
+    for forbidden in ['file_name =', 'file_size =', 's3_path =']:
         assert forbidden not in source, f"update_mskkp_dataset_metadata must not SET {forbidden}"
+    # `status =` should appear ONLY in the WHERE guard, never on the SET side.
+    assert source.count('status =') == 1, (
+        "update_mskkp_dataset_metadata references `status =` more than once — "
+        "expected exactly one occurrence (the WHERE guard)."
+    )
 
 
 def test_create_dataset_reuses_pending_stub_on_name_collision():
@@ -218,12 +224,12 @@ def test_create_dataset_reuses_pending_stub_on_name_collision():
 
 def test_delete_endpoint_removed():
     """The unimplemented DELETE /api/mskkp/datasets/{id} stub has been removed."""
-    from dataregistry.server import app
-    from fastapi.testclient import TestClient
-    client = TestClient(app)
-    response = client.delete('/api/mskkp/datasets/nonexistent-id')
-    # 405 = method not allowed (route absent, as intended)
-    assert response.status_code == 405, (
-        f"Expected 405 (no DELETE route) but got {response.status_code}. "
-        "The DELETE stub was lying about success without deleting anything."
+    from dataregistry.api import mskkp
+    delete_routes = [
+        r for r in mskkp.router.routes
+        if 'DELETE' in getattr(r, 'methods', set())
+    ]
+    assert delete_routes == [], (
+        f"Expected no DELETE routes on the mskkp router, found: {delete_routes}. "
+        "The DELETE stub was lying about success without deleting anything and should stay removed."
     )
