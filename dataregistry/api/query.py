@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from dataregistry.api.model import SavedDataset, DataSet, Study, SavedStudy, SavedPhenotypeDataSet, SavedCredibleSet, \
     CsvBioIndexRequest, SavedCsvBioIndexRequest, User, FileUpload, NewUserRequest, HermesUser, MetaAnalysisRequest, \
     HermesMetaAnalysisStatus, SavedMetaAnalysisRequest, HermesPhenotype, SGCPhenotype, SGCGWASFile, \
-    SGCGWASCohort, SGCGWASValidationJob
+    SGCGWASCohort, SGCGWASValidationJob, LiftoverJob, LiftoverJobStatus, GenomeBuild
 from dataregistry.id_shortener import shorten_uuid
 
 
@@ -406,16 +406,29 @@ def retrieve_meta_data_mapping(engine, user: str) -> [dict]:
 
         return {row.dataset: json.loads(row.metadata) for row in results}
 
-def save_file_upload_info(engine, dataset, metadata, s3_path, filename, file_size, uploader, qc_script_options) -> str:
+def save_file_upload_info(engine, dataset, metadata, s3_path, filename, file_size, uploader, qc_script_options,
+                          genome_build=None, initial_qc_status='SUBMITTED TO QC') -> str:
+    """Insert a new file_uploads row.
+
+    genome_build defaults to GenomeBuild.na.value when not provided so that
+    existing callers (including tests) keep working without changes.
+    initial_qc_status allows the liftover flow to set 'SUBMITTED TO LIFTOVER'
+    before the normal 'SUBMITTED TO QC'.
+    """
+    if genome_build is None:
+        genome_build = GenomeBuild.na.value
     with engine.connect() as conn:
         new_guid = str(uuid.uuid4())
         conn.execute(text("""INSERT INTO file_uploads(id, dataset, file_name, file_size, uploaded_at, uploaded_by,
-        metadata, s3_path, qc_script_options, qc_status) VALUES(:id, :dataset, :file_name, :file_size, NOW(), :uploaded_by, :metadata,
-         :s3_path, :qc_script_options, 'SUBMITTED TO QC')"""), {'id': new_guid.replace('-', ''), 'dataset': dataset,
-                                            'file_name': filename,
-                                            'file_size': file_size, 'uploaded_by': uploader,
-                                            'metadata': json.dumps(metadata), 's3_path': s3_path,
-                                            'qc_script_options': json.dumps(qc_script_options)})
+        metadata, s3_path, qc_script_options, genome_build, qc_status) VALUES(:id, :dataset, :file_name, :file_size,
+        NOW(), :uploaded_by, :metadata, :s3_path, :qc_script_options, :genome_build, :initial_qc_status)"""),
+                     {'id': new_guid.replace('-', ''), 'dataset': dataset,
+                      'file_name': filename,
+                      'file_size': file_size, 'uploaded_by': uploader,
+                      'metadata': json.dumps(metadata), 's3_path': s3_path,
+                      'qc_script_options': json.dumps(qc_script_options),
+                      'genome_build': genome_build,
+                      'initial_qc_status': initial_qc_status})
         conn.commit()
         return new_guid
 
@@ -505,6 +518,132 @@ def record_meta_analysis_job_submission_time(engine, meta_analysis_id: str):
     with engine.connect() as conn:
         conn.execute(text("UPDATE meta_analyses SET job_submitted_at=NOW() WHERE id=:meta_analysis_id"),
                      {'meta_analysis_id': meta_analysis_id.replace('-', '')})
+        conn.commit()
+
+
+def create_liftover_job(engine, job_id: str, file_id: str, source_build: GenomeBuild,
+                        target_build: GenomeBuild, original_s3_path: str,
+                        unmapped_s3_path: str, submitted_by: str):
+    """Insert a new liftover_jobs row with status='SUBMITTED'."""
+    with engine.connect() as conn:
+        conn.execute(text("""
+            INSERT INTO liftover_jobs
+                (id, file_id, source_genome_build, target_genome_build, status,
+                 original_s3_path, unmapped_s3_path, submitted_by)
+            VALUES
+                (:id, :file_id, :source_build, :target_build, :status,
+                 :original_s3_path, :unmapped_s3_path, :submitted_by)
+        """), {
+            'id': job_id.replace('-', ''),
+            'file_id': str(file_id).replace('-', ''),
+            'source_build': source_build.value,
+            'target_build': target_build.value,
+            'status': LiftoverJobStatus.SUBMITTED.value,
+            'original_s3_path': original_s3_path,
+            'unmapped_s3_path': unmapped_s3_path,
+            'submitted_by': submitted_by,
+        })
+        conn.commit()
+
+
+def update_liftover_job(engine, job_id: str, status: str, log: str, summary: Union[dict, None]):
+    """Update liftover_jobs status, log, summary JSON, and completed_at."""
+    summary_json = json.dumps(summary) if summary is not None else None
+    with engine.connect() as conn:
+        conn.execute(text("""
+            UPDATE liftover_jobs
+            SET status = :status, log = :log, summary = :summary, completed_at = NOW()
+            WHERE id = :id
+        """), {
+            'status': status,
+            'log': log,
+            'summary': summary_json,
+            'id': job_id.replace('-', ''),
+        })
+        conn.commit()
+
+
+def fetch_liftover_job_by_file_id(engine, file_id) -> Union[LiftoverJob, None]:
+    """Return the most recent liftover_jobs row for a file, or None."""
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+            SELECT id, file_id, source_genome_build, target_genome_build, batch_job_id,
+                   status, submitted_at, completed_at, submitted_by,
+                   original_s3_path, unmapped_s3_path, summary, log
+            FROM liftover_jobs
+            WHERE file_id = :file_id
+            ORDER BY submitted_at DESC
+            LIMIT 1
+        """), {'file_id': str(file_id).replace('-', '')}).first()
+
+        if result is None:
+            return None
+
+        row = result._asdict()
+        if row.get('summary') is not None:
+            row['summary'] = json.loads(row['summary'])
+        return LiftoverJob(**row)
+
+
+def update_file_upload_after_liftover(engine, file_id, qc_status, genome_build=None):
+    """Update file_uploads after a liftover attempt.
+
+    genome_build is only flipped when liftover SUCCEEDED; pass None to skip.
+    """
+    file_id_no_dashes = str(file_id).replace('-', '')
+    with engine.connect() as conn:
+        if genome_build is not None:
+            conn.execute(text("""
+                UPDATE file_uploads
+                SET qc_status = :qc_status, genome_build = :genome_build
+                WHERE id = :file_id
+            """), {
+                'qc_status': qc_status.value if hasattr(qc_status, 'value') else qc_status,
+                'genome_build': genome_build.value if hasattr(genome_build, 'value') else genome_build,
+                'file_id': file_id_no_dashes,
+            })
+        else:
+            conn.execute(text("""
+                UPDATE file_uploads
+                SET qc_status = :qc_status
+                WHERE id = :file_id
+            """), {
+                'qc_status': qc_status.value if hasattr(qc_status, 'value') else qc_status,
+                'file_id': file_id_no_dashes,
+            })
+        conn.commit()
+
+
+def get_portal_target_build(engine, portal_id: str) -> Union[GenomeBuild, None]:
+    """Return the target genome build for a portal, or None if not configured."""
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+            SELECT target_genome_build FROM portal_liftover_config WHERE portal_id = :portal_id
+        """), {'portal_id': portal_id}).first()
+
+        if result is None:
+            return None
+        try:
+            return GenomeBuild(result[0])
+        except ValueError:
+            return None
+
+
+def set_portal_target_build(engine, portal_id: str, target_build: GenomeBuild, user: str):
+    """Insert or update the target genome build for a portal."""
+    with engine.connect() as conn:
+        conn.execute(text("""
+            INSERT INTO portal_liftover_config (portal_id, target_genome_build, updated_at, updated_by)
+            VALUES (:portal_id, :target_build, NOW(), :user)
+            ON DUPLICATE KEY UPDATE
+                target_genome_build = :target_build,
+                updated_at = NOW(),
+                updated_by = :user
+        """), {
+            'portal_id': portal_id,
+            'target_build': target_build.value,
+            'user': user,
+        })
         conn.commit()
 
 

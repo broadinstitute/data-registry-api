@@ -49,10 +49,16 @@ def before_each_test():
         con.execute(text("TRUNCATE TABLE sgc_cohort_files"))
         con.execute(text("TRUNCATE TABLE sgc_cohorts"))
         con.execute(text("TRUNCATE TABLE sgc_phenotypes"))
+        con.execute(text("TRUNCATE TABLE liftover_jobs"))
+        con.execute(text("TRUNCATE TABLE portal_liftover_config"))
         con.execute(text("INSERT INTO users (id, user_name, oauth_provider, created_at) "
                          "values (1, 'testuser@broadinstitute.org', 'google', NOW())"))
         con.execute(text("INSERT INTO roles (role) VALUES ('admin')"))
         con.execute(text("INSERT INTO user_roles (user_id, role_id) VALUES (1, 1)"))
+        con.execute(text(
+            "INSERT INTO portal_liftover_config (portal_id, target_genome_build, updated_at, updated_by) "
+            "VALUES ('hermes', 'hg19', NOW(), 'system')"
+        ))
         con.commit()
         con.execute(text("SET FOREIGN_KEY_CHECKS = 1"))
 

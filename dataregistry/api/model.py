@@ -136,6 +136,15 @@ class HermesFileStatus(str, Enum):
     READY_FOR_REVIEW = "READY FOR REVIEW"
     REVIEW_APPROVED = "REVIEW APPROVED"
     REVIEW_REJECTED = "REVIEW REJECTED"
+    SUBMITTED_TO_LIFTOVER = "SUBMITTED TO LIFTOVER"
+    LIFTOVER_COMPLETE = "LIFTOVER COMPLETE"
+    LIFTOVER_FAILED = "LIFTOVER FAILED"
+
+
+class LiftoverJobStatus(str, Enum):
+    SUBMITTED = "SUBMITTED"
+    COMPLETE = "COMPLETE"
+    FAILED = "FAILED"
 
 
 class HermesMetaAnalysisStatus(str, Enum):
@@ -273,6 +282,7 @@ class QCHermesFileRequest(BaseModel):
     dataset: str
     metadata: dict
     qc_script_options: QCScriptOptions
+    genome_build: GenomeBuild = GenomeBuild.na
 
 class HermesPhenotype(BaseModel):
     name: str
@@ -364,6 +374,7 @@ class FileUpload(BaseModel):
     phenotype: Union[str, None]
     ancestry: Union[str, None]
     metadata: Union[dict, None]
+    genome_build: GenomeBuild = GenomeBuild.na
     qc_status: HermesFileStatus
     s3_path: Union[str, None]
     qc_log: Union[str, None]
@@ -416,5 +427,32 @@ class SGCGWASCohort(BaseModel):
     metadata: Dict
     created_at: Union[datetime, None] = None
     updated_at: Union[datetime, None] = None
+
+
+class LiftoverJob(BaseModel):
+    id: Union[UUID, None] = None
+    file_id: UUID
+    source_genome_build: GenomeBuild
+    target_genome_build: GenomeBuild
+    batch_job_id: Union[str, None] = None
+    status: str = LiftoverJobStatus.SUBMITTED.value  # SUBMITTED, RUNNING, COMPLETE, FAILED
+    submitted_at: Union[datetime, None] = None
+    completed_at: Union[datetime, None] = None
+    submitted_by: str = ''
+    original_s3_path: Union[str, None] = None
+    unmapped_s3_path: Union[str, None] = None
+    summary: Union[Dict, None] = None
+    log: Union[str, None] = None
+
+
+class PortalLiftoverConfig(BaseModel):
+    portal_id: str
+    target_genome_build: GenomeBuild
+    updated_at: Union[datetime, None] = None
+    updated_by: str = ''
+
+
+class PortalConfigUpdateRequest(BaseModel):
+    target_genome_build: GenomeBuild
 
 
