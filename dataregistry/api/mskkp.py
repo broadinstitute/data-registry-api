@@ -251,8 +251,10 @@ async def create_mskkp_dataset(request: MSKKPDatasetCreateRequest):
         existing = query.fetch_mskkp_dataset_by_name(engine, request.name)
         if existing and existing.get('status') == 'pending':
             query.update_mskkp_dataset_metadata(engine, existing['id'], metadata)
+            # Normalize the binary(32) hex id back to the dashed UUID form so the
+            # response shape matches the first-create path.
             return {
-                "dataset_id": existing['id'],
+                "dataset_id": str(UUID(existing['id'])),
                 "name": request.name,
                 "message": "Resumed prior upload attempt. You can now upload the file."
             }

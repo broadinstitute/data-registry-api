@@ -220,6 +220,11 @@ def test_create_dataset_reuses_pending_stub_on_name_collision():
     assert 'fetch_mskkp_dataset_by_name' in source
     assert 'update_mskkp_dataset_metadata' in source
     assert "'pending'" in source
+    # Reuse path must normalize the binary(32) hex id back to dashed UUID form
+    # so the dataset_id shape matches the first-create path.
+    assert 'str(UUID(existing' in source, (
+        "reuse path must return dataset_id as a dashed UUID string, not the raw 32-char hex"
+    )
 
 
 def test_delete_endpoint_removed():
