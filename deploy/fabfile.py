@@ -68,7 +68,7 @@ def setup(c, env):
     service = "dr-api-dev" if env == 'dev' else "dr-api-prd"
 
     # Create venv and install dependencies
-    c.run(f"/usr/bin/python3.12 -m venv {venv_dir}")
+    c.run(f"/usr/bin/python3.12 -m venv --clear {venv_dir}")
     with c.cd(checkout_dir):
         c.run(f"{venv_dir}/bin/pip install -r requirements.txt")
 
