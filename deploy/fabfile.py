@@ -56,14 +56,23 @@ def restart(c, env):
 def setup(c, env):
     """
     Install and enable the systemd service for the specified environment.
-    Run once to set up the service on the server. Subsequent deploys use
-    the restart task.
+    Run once to set up the service on the server, or again to update the
+    service file. Creates the Python 3.12 venv and installs dependencies.
 
     Parameters:
         c: The connection context.
         env: The environment (e.g., 'dev', 'prd').
     """
+    checkout_dir = get_checkout_directory(env)
+    venv_dir = get_venv_dir(env)
     service = "dr-api-dev" if env == 'dev' else "dr-api-prd"
+
+    # Create venv and install dependencies
+    c.run(f"/usr/bin/python3.12 -m venv {venv_dir}")
+    with c.cd(checkout_dir):
+        c.run(f"{venv_dir}/bin/pip install -r requirements.txt")
+
+    # Install service file
     deploy_dir = os.path.dirname(os.path.abspath(__file__))
     c.put(os.path.join(deploy_dir, f"{service}.service"), f"/tmp/{service}.service")
     c.run(f"sudo mv /tmp/{service}.service /etc/systemd/system/{service}.service")
@@ -76,13 +85,18 @@ def get_checkout_directory(env):
     return "/home/ec2-user/data-registry-api-qa" if env == 'dev' else "/home/ec2-user/data-registry-api-prd"
 
 
+def get_venv_dir(env):
+    return get_checkout_directory(env) + "/venv"
+
+
 @task
 def migrate(c, env):
     """
     Run db migrations.
     """
     directory = get_checkout_directory(env)
+    venv_dir = get_venv_dir(env)
     with c.cd(directory):
         db = "dataregistry_qa" if env == 'dev' else "dataregistry"
-        c.run("python3 -m pip install -r requirements.txt")
-        c.run(f"export DATA_REGISTRY_DB_NAME={db}; python3 -m alembic upgrade head")
+        c.run(f"{venv_dir}/bin/pip install -r requirements.txt")
+        c.run(f"export DATA_REGISTRY_DB_NAME={db}; {venv_dir}/bin/python -m alembic upgrade head")
