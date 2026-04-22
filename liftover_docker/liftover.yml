@@ -1,0 +1,86 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: GWAS Liftover Batch Job Queue and Definition
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [dev, qa, prod]
+  ImageUri:
+    Type: String
+    Description: ECR URI of the gwas-liftover image
+  JobRoleArn:
+    Type: String
+    Description: IAM role for the job container (S3 r/w on the data registry bucket)
+  ExecutionRoleArn:
+    Type: String
+    Description: IAM role for the Fargate execution
+  Subnets:
+    Type: List<AWS::EC2::Subnet::Id>
+  SecurityGroupIds:
+    Type: List<AWS::EC2::SecurityGroup::Id>
+
+Resources:
+  LiftoverComputeEnv:
+    Type: AWS::Batch::ComputeEnvironment
+    Properties:
+      Type: MANAGED
+      State: ENABLED
+      ComputeResources:
+        Type: FARGATE
+        MaxvCpus: 32
+        Subnets: !Ref Subnets
+        SecurityGroupIds: !Ref SecurityGroupIds
+
+  LiftoverJobQueue:
+    Type: AWS::Batch::JobQueue
+    Properties:
+      JobQueueName: gwas-liftover-job-queue
+      State: ENABLED
+      Priority: 1
+      ComputeEnvironmentOrder:
+        - Order: 1
+          ComputeEnvironment: !Ref LiftoverComputeEnv
+
+  LiftoverJobDefinition:
+    Type: AWS::Batch::JobDefinition
+    Properties:
+      JobDefinitionName: gwas-liftover-job
+      Type: container
+      PlatformCapabilities: [FARGATE]
+      ContainerProperties:
+        Image: !Ref ImageUri
+        JobRoleArn: !Ref JobRoleArn
+        ExecutionRoleArn: !Ref ExecutionRoleArn
+        ResourceRequirements:
+          - Type: VCPU
+            Value: '4'
+          - Type: MEMORY
+            Value: '16384'
+        NetworkConfiguration:
+          AssignPublicIp: ENABLED
+        Command:
+          - python3
+          - gwas_liftover.py
+          - --input-s3-path
+          - Ref::input-s3-path
+          - --output-s3-path
+          - Ref::output-s3-path
+          - --archive-s3-path
+          - Ref::archive-s3-path
+          - --unmapped-s3-path
+          - Ref::unmapped-s3-path
+          - --summary-s3-path
+          - Ref::summary-s3-path
+          - --source-build
+          - Ref::source-build
+          - --target-build
+          - Ref::target-build
+          - --column-mapping
+          - Ref::column-mapping
+          - --job-id
+          - Ref::job-id
+        LogConfiguration:
+          LogDriver: awslogs
+      Timeout:
+        AttemptDurationSeconds: 3600
+      RetryStrategy:
+        Attempts: 1
