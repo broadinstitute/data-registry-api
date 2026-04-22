@@ -2,7 +2,7 @@ FROM python:3.12-slim
 
 # Install system dependencies
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends wget ca-certificates && \
+    apt-get install -y --no-install-recommends wget ca-certificates libcurl4 && \
     rm -rf /var/lib/apt/lists/*
 
 # Download UCSC liftOver binary
