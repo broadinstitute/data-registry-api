@@ -81,6 +81,9 @@ def submit_liftover_then_qc(
         user_name,
     )
 
+    # Worker expects 'ref'; Hermes column_map uses 'reference' (aliased in new.vue).
+    liftover_col_map = {**column_mapping, 'ref': column_mapping.get('ref') or column_mapping.get('reference')}
+
     job_config = {
         'jobName': 'gwas-liftover-job',
         'jobQueue': 'gwas-liftover-job-queue',
@@ -93,7 +96,7 @@ def submit_liftover_then_qc(
             'summary-s3-path': summary_s3_path,
             'source-build': _UCSC_BUILD_NAME[source_build],
             'target-build': _UCSC_BUILD_NAME[target_build],
-            'column-mapping': json.dumps(column_mapping),
+            'column-mapping': json.dumps(liftover_col_map),
             'job-id': liftover_job_id,
         },
     }
