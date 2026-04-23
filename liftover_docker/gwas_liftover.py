@@ -331,8 +331,10 @@ def apply_lifted_positions(
         merged.loc[flip_mask, ref_col] = merged.loc[flip_mask, ref_col].astype(str).apply(reverse_complement)
         merged.loc[flip_mask, alt_col] = merged.loc[flip_mask, alt_col].astype(str).apply(reverse_complement)
 
-    # Update chr and pos with lifted values
-    merged[chr_col] = merged["_lifted_std_chr"]
+    # Update pos with lifted value. chr is already correct on kept rows
+    # (chr-mismatch rows were dropped above), so we don't touch it, which
+    # preserves the user's input format (bare numeric vs chr-prefixed,
+    # '23' vs 'X', etc.) for compatibility with downstream QC.
     merged[pos_col] = merged["end"].astype(int)  # BED end = new 1-based position
 
     # Drop all internal/merge columns
