@@ -78,9 +78,9 @@ Resources:
         ExecutionRoleArn: !GetAtt LiftoverJobRole.Arn
         ResourceRequirements:
           - Type: VCPU
-            Value: '4'
+            Value: '8'
           - Type: MEMORY
-            Value: '16384'
+            Value: '32768'
         NetworkConfiguration:
           AssignPublicIp: ENABLED
         FargatePlatformConfiguration:
