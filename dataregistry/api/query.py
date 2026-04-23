@@ -407,27 +407,24 @@ def retrieve_meta_data_mapping(engine, user: str) -> [dict]:
         return {row.dataset: json.loads(row.metadata) for row in results}
 
 def save_file_upload_info(engine, dataset, metadata, s3_path, filename, file_size, uploader, qc_script_options,
-                          genome_build=None, initial_qc_status='SUBMITTED TO QC') -> str:
+                          initial_qc_status='SUBMITTED TO QC') -> str:
     """Insert a new file_uploads row.
 
-    genome_build defaults to GenomeBuild.na.value when not provided so that
-    existing callers (including tests) keep working without changes.
+    The assembly build is carried in metadata.referenceGenome — not a dedicated
+    column — so it does not appear in this INSERT.
     initial_qc_status allows the liftover flow to set 'SUBMITTED TO LIFTOVER'
     before the normal 'SUBMITTED TO QC'.
     """
-    if genome_build is None:
-        genome_build = GenomeBuild.na.value
     with engine.connect() as conn:
         new_guid = str(uuid.uuid4())
         conn.execute(text("""INSERT INTO file_uploads(id, dataset, file_name, file_size, uploaded_at, uploaded_by,
-        metadata, s3_path, qc_script_options, genome_build, qc_status) VALUES(:id, :dataset, :file_name, :file_size,
-        NOW(), :uploaded_by, :metadata, :s3_path, :qc_script_options, :genome_build, :initial_qc_status)"""),
+        metadata, s3_path, qc_script_options, qc_status) VALUES(:id, :dataset, :file_name, :file_size,
+        NOW(), :uploaded_by, :metadata, :s3_path, :qc_script_options, :initial_qc_status)"""),
                      {'id': new_guid.replace('-', ''), 'dataset': dataset,
                       'file_name': filename,
                       'file_size': file_size, 'uploaded_by': uploader,
                       'metadata': json.dumps(metadata), 's3_path': s3_path,
                       'qc_script_options': json.dumps(qc_script_options),
-                      'genome_build': genome_build,
                       'initial_qc_status': initial_qc_status})
         conn.commit()
         return new_guid
@@ -443,9 +440,23 @@ def update_file_qc_options(engine, file_id: str, qc_script_options: dict):
         conn.commit()
 
 
+GENOME_BUILD_NORMALIZER_SQL = (
+    "CASE LOWER(metadata->>'$.referenceGenome') "
+    "WHEN 'hg19' THEN 'hg19' "
+    "WHEN 'hg38' THEN 'grch38' "
+    "WHEN 'grch37' THEN 'hg19' "
+    "WHEN 'grch38' THEN 'grch38' "
+    "ELSE 'n/a' END"
+)
+
+
 def gen_fetch_ds_sql(params, param_to_where):
-    sql = "select id, dataset as dataset_name, file_name, file_size, uploaded_at, uploaded_by, qc_status, " \
-          "qc_log, metadata->>'$.phenotype' as phenotype, metadata->>'$.ancestry' as ancestry, metadata, s3_path from file_uploads "
+    # qc_log is intentionally omitted here — it's a large TEXT column and no
+    # list-endpoint caller reads it.  The per-file fetch_file_upload still
+    # returns qc_log for the QC report page.
+    sql = ("select id, dataset as dataset_name, file_name, file_size, uploaded_at, uploaded_by, qc_status, "
+           f"{GENOME_BUILD_NORMALIZER_SQL} as genome_build, "
+           "metadata->>'$.phenotype' as phenotype, metadata->>'$.ancestry' as ancestry, metadata, s3_path from file_uploads ")
 
     for index, (col, value) in enumerate(params.items(), start=0):
         if col in {"limit", "offset"}:
@@ -589,13 +600,15 @@ def update_file_upload_after_liftover(engine, file_id, qc_status, genome_build=N
     """Update file_uploads after a liftover attempt.
 
     genome_build is only flipped when liftover SUCCEEDED; pass None to skip.
+    The assembly is stored in metadata.referenceGenome, not a dedicated column.
     """
     file_id_no_dashes = str(file_id).replace('-', '')
     with engine.connect() as conn:
         if genome_build is not None:
             conn.execute(text("""
                 UPDATE file_uploads
-                SET qc_status = :qc_status, genome_build = :genome_build
+                SET qc_status = :qc_status,
+                    metadata = JSON_SET(metadata, '$.referenceGenome', :genome_build)
                 WHERE id = :file_id
             """), {
                 'qc_status': qc_status.value if hasattr(qc_status, 'value') else qc_status,
@@ -660,7 +673,8 @@ def fetch_file_upload(engine, file_id) -> Union[FileUpload, None]:
     with engine.connect() as conn:
         result = conn.execute(
             text("SELECT id, dataset as dataset_name, file_name, file_size, uploaded_at, uploaded_by, metadata, "
-                 "s3_path, qc_log, metadata->>'$.phenotype' as phenotype, qc_status, qc_script_options "
+                 f"s3_path, qc_log, metadata->>'$.phenotype' as phenotype, {GENOME_BUILD_NORMALIZER_SQL} as genome_build, "
+                 "qc_status, qc_script_options "
                  "FROM file_uploads WHERE id = :file_id"),
             {'file_id': file_id}).first()
 

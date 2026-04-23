@@ -407,6 +407,12 @@ async def validate_hermes_csv(request: QCHermesFileRequest, background_tasks: Ba
     if validation_errors:
         return {"errors": validation_errors}
 
+    # Stamp metadata.referenceGenome with the request's authoritative build so
+    # liftover decisioning and stored state cannot disagree, and downstream
+    # reads of metadata.referenceGenome (via the SELECT-time normalizer) find
+    # a value.
+    metadata['referenceGenome'] = request.genome_build.value
+
     script_options = {k: v for k, v in request.qc_script_options.dict().items() if v is not None}
     s3.upload_metadata(metadata, f"hermes/{dataset}")
 
@@ -423,7 +429,6 @@ async def validate_hermes_csv(request: QCHermesFileRequest, background_tasks: Ba
     file_guid = query.save_file_upload_info(
         engine, dataset, metadata, s3_path, filename, file_size, user.user_name,
         script_options,
-        genome_build=request.genome_build.value,
         initial_qc_status=initial_qc_status,
     )
 
