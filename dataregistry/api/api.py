@@ -15,6 +15,7 @@ import sqlalchemy
 import xmltodict
 from botocore.exceptions import ClientError
 from fastapi import Depends, Body, Header, Query, UploadFile
+from pydantic import BaseModel
 from starlette.background import BackgroundTasks
 from starlette.requests import Request
 from starlette.responses import StreamingResponse, Response, RedirectResponse
@@ -22,6 +23,7 @@ from streaming_form_data import StreamingFormDataParser
 from streaming_form_data.targets import S3Target
 
 from dataregistry.api import query, s3, file_utils, ecs, bioidx, batch, liftover
+from dataregistry.api.mskkp import suggest_column_map
 from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api.google_oauth import get_google_user
 from dataregistry.api.hermes_file_validation import validate_file
@@ -251,6 +253,68 @@ async def hermes_upload_columns():
     return HERMES_VALIDATOR.column_options()
 
 
+# Common GWAS column-header aliases mapped to Hermes' canonical target names.
+# NOTE on ref/alt semantics: Hermes' downstream QC pipeline treats
+# column_map.reference as the non-effect allele and column_map.alt as the
+# effect allele (see metadata aliasing in validate_hermes_csv below).  These
+# aliases follow that convention, which differs from the mskkp dict.
+HERMES_COLUMN_ALIASES = {
+    # chromosome
+    'chr': 'chromosome', 'chrom': 'chromosome', '#chrom': 'chromosome',
+    '#chr': 'chromosome', 'chromosome': 'chromosome',
+    # position
+    'bp': 'position', 'pos': 'position', 'position': 'position',
+    'base_pair_location': 'position', 'bp_pos': 'position', 'genpos': 'position',
+    # non-effect allele (ref / a2 / other)
+    'ref': 'non-effect allele', 'a2': 'non-effect allele',
+    'other_allele': 'non-effect allele', 'non_effect_allele': 'non-effect allele',
+    'allele2': 'non-effect allele', 'noneffectallele': 'non-effect allele',
+    'reference': 'non-effect allele', 'nea': 'non-effect allele',
+    # effect allele (alt / a1)
+    'alt': 'effect allele', 'a1': 'effect allele',
+    'effect_allele': 'effect allele', 'allele1': 'effect allele',
+    'effectallele': 'effect allele', 'ea': 'effect allele',
+    'coded_allele': 'effect allele',
+    # pValue
+    'p': 'pValue', 'pval': 'pValue', 'pvalue': 'pValue',
+    'p_value': 'pValue', 'p-value': 'pValue', 'p_val': 'pValue',
+    # N total
+    'n': 'N total', 'n_total': 'N total', 'sample_size': 'N total',
+    'samplesize': 'N total', 'total_n': 'N total', 'neff': 'N total',
+    # standard error
+    'se': 'se', 'stderr': 'se', 'standard_error': 'se',
+    'std_err': 'se', 'sebeta': 'se',
+    # maf / eaf
+    'maf': 'maf', 'minor_allele_frequency': 'maf',
+    'eaf': 'eaf', 'effect_allele_frequency': 'eaf',
+    'a1freq': 'eaf', 'a1_freq': 'eaf', 'freq': 'eaf', 'frq': 'eaf',
+    # N cases
+    'cases': 'N cases', 'n_cases': 'N cases',
+    'ncases': 'N cases', 'n_case': 'N cases',
+    # beta
+    'beta': 'beta', 'effect': 'beta', 'effect_size': 'beta', 'b': 'beta',
+    # oddsRatio / bounds
+    'or': 'oddsRatio', 'odds_ratio': 'oddsRatio', 'oddsratio': 'oddsRatio',
+    'or_lb': 'oddsRatioLB', 'or_lower': 'oddsRatioLB', 'ci_lower': 'oddsRatioLB',
+    'or_ub': 'oddsRatioUB', 'or_upper': 'oddsRatioUB', 'ci_upper': 'oddsRatioUB',
+}
+
+
+class HermesColumnMapSuggestionRequest(BaseModel):
+    columns: List[str]
+
+
+@router.post("/hermes/suggest-column-map")
+async def suggest_hermes_column_mapping(
+    request: HermesColumnMapSuggestionRequest,
+    user: User = Depends(get_current_user),
+):
+    """Suggest mappings from uploaded-file columns to Hermes required/optional targets."""
+    target_fields = HERMES_VALIDATOR.required_columns + HERMES_VALIDATOR.optional_columns
+    suggested = suggest_column_map(request.columns, target_fields, aliases=HERMES_COLUMN_ALIASES)
+    return {"suggested_map": suggested, "target_fields": target_fields}
+
+
 @router.get("/hermes-uploaded-phenotypes")
 async def hermes_uploads_phenotypes(statuses: List[str] = Query(None)):
     return query.fetch_used_phenotypes(engine, statuses)
@@ -407,6 +471,12 @@ async def validate_hermes_csv(request: QCHermesFileRequest, background_tasks: Ba
     if validation_errors:
         return {"errors": validation_errors}
 
+    # Stamp metadata.referenceGenome with the request's authoritative build so
+    # liftover decisioning and stored state cannot disagree, and downstream
+    # reads of metadata.referenceGenome (via the SELECT-time normalizer) find
+    # a value.
+    metadata['referenceGenome'] = request.genome_build.value
+
     script_options = {k: v for k, v in request.qc_script_options.dict().items() if v is not None}
     s3.upload_metadata(metadata, f"hermes/{dataset}")
 
@@ -423,7 +493,6 @@ async def validate_hermes_csv(request: QCHermesFileRequest, background_tasks: Ba
     file_guid = query.save_file_upload_info(
         engine, dataset, metadata, s3_path, filename, file_size, user.user_name,
         script_options,
-        genome_build=request.genome_build.value,
         initial_qc_status=initial_qc_status,
     )
 

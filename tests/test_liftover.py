@@ -33,17 +33,26 @@ def engine():
 # ---------------------------------------------------------------------------
 
 def _make_file_id(engine, genome_build="grch38", initial_qc_status="SUBMITTED TO LIFTOVER"):
-    """Create a minimal file_uploads row and return its ID (no dashes)."""
+    """Create a minimal file_uploads row and return its ID (no dashes).
+
+    genome_build is written into metadata.referenceGenome — the schema no
+    longer has a dedicated column.  The SELECT-side normalizer in
+    query.GENOME_BUILD_NORMALIZER_SQL maps it back to a GenomeBuild enum
+    value for tests that assert on row.genome_build.
+    """
+    metadata = {
+        "column_map": {"chromosome": "CHR", "position": "BP"},
+        "referenceGenome": genome_build,
+    }
     fid = query.save_file_upload_info(
         engine,
         dataset="test-dataset",
-        metadata={"column_map": {"chromosome": "CHR", "position": "BP"}},
+        metadata=metadata,
         s3_path="hermes/test-dataset/test.csv",
         filename="test.csv",
         file_size=1234,
         uploader="tester@example.org",
         qc_script_options={"fd": 0.2},
-        genome_build=genome_build,
         initial_qc_status=initial_qc_status,
     )
     return fid
@@ -52,9 +61,11 @@ def _make_file_id(engine, genome_build="grch38", initial_qc_status="SUBMITTED TO
 def _fetch_file_row(engine, file_id):
     """Fetch raw file_uploads row for assertions."""
     from sqlalchemy import text
+    from dataregistry.api.query import GENOME_BUILD_NORMALIZER_SQL
     with engine.connect() as conn:
         row = conn.execute(
-            text("SELECT qc_status, genome_build FROM file_uploads WHERE id = :id"),
+            text(f"SELECT qc_status, {GENOME_BUILD_NORMALIZER_SQL} AS genome_build "
+                 f"FROM file_uploads WHERE id = :id"),
             {"id": str(file_id).replace("-", "")},
         ).first()
     return row
