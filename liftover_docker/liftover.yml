@@ -56,8 +56,6 @@ Resources:
       ContainerProperties:
         Image: !Sub '${AWS::AccountId}.dkr.ecr.us-east-1.amazonaws.com/gwas-liftover-repo'
         Command:
-          - python3
-          - gwas_liftover.py
           - --input-s3-path
           - Ref::input-s3-path
           - --output-s3-path
