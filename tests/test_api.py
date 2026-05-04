@@ -485,7 +485,8 @@ def test_validate_hermes_build_mismatch_triggers_liftover(mocker, api_client: Te
     # file_uploads row has correct initial state
     with engine.connect() as conn:
         row = conn.execute(
-            text("SELECT qc_status, genome_build FROM file_uploads WHERE id = :id"),
+            text(f"SELECT qc_status, {query.GENOME_BUILD_NORMALIZER_SQL} AS genome_build "
+                 f"FROM file_uploads WHERE id = :id"),
             {'id': file_id.replace('-', '')},
         ).first()
     assert row.qc_status == HermesFileStatus.SUBMITTED_TO_LIFTOVER.value
@@ -538,7 +539,8 @@ def test_validate_hermes_build_match_goes_to_qc(mocker, api_client: TestClient):
     # file_uploads row should go directly to SUBMITTED TO QC
     with engine.connect() as conn:
         row = conn.execute(
-            text("SELECT qc_status, genome_build FROM file_uploads WHERE id = :id"),
+            text(f"SELECT qc_status, {query.GENOME_BUILD_NORMALIZER_SQL} AS genome_build "
+                 f"FROM file_uploads WHERE id = :id"),
             {'id': file_id.replace('-', '')},
         ).first()
     assert row.qc_status == HermesFileStatus.SUBMITTED_TO_QC.value

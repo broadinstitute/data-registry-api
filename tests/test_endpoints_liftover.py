@@ -42,13 +42,15 @@ def _create_file_and_liftover_job(engine, uploader="testuser@broadinstitute.org"
     file_id = query.save_file_upload_info(
         engine,
         dataset="liftover-endpoint-test-ds",
-        metadata={"column_map": {"chromosome": "CHR", "position": "BP"}},
+        metadata={
+            "column_map": {"chromosome": "CHR", "position": "BP"},
+            "referenceGenome": "grch38",
+        },
         s3_path="hermes/liftover-endpoint-test-ds/file.csv",
         filename="file.csv",
         file_size=500,
         uploader=uploader,
         qc_script_options={"fd": 0.2},
-        genome_build="grch38",
         initial_qc_status="SUBMITTED TO LIFTOVER",
     )
     job_id = str(uuid.uuid4())
