@@ -1922,6 +1922,40 @@ def get_sgc_gwas_files_by_cohort(engine, cohort_id: str):
         return parsed_results
 
 
+def get_sgc_gwas_files_needing_validation(engine, cohort_id: str):
+    """GWAS files in the cohort with no completed or in-flight validation job.
+
+    Returns files that have either never been validated, or whose only validation
+    attempts ended in FAILED. Files with a COMPLETED, SUBMITTED, or RUNNING job
+    are excluded so we don't re-run finished work or duplicate in-flight jobs.
+    """
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+            SELECT
+                id, cohort_id, dataset, phenotype, ancestry,
+                file_name, file_size, s3_path, uploaded_at, uploaded_by,
+                column_mapping, cases, controls, metadata
+            FROM sgc_gwas_files f
+            WHERE f.cohort_id = :cohort_id
+              AND NOT EXISTS (
+                  SELECT 1 FROM sgc_gwas_validation_jobs j
+                  WHERE j.file_id = f.id
+                    AND j.status IN ('COMPLETED', 'SUBMITTED', 'RUNNING')
+              )
+            ORDER BY uploaded_at ASC
+        """), {'cohort_id': str(cohort_id).replace('-', '')}).mappings().all()
+
+        parsed_results = []
+        for row in result:
+            row_dict = dict(row)
+            if row_dict.get('column_mapping'):
+                row_dict['column_mapping'] = json.loads(row_dict['column_mapping'])
+            if row_dict.get('metadata'):
+                row_dict['metadata'] = json.loads(row_dict['metadata'])
+            parsed_results.append(row_dict)
+        return parsed_results
+
+
 def get_all_sgc_cohort_files_with_cohort_names(engine):
     """Get all SGC cohort files joined with cohort names for archive building."""
     with engine.connect() as conn:

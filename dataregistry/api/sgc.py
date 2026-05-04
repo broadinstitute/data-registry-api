@@ -2321,6 +2321,55 @@ async def start_gwas_validation(file_id: str, background_tasks: BackgroundTasks,
         raise fastapi.HTTPException(status_code=500, detail=f"Error submitting validation job: {str(e)}")
 
 
+@router.post("/sgc/cohorts/{cohort_id}/gwas-validate-all")
+async def start_gwas_validation_all(cohort_id: str, background_tasks: BackgroundTasks,
+                                    user: User = Depends(get_sgc_user)):
+    """Kick off validation for every GWAS file in the cohort that has no
+    completed or in-flight validation job.
+
+    Returns the count of jobs submitted and the list of file IDs that were
+    already validated or running (and thus skipped).
+    """
+    try:
+        cohort_data = query.get_sgc_cohort_by_id(engine, cohort_id)
+        if not cohort_data:
+            raise fastapi.HTTPException(status_code=404, detail="Cohort not found")
+
+        cohort_owner = cohort_data[0]['uploaded_by']
+        if not (cohort_owner == user.user_name or check_review_permissions(user)):
+            raise fastapi.HTTPException(
+                status_code=403,
+                detail="You can only validate GWAS files for cohorts you own",
+            )
+
+        files = query.get_sgc_gwas_files_needing_validation(engine, cohort_id)
+
+        submitted = []
+        for gwas_file in files:
+            cases = gwas_file.get('cases') or 0
+            controls = gwas_file.get('controls') or 0
+            max_n = cases + controls
+            job_record_id = _kick_off_gwas_validation(
+                background_tasks, gwas_file['id'], gwas_file['s3_path'],
+                gwas_file.get('column_mapping', {}) or {}, user.user_name, max_n,
+            )
+            submitted.append({
+                "file_id": gwas_file['id'],
+                "validation_job_id": job_record_id,
+            })
+
+        return {
+            "message": f"Submitted {len(submitted)} validation job(s)",
+            "submitted_count": len(submitted),
+            "submitted": submitted,
+        }
+
+    except fastapi.HTTPException:
+        raise
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Error submitting validation jobs: {str(e)}")
+
+
 @router.get("/sgc/gwas-validate/{file_id}/progress")
 async def get_gwas_validation_progress(file_id: str, user: User = Depends(get_sgc_user)):
     """Get validation status for a GWAS file.
