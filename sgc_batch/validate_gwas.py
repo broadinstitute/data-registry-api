@@ -15,7 +15,7 @@ Validation rules (per mapped column):
   BETA (col_beta)                : numeric (any real)
   SE   (col_se)                  : numeric, >= 0
   P    (col_pvalue)              : numeric, 0 <= v <= 1
-  INFO (col_imputation_quality)  : numeric, 0 <= v <= 1
+  INFO (col_imputation_quality)  : numeric, >= 0 (no upper bound; some methods exceed 1)
   ID   (col_variant_id)          : optional; if present, non-empty string
   N    (col_variant_n)           : optional; numeric, > 0
 """
@@ -115,10 +115,9 @@ def validate_pvalue(value: str) -> str | None:
 def validate_info(value: str) -> str | None:
     if not _is_numeric(value):
         return "Must be numeric"
-    v = float(value)
-    if 0.0 <= v <= 1.0:
+    if float(value) >= 0.0:
         return None
-    return "Must be between 0 and 1"
+    return "Must be >= 0"
 
 
 def validate_variant_id(value: str) -> str | None:
