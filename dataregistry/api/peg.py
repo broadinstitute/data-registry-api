@@ -1,6 +1,7 @@
 import io
 import os
 import re
+import zipfile
 from datetime import datetime
 from typing import Optional
 from uuid import UUID
@@ -10,6 +11,7 @@ import fastapi
 import httpx
 import pandas as pd  # type: ignore[import]
 from fastapi import UploadFile, File, Depends, Header
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from dataregistry.api import query
@@ -134,7 +136,7 @@ async def create_peg_study(request: CreatePEGStudyRequest, user: User = Depends(
             engine=engine,
             name=request.name,
             created_by=user.user_name,
-            metadata=request.metadata.model_dump()
+            metadata=request.metadata.dict()
         )
 
         return {
@@ -218,7 +220,7 @@ async def update_peg_study(study_id: UUID, request: CreatePEGStudyRequest, user:
             engine=engine,
             study_id=study_id,
             name=request.name,
-            metadata=request.metadata.model_dump()
+            metadata=request.metadata.dict()
         )
         return {"message": "PEG study updated successfully"}
     except fastapi.HTTPException:
@@ -443,6 +445,47 @@ async def get_peg_files(study_id: UUID, user: User = Depends(get_peg_user)):
         raise fastapi.HTTPException(status_code=403, detail="You can only view files for studies you created")
     files = query.get_peg_files(engine, study_id)
     return files
+
+
+@router.get("/peg/studies/{study_id}/download")
+async def download_peg_study_zip(study_id: UUID, user: User = Depends(get_peg_user)):
+    """Download all files for a PEG study as a single zip archive."""
+    study = query.get_peg_study(engine, study_id)
+    if not study:
+        raise fastapi.HTTPException(status_code=404, detail="Study not found")
+    if not (study['created_by'] == user.user_name or check_review_permissions(user)):
+        raise fastapi.HTTPException(status_code=403, detail="You can only download files from studies you created")
+
+    files = query.get_peg_files(engine, study_id)
+    if not files:
+        raise fastapi.HTTPException(status_code=404, detail="No files have been uploaded for this study")
+
+    s3_prefix = f"s3://{s3.BASE_BUCKET}/"
+    s3_client = boto3.client('s3', region_name=s3.S3_REGION)
+    buffer = io.BytesIO()
+
+    with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+        used_names = set()
+        for file_info in files:
+            s3_path = file_info['file_path']
+            if not s3_path.startswith(s3_prefix):
+                continue
+            key = s3_path[len(s3_prefix):]
+            obj = s3_client.get_object(Bucket=s3.BASE_BUCKET, Key=key)
+            arcname = file_info['file_name']
+            if arcname in used_names:
+                stem, dot, ext = arcname.rpartition('.')
+                arcname = f"{file_info['file_type']}_{arcname}" if not stem else f"{stem}_{file_info['file_type']}{dot}{ext}"
+            used_names.add(arcname)
+            zf.writestr(arcname, obj['Body'].read())
+
+    buffer.seek(0)
+    archive_name = f"{study['accession_id']}.zip"
+    return StreamingResponse(
+        buffer,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{archive_name}"'},
+    )
 
 
 @router.get("/peg/files/{file_id}")
