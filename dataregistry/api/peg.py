@@ -12,7 +12,7 @@ import httpx
 import pandas as pd  # type: ignore[import]
 from fastapi import UploadFile, File, Depends, Header
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 
 from dataregistry.api import query
 from dataregistry.api import s3
@@ -23,6 +23,7 @@ router = fastapi.APIRouter()
 engine = DataRegistryReadWriteDB().get_engine()
 
 USER_SERVICE_URL = os.getenv('USER_SERVICE_URL', 'https://users.kpndataregistry.org')
+PEG_USER_TOKEN = os.getenv('PEG_USER_TOKEN')
 
 
 _SAFE_FILENAME = re.compile(r'^[\w\-\.]+$')
@@ -122,10 +123,79 @@ class CreatePEGStudyRequest(BaseModel):
     metadata: PEGStudyMetadata
 
 
+class PEGNewUserRequest(BaseModel):
+    """Public self-service signup request"""
+    user_name: EmailStr
+    password: str
+
+
 @router.get("/peg/is-logged-in")
 async def peg_is_logged_in(user: User = Depends(get_peg_user)):
     """Check if the user is logged in to PEG."""
     return user
+
+
+@router.get("/peg/users")
+async def list_peg_users(user: User = Depends(get_peg_user)):
+    """
+    List all PEG users from the user service.
+    Requires 'peg-review-data' permission.
+    """
+    if not check_review_permissions(user):
+        raise fastapi.HTTPException(
+            status_code=403,
+            detail="You need 'peg-review-data' permission to list users"
+        )
+
+    if not PEG_USER_TOKEN:
+        raise fastapi.HTTPException(status_code=503, detail="User listing is not configured")
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{USER_SERVICE_URL}/api/auth/list-users/",
+                params={"token": PEG_USER_TOKEN}
+            )
+            if response.status_code == 200:
+                return response.json()
+            try:
+                detail = response.json()
+            except Exception:
+                detail = response.text
+            raise fastapi.HTTPException(status_code=response.status_code, detail=detail)
+    except httpx.RequestError:
+        raise fastapi.HTTPException(status_code=503, detail="User service unavailable")
+
+
+@router.post("/peg/create-user", status_code=201)
+async def create_peg_user(request: PEGNewUserRequest):
+    """
+    Self-service registration for PEG users.
+    Creates a new account in the user service. No authentication required.
+    """
+    if not PEG_USER_TOKEN:
+        raise fastapi.HTTPException(status_code=503, detail="User creation is not configured")
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{USER_SERVICE_URL}/api/auth/create-user/",
+                data={
+                    "token": PEG_USER_TOKEN,
+                    "username": request.user_name,
+                    "email": request.user_name,
+                    "password": request.password,
+                }
+            )
+            if response.status_code in (200, 201):
+                return {"message": "Account created successfully", "username": request.user_name}
+            try:
+                detail = response.json()
+            except Exception:
+                detail = response.text
+            raise fastapi.HTTPException(status_code=response.status_code, detail=detail)
+    except httpx.RequestError:
+        raise fastapi.HTTPException(status_code=503, detail="User service unavailable")
 
 
 @router.post("/peg/studies")
