@@ -1002,8 +1002,19 @@ def _enrich_df(df: 'pd.DataFrame', session: dict) -> 'pd.DataFrame':
     subject_to_group_idx = {str(s['subject']): s['groupIndex'] for s in subjects}
     df['groupIndex'] = df['subject.id'].astype(str).map(subject_to_group_idx)
     df['group'] = df['groupIndex'].map(lambda i: _group_attr(i, 'name'))
-    df['color'] = df['groupIndex'].map(lambda i: _group_attr(i, 'color', '#888'))
     df['diet'] = df['groupIndex'].map(lambda i: _group_attr(i, 'diet_name'))
+
+    # Color: prefer the session's top-level group_colors dict (where the UI
+    # actually stores it; mirrors calr-vue/src/utils/process.js). Fall back
+    # to a per-group 'color' field, then '#888'.
+    group_colors = session.get('group_colors') or {}
+    df['color'] = df['group'].map(
+        lambda name: group_colors.get(name)
+        if name in group_colors
+        else None
+    )
+    fallback = df['groupIndex'].map(lambda i: _group_attr(i, 'color', '#888'))
+    df['color'] = df['color'].where(df['color'].notna(), fallback)
 
     # ── 6. Kcal conversion ────────────────────────────────────────────────────
     for g in groups:

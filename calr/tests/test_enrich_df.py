@@ -99,6 +99,28 @@ class TestTimeColumns:
         assert pytest.approx(result['exp.hour'].iloc[1]) == 15.0 / 60
         assert result['exp.hour'].notna().all()
 
+    def test_color_read_from_session_group_colors_top_level(self):
+        # Sessions store colors in a top-level group_colors dict keyed by name,
+        # not on each group dict. _enrich_df must honor that.
+        sess = _session()
+        sess['group_colors'] = {'GroupA': '#3B73C7', 'GroupB': '#ED5F00'}
+        # Strip any per-group color so we know it's coming from group_colors.
+        for g in sess['groups']:
+            g.pop('color', None)
+        result = _enrich_df(_df(), sess)
+        a_rows = result[result['group'] == 'GroupA']
+        b_rows = result[result['group'] == 'GroupB']
+        assert (a_rows['color'] == '#3B73C7').all()
+        assert (b_rows['color'] == '#ED5F00').all()
+
+    def test_color_falls_back_to_default_when_no_session_colors(self):
+        sess = _session()
+        # No group_colors and no per-group color → '#888' fallback
+        for g in sess['groups']:
+            g.pop('color', None)
+        result = _enrich_df(_df(), sess)
+        assert (result['color'] == '#888').all()
+
     def test_exp_hour_preserved_when_exp_minute_and_date_time_both_missing(self):
         df = _df().drop(columns=['exp.minute'])
         df['exp.hour'] = [0.25, 0.5, 0.75, 0.25, 0.5, 0.75]
