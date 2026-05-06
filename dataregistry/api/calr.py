@@ -1169,8 +1169,10 @@ async def run_ancova(
     df = _enrich_df(df, session)
     df = df[df['group'].notna()].copy()
 
-    # Apply hour range — net window: start_hour <= exp.hour < end_hour
-    start_hour, end_hour = session['hour_range']
+    # Apply hour range — request fields override session.hour_range when supplied.
+    session_start, session_end = session['hour_range']
+    start_hour = request.min_hour if request.min_hour is not None else session_start
+    end_hour = request.max_hour if request.max_hour is not None else session_end
     df = df[(df['exp.hour'] >= start_hour) & (df['exp.hour'] < end_hour)]
 
     if df.empty:
@@ -1225,8 +1227,10 @@ async def run_power_calc(
     df = _enrich_df(df, session)
     df = df[df['group'].notna()].copy()
 
-    # Apply hour range — net window: start_hour <= exp.hour < end_hour
-    start_hour, end_hour = session['hour_range']
+    # Apply hour range — request fields override session.hour_range when supplied.
+    session_start, session_end = session['hour_range']
+    start_hour = request.min_hour if request.min_hour is not None else session_start
+    end_hour = request.max_hour if request.max_hour is not None else session_end
     df = df[(df['exp.hour'] >= start_hour) & (df['exp.hour'] < end_hour)]
 
     # Subject exclusions
