@@ -920,12 +920,32 @@ def _enrich_df(df: 'pd.DataFrame', session: dict) -> 'pd.DataFrame':
     subjects = session.get('subjects', [])
 
     # ── 1. Numeric parsing ────────────────────────────────────────────────────
+    # exp.minute is the high-resolution time axis. When the standard file lacks
+    # it (some converter versions emit only Date.Time + exp.hour), derive it
+    # from Date.Time the same way the loaders do, so downstream code that
+    # depends on exp.minute (clockHour, accumulator fill, sort order) keeps
+    # working. Last-ditch fallback: trust the file's existing exp.hour.
     if 'exp.minute' in df.columns:
         df['exp.minute'] = pd.to_numeric(df['exp.minute'], errors='coerce')
     else:
         df['exp.minute'] = np.nan
-    df['hour'] = df['exp.minute'] / 60
-    df['exp.hour'] = df['hour']
+
+    if df['exp.minute'].isna().all():
+        time_col = next((c for c in ('Date.Time', 'Time.Date') if c in df.columns), None)
+        if time_col:
+            times = pd.to_datetime(df[time_col], errors='coerce')
+            if times.notna().any():
+                df['exp.minute'] = (times - times.min()).dt.total_seconds() / 60
+
+    if df['exp.minute'].notna().any():
+        df['hour'] = df['exp.minute'] / 60
+        df['exp.hour'] = df['hour']
+    elif 'exp.hour' in df.columns:
+        df['exp.hour'] = pd.to_numeric(df['exp.hour'], errors='coerce')
+        df['hour'] = df['exp.hour']
+    else:
+        df['hour'] = np.nan
+        df['exp.hour'] = np.nan
 
     # ── 2. enviro.light inference ─────────────────────────────────────────────
     enviro_col = 'enviro.light'

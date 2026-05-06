@@ -83,6 +83,31 @@ class TestTimeColumns:
         assert result['day'].iloc[0] == -1
         assert result['exp.day'].iloc[0] == -1
 
+    def test_exp_minute_derived_from_date_time_when_missing(self):
+        # Older converter output: only Date.Time + exp.hour, no exp.minute.
+        df = _df().drop(columns=['exp.minute'])
+        df['Date.Time'] = [
+            '2024-01-01 00:15:00', '2024-01-01 00:30:00', '2024-01-01 00:45:00',
+            '2024-01-01 00:15:00', '2024-01-01 00:30:00', '2024-01-01 00:45:00',
+        ]
+        result = _enrich_df(df, _session())
+        # exp.minute should be back-filled relative to earliest timestamp
+        assert pytest.approx(result['exp.minute'].iloc[0]) == 0.0
+        assert pytest.approx(result['exp.minute'].iloc[1]) == 15.0
+        assert pytest.approx(result['exp.minute'].iloc[2]) == 30.0
+        # exp.hour follows from exp.minute / 60 — must NOT be NaN
+        assert pytest.approx(result['exp.hour'].iloc[1]) == 15.0 / 60
+        assert result['exp.hour'].notna().all()
+
+    def test_exp_hour_preserved_when_exp_minute_and_date_time_both_missing(self):
+        df = _df().drop(columns=['exp.minute'])
+        df['exp.hour'] = [0.25, 0.5, 0.75, 0.25, 0.5, 0.75]
+        result = _enrich_df(df, _session())
+        # No way to recover exp.minute, but exp.hour from the file must survive
+        assert result['exp.hour'].notna().all()
+        assert pytest.approx(result['exp.hour'].iloc[0]) == 0.25
+        assert pytest.approx(result['exp.hour'].iloc[2]) == 0.75
+
 
 class TestEnviroLight:
     def test_light_flag_from_enviro_light_column(self):
