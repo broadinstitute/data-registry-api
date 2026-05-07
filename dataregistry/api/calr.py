@@ -1191,13 +1191,16 @@ async def run_ancova(
     """
     session, df = _load_session_and_standard_df(request.session_id, user.user_name if user else None)
 
+    df = _enrich_df(df, session)
+
+    # Validate mass_variable AFTER enrichment so derived columns (e.g.
+    # `total_mass` from session) are accepted.
     if request.mass_variable not in df.columns:
         raise fastapi.HTTPException(
             status_code=422,
-            detail=f"Mass variable '{request.mass_variable}' not found in standard file"
+            detail=f"Mass variable '{request.mass_variable}' not found"
         )
 
-    df = _enrich_df(df, session)
     df = df[df['group'].notna()].copy()
 
     # Apply hour range — request fields override session.hour_range when supplied.
@@ -1253,10 +1256,14 @@ async def run_power_calc(
 
     if request.variable not in df.columns:
         raise fastapi.HTTPException(status_code=422, detail=f"Variable '{request.variable}' not found in standard file")
-    if request.mass_variable not in df.columns:
-        raise fastapi.HTTPException(status_code=422, detail=f"Mass variable '{request.mass_variable}' not found in standard file")
 
     df = _enrich_df(df, session)
+
+    # Validate mass_variable AFTER enrichment so derived columns (e.g.
+    # `total_mass` from session) are accepted.
+    if request.mass_variable not in df.columns:
+        raise fastapi.HTTPException(status_code=422, detail=f"Mass variable '{request.mass_variable}' not found")
+
     df = df[df['group'].notna()].copy()
 
     # Apply hour range — request fields override session.hour_range when supplied.
