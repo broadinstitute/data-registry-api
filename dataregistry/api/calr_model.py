@@ -61,7 +61,9 @@ class AnovaRequest(BaseModel):
 
 class AncovaTableRequest(BaseModel):
     session_id: str
-    mass_variable: str = 'subject.mass'
+    # Default to the session-stored `total_mass` (matches legacy R's
+    # `Total.Mass` from the weights tab). Pass 'subject.mass' to use per-row.
+    mass_variable: str = 'total_mass'
     # Optional override of session.hour_range (frontend slider).
     min_hour: Optional[float] = None
     max_hour: Optional[float] = None
@@ -78,7 +80,9 @@ class QualityControlRequest(BaseModel):
 class PowerCalcRequest(BaseModel):
     session_id: str
     variable: str
-    mass_variable: str = 'subject.mass'
+    # Default to the session-stored `total_mass` (matches legacy R's
+    # `Total.Mass` from the weights tab). Pass 'subject.mass' to use per-row.
+    mass_variable: str = 'total_mass'
     time_of_day: str = 'total'  # 'light', 'dark', or 'total'
     sample_sizes: List[int] = [4, 8, 12, 16, 20, 24]
     alpha: float = Field(default=0.05, gt=0, lt=1)

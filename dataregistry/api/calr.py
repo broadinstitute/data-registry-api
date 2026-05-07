@@ -1033,6 +1033,17 @@ def _enrich_df(df: 'pd.DataFrame', session: dict) -> 'pd.DataFrame':
                 mask = (df['subject.id'].astype(str) == subj_id) & df[out_col].isna()
                 df.loc[mask, out_col] = float(val)
 
+    # `total_mass`: session-stored constant per subject (the user-entered
+    # weight). Legacy R uses this as the ANCOVA mass covariate (`Total.Mass`),
+    # NOT the per-row `subject.mass`. Per-row mass varies through the experiment
+    # (animals gain/lose weight) and would give a different mass effect estimate.
+    df['total_mass'] = np.nan
+    for subj_id, subj in subject_map.items():
+        v = subj.get('total_mass')
+        if v is None:
+            continue
+        df.loc[df['subject.id'].astype(str) == subj_id, 'total_mass'] = float(v)
+
     # ── 5. Group metadata ─────────────────────────────────────────────────────
     def _group_attr(idx, attr, default=None):
         try:
