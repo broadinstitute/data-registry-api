@@ -257,6 +257,78 @@ def quality_control(
 ANCOVA_VARIABLES = {'ee', 'feed', 'feed.acc'}
 
 
+def _shieh_ancova_power(
+    mu: list, n_per_group: int, n_cov: int, r2: float, sd: float, alpha: float
+) -> float:
+    """
+    Exact one-way ANCOVA power via Shieh's formula. Port of
+    Superpower::pwr_ancova_shieh (type="exact"), which the legacy CalR R app
+    uses for its power curves.
+
+    Integrates the non-central F survival function over the t-distribution
+    of the covariate's contribution (Simpson's rule, 2000 intervals), so it
+    accounts for the randomness of the covariate adjustment — unlike the
+    closed-form `n × ss_means / σ²(1−R²)` approximation, which fixes the
+    covariate effect.
+    """
+    n_grp = len(mu)
+    nvec = np.full(n_grp, n_per_group, dtype=float)
+    var_e = sd ** 2 * (1.0 - r2)
+    if var_e <= 0:
+        return float('nan')
+
+    # Sum-to-zero contrast matrix, (n_grp - 1) x n_grp, matching R's
+    # t(contr.sum(n_grp)): rows are [I_{n_grp-1}, -1].
+    cmat = np.zeros((n_grp - 1, n_grp))
+    for i in range(n_grp - 1):
+        cmat[i, i] = 1.0
+        cmat[i, n_grp - 1] = -1.0
+
+    cmu = cmat @ np.asarray(mu, dtype=float).reshape(-1, 1)
+    num_df = cmat.shape[0]
+    N_tot = float(nvec.sum())
+    qmat = np.diag(N_tot / nvec)
+    A = cmat @ qmat @ cmat.T
+    quad = cmu.T @ np.linalg.inv(A) @ cmu
+    l_gamma2 = float(np.asarray(quad).item()) / var_e
+
+    den_df = N_tot - n_grp - n_cov
+    if den_df <= 0:
+        return float('nan')
+    dfx = den_df + 1
+    b = n_cov / dfx
+    fcrit = stats.f.ppf(1.0 - alpha, num_df, den_df)
+
+    numint = 2000
+    dd = 1e-5
+    # Simpson's 1/3 weights: 1, 4, 2, 4, 2, ..., 4, 1
+    coevec = np.empty(numint + 1)
+    coevec[0] = 1
+    coevec[-1] = 1
+    coevec[1:-1:2] = 4
+    coevec[2:-1:2] = 2
+
+    if n_cov == 1:
+        tl = stats.t.ppf(dd, dfx)
+        tu = stats.t.ppf(1 - dd, dfx)
+        intl = (tu - tl) / numint
+        tvec = tl + intl * np.arange(numint + 1)
+        wtpdf = (intl / 3) * coevec * stats.t.pdf(tvec, dfx)
+        ncp = N_tot * l_gamma2 / (1.0 + b * tvec ** 2)
+        pow_ = float(np.sum(wtpdf * stats.ncf.sf(fcrit, num_df, den_df, ncp)))
+    else:
+        bl = dd
+        bu = 1 - dd
+        intl = (bu - bl) / numint
+        bvec = bl + intl * np.arange(numint + 1)
+        wbpdf = (intl / 3) * coevec * stats.beta.pdf(bvec, dfx / 2, n_cov / 2)
+        ncp = N_tot * l_gamma2 * bvec
+        pow_ = float(np.sum(wbpdf * stats.ncf.sf(fcrit, num_df, den_df, ncp)))
+
+    # Clamp tiny numerical excursions
+    return max(0.0, min(1.0, pow_))
+
+
 def power_calc(
     df: pd.DataFrame,
     variable: str,
@@ -297,28 +369,35 @@ def power_calc(
                     )
 
     method = 'ancova' if variable in ANCOVA_VARIABLES else 'anova'
-    k = df['group'].nunique()
-    overall_sd = float(df[variable].std())
+
+    # Aggregate to per-subject means before fitting (mirrors R's PowerCalc, which
+    # operates on subject-level summaries). Without this we'd be fitting OLS on
+    # ~thousands of rows per subject, inflating degrees of freedom and producing
+    # nonsensical power curves.
+    subj = _aggregate_subjects(df, variable, mass_variable)
+
+    k = subj['group'].nunique()
+    overall_sd = float(subj['var'].std())
 
     # Per-group stats
     group_stats = {}
-    for group, gdf in df.groupby('group'):
+    for group, gdf in subj.groupby('group'):
         group_stats[group] = {
             'n': len(gdf['subject.id'].unique()),
-            'mean': round(float(gdf[variable].mean()), 6),
-            'variance': round(float(gdf[variable].var()), 6),
+            'mean': round(float(gdf['var'].mean()), 6),
+            'variance': round(float(gdf['var'].var()), 6),
         }
 
     group_means = [group_stats[g]['mean'] for g in sorted(group_stats)]
 
-    # Effect size
+    # Effect size — fit on per-subject means
     if method == 'ancova':
-        model = smf.ols(f'Q("{variable}") ~ Q("{mass_variable}") + C(group)', data=df).fit()
+        model = smf.ols('var ~ mass + C(group)', data=subj).fit()
         r_squared = float(model.rsquared)
         effect_size = {'r_squared': round(r_squared, 6)}
     else:
         from statsmodels.stats.anova import anova_lm
-        model = smf.ols(f'Q("{variable}") ~ C(group)', data=df).fit()
+        model = smf.ols('var ~ C(group)', data=subj).fit()
         anova_table = anova_lm(model, typ=1)
         ss_group = float(anova_table['sum_sq'].iloc[0])
         ss_total = float(anova_table['sum_sq'].sum())
@@ -326,29 +405,35 @@ def power_calc(
         effect_size = {'eta_squared': round(eta2, 6)}
 
     # Power curve
-    grand_mean = np.mean(group_means)
-    ss_means = sum((m - grand_mean) ** 2 for m in group_means)
-
     power_curve = []
     for n in sample_sizes:
-        N = n * k
-        df1 = k - 1
         if method == 'ancova':
-            df2 = N - k - 1  # subtract 1 covariate df
-            error_var = overall_sd ** 2 * (1 - r_squared)
+            # Use Shieh's exact formula (matches Superpower::power_oneway_ancova),
+            # which integrates over the covariate's t-distribution rather than
+            # treating the covariate adjustment as fixed.
+            try:
+                power = _shieh_ancova_power(
+                    mu=group_means, n_per_group=int(n), n_cov=1,
+                    r2=r_squared, sd=overall_sd, alpha=alpha,
+                )
+            except Exception:
+                power = None
         else:
+            # Closed-form Cohen's f² → non-central F approach for ANOVA.
+            N = n * k
+            df1 = k - 1
             df2 = N - k
-            f = np.sqrt(eta2 / (1 - eta2)) if eta2 < 1 else 1.0
-            error_var = overall_sd ** 2 / (1 + (N * f ** 2) / df1) if df1 > 0 else overall_sd ** 2
-
-        if df2 <= 0 or error_var <= 0:
+            if df2 <= 0:
+                power_curve.append({'n_per_group': n, 'power': None})
+                continue
+            f2 = eta2 / (1 - eta2) if 0 < eta2 < 1 else (1.0 if eta2 >= 1 else 0.0)
+            lambda_ = N * f2
+            f_crit = stats.f.ppf(1 - alpha, df1, df2)
+            power = float(stats.ncf.sf(f_crit, df1, df2, nc=lambda_))
+        if power is None:
             power_curve.append({'n_per_group': n, 'power': None})
-            continue
-
-        lambda_ = n * ss_means / error_var
-        f_crit = stats.f.ppf(1 - alpha, df1, df2)
-        power = float(1 - stats.ncf.cdf(f_crit, df1, df2, nc=lambda_))
-        power_curve.append({'n_per_group': n, 'power': round(power, 4)})
+        else:
+            power_curve.append({'n_per_group': n, 'power': round(float(power), 4)})
 
     return {
         'method': method,
@@ -401,30 +486,42 @@ def _fit_ancova_period(subj_df: pd.DataFrame):
     If interaction p > 0.05, re-fit without interaction.
     Returns (p_mass, p_group, p_interaction) — p_interaction is None when dropped.
     Returns None when there is insufficient data.
+
+    Uses Wald T-test p-values from the model coefficients (matches the legacy
+    R app's `summary(glm(...))$coefficients[..., 4]` extraction). For 2-group
+    binary contrast this is one coefficient per term, so each coefficient's
+    Wald p is the natural per-term significance.
     """
     n_groups = subj_df['group'].nunique()
     if n_groups < 2 or len(subj_df) <= n_groups + 2:
         return None
 
+    def _coef_p(model, predicate):
+        for name, p in model.pvalues.items():
+            if predicate(name):
+                return float(p)
+        return None
+
     try:
         m_full = smf.ols('var ~ mass + C(group) + mass:C(group)', data=subj_df).fit()
-        at_full = anova_lm(m_full, typ=2)
-
-        int_rows = [r for r in at_full.index if ':' in str(r)]
-        if not int_rows:
+        # Interaction term: a coefficient name containing ':' but starting with
+        # 'mass:' (avoids matching any future interaction order).
+        p_int = _coef_p(m_full, lambda n: ':' in n and 'mass' in n)
+        if p_int is None:
             return None
-        p_int = float(at_full.loc[int_rows[0], 'PR(>F)'])
 
         if p_int > 0.05:
             m_noint = smf.ols('var ~ mass + C(group)', data=subj_df).fit()
-            at_noint = anova_lm(m_noint, typ=2)
-            p_mass = float(at_noint.loc['mass', 'PR(>F)'])
-            p_group = float(at_noint.loc['C(group)', 'PR(>F)'])
+            p_mass = _coef_p(m_noint, lambda n: n == 'mass')
+            p_group = _coef_p(m_noint, lambda n: n.startswith('C(group)'))
+            if p_mass is None or p_group is None:
+                return None
             return (round(p_mass, 4), round(p_group, 4), None)
         else:
-            p_mass = float(at_full.loc['mass', 'PR(>F)'])
-            grp_rows = [r for r in at_full.index if 'C(group)' in str(r) and ':' not in str(r)]
-            p_group = float(at_full.loc[grp_rows[0], 'PR(>F)'])
+            p_mass = _coef_p(m_full, lambda n: n == 'mass')
+            p_group = _coef_p(m_full, lambda n: n.startswith('C(group)') and ':' not in n)
+            if p_mass is None or p_group is None:
+                return None
             return (round(p_mass, 4), round(p_group, 4), round(p_int, 4))
     except Exception:
         return None
@@ -432,8 +529,11 @@ def _fit_ancova_period(subj_df: pd.DataFrame):
 
 def _fit_anova_period(subj_df: pd.DataFrame):
     """
-    Fit var ~ C(group).
-    Returns p_group F-test p-value, or None when there is insufficient data.
+    Fit var ~ C(group). Returns the Wald T p-value of the group coefficient
+    (matches legacy R's `summary(glm)$coefficients[-1, 4]`), or None when
+    there is insufficient data.
+
+    For binary group, this equals the F-test p-value from anova_lm.
     """
     n_groups = subj_df['group'].nunique()
     if n_groups < 2 or len(subj_df) <= n_groups:
@@ -441,8 +541,10 @@ def _fit_anova_period(subj_df: pd.DataFrame):
 
     try:
         m = smf.ols('var ~ C(group)', data=subj_df).fit()
-        at = anova_lm(m, typ=2)
-        return round(float(at.loc['C(group)', 'PR(>F)']), 4)
+        for name, p in m.pvalues.items():
+            if name.startswith('C(group)'):
+                return round(float(p), 4)
+        return None
     except Exception:
         return None
 
