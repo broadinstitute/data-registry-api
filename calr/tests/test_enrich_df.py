@@ -67,37 +67,59 @@ def _df():
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 class TestTimeColumns:
-    def test_exp_hour_derived_from_exp_minute(self):
+    def test_exp_hour_floored_from_exp_minute_when_no_date_time(self):
+        # Legacy R uses integer hour buckets; we match that.
         result = _enrich_df(_df(), _session())
-        assert pytest.approx(result['exp.hour'].iloc[0]) == 15.0 / 60
-        assert pytest.approx(result['hour'].iloc[0]) == 15.0 / 60
+        # exp.minute=15 → exp.hour=0 (floor)
+        assert result['exp.hour'].iloc[0] == 0
+        # exp.minute=45 → exp.hour=0 (still in first hour)
+        assert result['exp.hour'].iloc[2] == 0
 
-    def test_clock_hour(self):
+    def test_clock_hour_from_exp_minute_when_no_date_time(self):
         result = _enrich_df(_df(), _session())
         # exp.minute=15 → clockHour = (15/60) % 24 = 0.25
         assert pytest.approx(result['clockHour'].iloc[0]) == (15.0 / 60) % 24
 
-    def test_day_derived_from_exp_hour_and_light_cycle(self):
-        result = _enrich_df(_df(), _session(light_cycle_start=7))
-        # exp.hour=0.25, light_cycle_start=7 → day = floor((0.25-7)/24) = floor(-0.28) = -1
-        assert result['day'].iloc[0] == -1
-        assert result['exp.day'].iloc[0] == -1
+    def test_hour_day_minute_derived_from_date_time(self):
+        # When Date.Time is present, hour/day/minute are timestamp columns
+        # floored to the appropriate granularity (matching legacy R output).
+        df = _df()
+        df['Date.Time'] = [
+            '2024-01-01 08:15:00', '2024-01-01 08:30:30', '2024-01-01 08:45:00',
+            '2024-01-02 09:00:00', '2024-01-02 09:15:00', '2024-01-02 09:30:00',
+        ]
+        result = _enrich_df(df, _session())
+        assert result['hour'].iloc[0] == pd.Timestamp('2024-01-01 08:00:00')
+        assert result['day'].iloc[0] == pd.Timestamp('2024-01-01')
+        assert result['minute'].iloc[1] == pd.Timestamp('2024-01-01 08:30:00')
+
+    def test_exp_hour_exp_day_derived_from_date_time(self):
+        df = _df()
+        df['Date.Time'] = [
+            '2024-01-01 00:15:00', '2024-01-01 01:30:00', '2024-01-01 02:45:00',
+            '2024-01-02 00:00:00', '2024-01-02 01:00:00', '2024-01-02 02:00:00',
+        ]
+        result = _enrich_df(df.drop(columns=['exp.minute']), _session())
+        # 00:15 → hour bucket 0, 01:30 → 1, 02:45 → 2 within day 1
+        assert result['exp.hour'].iloc[0] == 0
+        assert result['exp.hour'].iloc[1] == 1
+        # day 2 starts at hour 24
+        assert result['exp.hour'].iloc[3] == 24
+        assert result['exp.day'].iloc[0] == 0
+        assert result['exp.day'].iloc[3] == 1
 
     def test_exp_minute_derived_from_date_time_when_missing(self):
-        # Older converter output: only Date.Time + exp.hour, no exp.minute.
+        # Standard files without exp.minute (some converter outputs).
         df = _df().drop(columns=['exp.minute'])
         df['Date.Time'] = [
             '2024-01-01 00:15:00', '2024-01-01 00:30:00', '2024-01-01 00:45:00',
             '2024-01-01 00:15:00', '2024-01-01 00:30:00', '2024-01-01 00:45:00',
         ]
         result = _enrich_df(df, _session())
-        # exp.minute should be back-filled relative to earliest timestamp
+        # exp.minute back-filled relative to earliest timestamp
         assert pytest.approx(result['exp.minute'].iloc[0]) == 0.0
         assert pytest.approx(result['exp.minute'].iloc[1]) == 15.0
         assert pytest.approx(result['exp.minute'].iloc[2]) == 30.0
-        # exp.hour follows from exp.minute / 60 — must NOT be NaN
-        assert pytest.approx(result['exp.hour'].iloc[1]) == 15.0 / 60
-        assert result['exp.hour'].notna().all()
 
     def test_color_read_from_session_group_colors_top_level(self):
         # Sessions store colors in a top-level group_colors dict keyed by name,
@@ -215,20 +237,22 @@ class TestGroupMetadata:
         assert pd.isna(result.loc[0, 'group'])
 
 
-class TestKcalConversion:
-    def test_feed_multiplied_by_diet_kcal_for_group_with_value(self):
-        result = _enrich_df(_df(), _session())
-        a1_original_feed = 0.5  # first row
-        assert pytest.approx(result[result['subject.id'] == 'A1']['feed'].iloc[0]) == a1_original_feed * 3.5
+class TestFeedNotScaled:
+    """Feed/feed.acc are kept in grams in the enriched output (legacy parity).
+    The kcal conversion is applied inside the analysis functions, not here."""
 
-    def test_feed_acc_multiplied_by_diet_kcal(self):
+    def test_feed_unchanged_for_group_with_diet_kcal(self):
         result = _enrich_df(_df(), _session())
-        assert pytest.approx(result[result['subject.id'] == 'A1']['feed.acc'].iloc[0]) == 0.5 * 3.5
+        # GroupA has diet_kcal=3.5 but feed must remain in grams (0.5).
+        assert pytest.approx(result[result['subject.id'] == 'A1']['feed'].iloc[0]) == 0.5
 
-    def test_no_conversion_when_diet_kcal_is_none(self):
+    def test_feed_acc_unchanged_for_group_with_diet_kcal(self):
         result = _enrich_df(_df(), _session())
-        b1_original_feed = 0.8
-        assert pytest.approx(result[result['subject.id'] == 'B1']['feed'].iloc[0]) == b1_original_feed
+        assert pytest.approx(result[result['subject.id'] == 'A1']['feed.acc'].iloc[0]) == 0.5
+
+    def test_feed_unchanged_when_diet_kcal_is_none(self):
+        result = _enrich_df(_df(), _session())
+        assert pytest.approx(result[result['subject.id'] == 'B1']['feed'].iloc[0]) == 0.8
 
 
 class TestAccumulatorFill:
@@ -238,19 +262,23 @@ class TestAccumulatorFill:
         # ee.acc was already in the df — should remain unchanged
         assert pytest.approx(result[result['subject.id'] == 'A1']['ee.acc'].iloc[0]) == 2.0
 
-    def test_ee_acc_filled_when_absent(self):
+    def test_ee_acc_filled_when_absent_is_plain_cumsum(self):
+        # Legacy R parity: ee.acc is the plain cumulative sum of ee within each
+        # subject. The /bin scaling for kcal-balance math is applied inside
+        # quality_control(), not here.
         df = _df().drop(columns=['ee.acc'])
         result = _enrich_df(df, _session())
-        # 15-min intervals → minute_bin = 60/15 = 4
-        # First row ee=2.0 → ee.acc = 2.0/4 = 0.5
-        assert pytest.approx(result[result['subject.id'] == 'A1']['ee.acc'].iloc[0], abs=1e-6) == 2.0 / 4
+        a1 = result[result['subject.id'] == 'A1'].sort_values('exp.minute')
+        # ee values for A1 are 2.0, 2.1, 2.2 → cumsum = 2.0, 4.1, 6.3
+        assert pytest.approx(a1['ee.acc'].iloc[0]) == 2.0
+        assert pytest.approx(a1['ee.acc'].iloc[1]) == 4.1
+        assert pytest.approx(a1['ee.acc'].iloc[2]) == 6.3
 
     def test_eb_computed_as_feed_minus_ee(self):
         result = _enrich_df(_df(), _session())
         a1 = result[result['subject.id'] == 'A1'].iloc[0]
-        # GroupA has diet_kcal=3.5, so feed is 0.5*3.5=1.75; ee is unchanged at 2.0
-        expected_eb = 0.5 * 3.5 - 2.0
-        assert pytest.approx(a1['eb']) == expected_eb
+        # feed is in grams (no kcal scaling): eb = 0.5 - 2.0 = -1.5
+        assert pytest.approx(a1['eb']) == 0.5 - 2.0
 
     def test_eb_acc_computed_as_feed_acc_minus_ee_acc(self):
         result = _enrich_df(_df(), _session())

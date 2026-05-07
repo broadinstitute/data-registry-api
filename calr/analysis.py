@@ -117,23 +117,23 @@ def quality_control(
     """
     Port of the CalR quality control analysis (revperAve / modified_df1 pipeline).
 
-    Matches the R implementation exactly. _enrich_df has already converted
-    feed/feed.acc to kcal and stored ee.acc as cumsum(ee)/bin, so this fn
-    only does:
-      1. Optional caloric density conversion (only when group_diet_kcal is
-         passed AND _enrich_df hasn't already done it; current handlers pass
-         None and rely on enrichment).
-      2. For each subject:
+    Matches the R implementation exactly:
+      1. Apply caloric density conversion to feed and feed.acc per group
+         (group_diet_kcal maps group name → kcal per gram of food)
+      2. Compute bin = 60 / modal_measurement_interval_minutes
+         (converts cumulative EE from sum-of-rates to actual kcal)
+      3. For each subject:
            - mass_delta: avg(last N mass rows) - avg(first N mass rows)
-           - total_eb:   last feed.acc value - last ee.acc value
-             (mirrors R's l.eb.acc.x = last value of feed.acc - ee.acc, where
-             R's ee.acc has already been divided by bin upstream)
+           - total_eb:   last feed.acc value - last ee.acc value / bin
+             (mirrors R's l.eb.acc.x = last value of feed.acc - ee.acc/bin)
 
     Then fits per-group and overall linear regressions of mass_delta (x) vs
     total_eb (y).
 
     Expects df to have columns: subject.id, group, subject.mass, feed, feed.acc,
-    ee, ee.acc, exp.minute — sorted by time within each subject.
+    ee, ee.acc, exp.minute — sorted by time within each subject. ee.acc is
+    expected to be the plain cumulative sum of ee (post-_enrich_df); this fn
+    applies the /bin scaling itself.
 
     Returns:
         subjects            - per-subject [subject_id, group, mass_delta, total_eb]
@@ -150,6 +150,41 @@ def quality_control(
                 df.loc[mask, 'feed'] = df.loc[mask, 'feed'] * kcal_per_g
                 if 'feed.acc' in df.columns:
                     df.loc[mask, 'feed.acc'] = df.loc[mask, 'feed.acc'] * kcal_per_g
+
+    # Step 2: bin = 60 / modal measurement interval in minutes
+    # Mirrors R: binDf <- diff(my.table$minute)/60; bin <- 60/getmode(binDf)
+    # Cascade: exp.minute → Date.Time → exp.hour (non-zero diffs only) → default 60 min
+    def _modal_interval_minutes(df: pd.DataFrame) -> float:
+        # exp.minute: reliable when present and has variation
+        if 'exp.minute' in df.columns:
+            diffs = df.groupby('subject.id')['exp.minute'].diff().dropna()
+            nonzero = diffs[diffs > 0]
+            if not nonzero.empty:
+                return float(nonzero.mode().iloc[0])
+
+        # Date.Time: parse timestamps and diff in minutes
+        if 'Date.Time' in df.columns:
+            try:
+                times = pd.to_datetime(df['Date.Time'])
+                diffs = times.groupby(df['subject.id']).diff().dropna()
+                diffs_min = diffs.dt.total_seconds() / 60
+                nonzero = diffs_min[diffs_min > 0]
+                if not nonzero.empty:
+                    return float(nonzero.mode().iloc[0])
+            except Exception:
+                pass
+
+        # exp.hour: integer or decimal — only non-zero diffs, convert to minutes
+        if 'exp.hour' in df.columns:
+            diffs = df.groupby('subject.id')['exp.hour'].diff().dropna()
+            nonzero = diffs[diffs > 0]
+            if not nonzero.empty:
+                return float(nonzero.mode().iloc[0]) * 60
+
+        return 60.0  # fallback: assume hourly measurements
+
+    modal_interval = _modal_interval_minutes(df)
+    bin_factor = 60.0 / modal_interval  # intervals per hour
 
     # Determine sort column: prefer exp.minute (numeric, unambiguous), then Date.Time
     # (stable chronological order), then exp.hour.  When exp.hour is an integer, many
@@ -172,15 +207,13 @@ def quality_control(
         last_mass = float(sdf['subject.mass'].iloc[-n:].mean())
         mass_delta = round(last_mass - first_mass, 4)
 
-        # eb.acc = feed.acc - ee.acc  (last cumulative value)
+        # eb.acc = feed.acc - ee.acc/bin  (last cumulative value)
         # Mirrors R: my.table$ee.acc <- my.table$ee.acc/bin
         #            my.table$eb.acc  <- my.table$feed.acc - my.table$ee.acc
         #            l.eb.acc.x = tail(eb.acc, 1)
-        # _enrich_df already produces ee.acc as cumsum(ee)/minute_bin, matching
-        # the R-reference units, so we do NOT divide by bin_factor again here.
         feed_acc_last = float(sdf['feed.acc'].iloc[-1]) if 'feed.acc' in sdf.columns else float(sdf['feed'].sum())
         ee_acc_last = float(sdf['ee.acc'].iloc[-1]) if 'ee.acc' in sdf.columns else float(sdf['ee'].sum())
-        total_eb = round(feed_acc_last - ee_acc_last, 4)
+        total_eb = round(feed_acc_last - ee_acc_last / bin_factor, 4)
 
         subject_rows.append({
             'subject_id': str(subject_id),
@@ -230,6 +263,7 @@ def power_calc(
     mass_variable: str,
     sample_sizes: list[int],
     alpha: float = 0.05,
+    group_diet_kcal: dict = None,
 ) -> dict:
     """
     Port of R AncovaReadyStats() + PowerCalc().
@@ -239,6 +273,10 @@ def power_calc(
       - ANCOVA for 'ee', 'feed', 'feed.acc' (mass reduces residual variance)
       - ANOVA for all other variables
 
+    group_diet_kcal: optional {group_name: kcal_per_g}. When provided, feed
+    and feed.acc are scaled per group (mirrors R: feed *= cal_i) before
+    fitting, so analysis is on kcal not grams.
+
     Returns a dict with:
         method          - 'ancova' or 'anova'
         effect_size     - {'r_squared': float} or {'eta_squared': float}
@@ -246,6 +284,18 @@ def power_calc(
         group_stats     - per-group n, mean, variance
         power_curve     - [{'n_per_group': int, 'power': float}, ...]
     """
+    if group_diet_kcal:
+        df = df.copy()
+        for group_name, kcal_per_g in group_diet_kcal.items():
+            if not kcal_per_g:
+                continue
+            mask = df['group'] == group_name
+            for col in ('feed', 'feed.acc'):
+                if col in df.columns:
+                    df.loc[mask, col] = (
+                        pd.to_numeric(df.loc[mask, col], errors='coerce') * kcal_per_g
+                    )
+
     method = 'ancova' if variable in ANCOVA_VARIABLES else 'anova'
     k = df['group'].nunique()
     overall_sd = float(df[variable].std())
@@ -402,6 +452,7 @@ def ancova_table(
     mass_variable: str = 'subject.mass',
     light_cycle_start: int = 6,
     dark_cycle_start: int = 18,
+    group_diet_kcal: dict = None,
 ) -> dict:
     """
     Compute the summary ANCOVA/ANOVA table, mirroring anovaTab() from calR.
@@ -441,7 +492,20 @@ def ancova_table(
       ]
     }
     """
-    # Compute energy balance if missing
+    # Per-group kcal conversion (mirrors R: feed *= cal_i, feed.acc *= cal_i)
+    if group_diet_kcal:
+        df = df.copy()
+        for group_name, kcal_per_g in group_diet_kcal.items():
+            if not kcal_per_g:
+                continue
+            mask = df['group'] == group_name
+            for col in ('feed', 'feed.acc'):
+                if col in df.columns:
+                    df.loc[mask, col] = (
+                        pd.to_numeric(df.loc[mask, col], errors='coerce') * kcal_per_g
+                    )
+
+    # Compute energy balance if missing (after kcal conversion so eb is in kcal)
     if 'eb' not in df.columns and 'feed' in df.columns and 'ee' in df.columns:
         df = df.copy()
         df['eb'] = df['feed'] - df['ee']

@@ -891,23 +891,42 @@ async def download_calr_session_csv(
     )
 
 
+def _session_group_diet_kcal(session: dict) -> dict:
+    """Build {group_name: kcal_per_g} from a session's groups, skipping null/zero."""
+    return {
+        g['name']: g['diet_kcal']
+        for g in session.get('groups', [])
+        if g.get('name') and g.get('diet_kcal')
+    }
+
+
 def _enrich_df(df: 'pd.DataFrame', session: dict) -> 'pd.DataFrame':
     """
-    Port of the JS processDetail pipeline (calr-vue/src/utils/process.js).
+    Add derived columns to the standard DataFrame using session metadata.
 
-    Adds derived columns to the standard DataFrame using session metadata.
-    Steps match the JS order exactly:
-      1. Numeric parsing of exp.minute → hour / exp.hour
-      2. enviro.light inference from timestamp when all values blank
-      3. light / dark / clockHour / day / exp.day
-      4. Subject mass fallbacks from session subjects
-      5. Group metadata (group, groupIndex, color, diet)
-      6. Kcal conversion on feed / feed.acc per group diet_kcal
-      7. ee.acc fill (per-subject cumulative sum) when absent
-      8. eb = feed - ee; eb.acc = feed.acc - ee.acc
+    Output is intended to match the legacy CalR R app's enriched file column
+    for column on the columns it produces, plus our additions (light/dark,
+    group metadata, eb/eb.acc, etc.).
 
-    Does NOT zero-base accumulators — that is QC-specific and stays in
-    run_quality_control after the hour-range window is applied.
+    Steps:
+      1. Time columns: hour (timestamp@hour), day (date), minute (timestamp@min),
+         exp.hour / exp.day / exp.minute (numeric, preserved from input or
+         derived from Date.Time).
+      2. enviro.light inference from timestamp when all values blank.
+      3. light / dark / clockHour.
+      4. Subject mass fallbacks from session subjects.
+      5. Group metadata (group, groupIndex, color, diet).
+      6. ee.acc fill (per-subject plain cumulative sum of ee) when absent.
+      7. eb = feed - ee; eb.acc = feed.acc - ee.acc.
+
+    Notes:
+      - feed / feed.acc are NOT scaled by diet_kcal here. The kcal conversion
+        is applied inside the analysis functions (quality_control, ancova_table,
+        power_calc) so this output stays in grams, matching the legacy file.
+      - ee.acc is plain cumsum(ee). The /bin scaling for kcal-balance math
+        lives inside quality_control where the R reference puts it.
+      - Does NOT zero-base accumulators — that is QC-specific and stays in
+        run_quality_control after the hour-range window is applied.
     """
     import pandas as pd
     import numpy as np
@@ -919,33 +938,55 @@ def _enrich_df(df: 'pd.DataFrame', session: dict) -> 'pd.DataFrame':
     groups = session.get('groups', [])
     subjects = session.get('subjects', [])
 
-    # ── 1. Numeric parsing ────────────────────────────────────────────────────
-    # exp.minute is the high-resolution time axis. When the standard file lacks
-    # it (some converter versions emit only Date.Time + exp.hour), derive it
-    # from Date.Time the same way the loaders do, so downstream code that
-    # depends on exp.minute (clockHour, accumulator fill, sort order) keeps
-    # working. Last-ditch fallback: trust the file's existing exp.hour.
+    # ── 1. Time columns ───────────────────────────────────────────────────────
+    # Date.Time is the canonical timestamp; everything else is derived from it
+    # (matches the legacy R app's output and the converter loaders).
+    time_col = next((c for c in ('Date.Time', 'Time.Date') if c in df.columns), None)
+    times = pd.to_datetime(df[time_col], errors='coerce') if time_col else None
+
+    if times is not None and times.notna().any():
+        df['hour'] = times.dt.floor('h')
+        df['day'] = times.dt.floor('D')
+        df['minute'] = times.dt.floor('min')
+    else:
+        df['hour'] = pd.NaT
+        df['day'] = pd.NaT
+        df['minute'] = pd.NaT
+
+    # exp.minute: continuous minutes since first sample. Preserve from input
+    # if present, otherwise derive from Date.Time.
     if 'exp.minute' in df.columns:
         df['exp.minute'] = pd.to_numeric(df['exp.minute'], errors='coerce')
     else:
         df['exp.minute'] = np.nan
+    if df['exp.minute'].isna().all() and times is not None and times.notna().any():
+        df['exp.minute'] = (times - times.min()).dt.total_seconds() / 60
 
-    if df['exp.minute'].isna().all():
-        time_col = next((c for c in ('Date.Time', 'Time.Date') if c in df.columns), None)
-        if time_col:
-            times = pd.to_datetime(df[time_col], errors='coerce')
-            if times.notna().any():
-                df['exp.minute'] = (times - times.min()).dt.total_seconds() / 60
-
-    if df['exp.minute'].notna().any():
-        df['hour'] = df['exp.minute'] / 60
-        df['exp.hour'] = df['hour']
-    elif 'exp.hour' in df.columns:
+    # exp.hour: integer hour bucket (legacy R uses floor-to-hour). Preserve
+    # from input if present; otherwise derive from the floored timestamp,
+    # falling back to floor(exp.minute / 60) when Date.Time is unavailable.
+    if 'exp.hour' in df.columns:
         df['exp.hour'] = pd.to_numeric(df['exp.hour'], errors='coerce')
-        df['hour'] = df['exp.hour']
     else:
-        df['hour'] = np.nan
         df['exp.hour'] = np.nan
+    if df['exp.hour'].isna().all():
+        if times is not None and times.notna().any():
+            hour_floor = times.dt.floor('h')
+            df['exp.hour'] = (hour_floor - hour_floor.min()).dt.total_seconds() / 3600
+        elif df['exp.minute'].notna().any():
+            df['exp.hour'] = np.floor(df['exp.minute'] / 60)
+
+    # exp.day: integer day bucket. Preserve from input; otherwise derive.
+    if 'exp.day' in df.columns:
+        df['exp.day'] = pd.to_numeric(df['exp.day'], errors='coerce')
+    else:
+        df['exp.day'] = np.nan
+    if df['exp.day'].isna().all():
+        if times is not None and times.notna().any():
+            day_floor = times.dt.floor('D')
+            df['exp.day'] = (day_floor - day_floor.min()).dt.total_seconds() / 86400
+        elif df['exp.hour'].notna().any():
+            df['exp.day'] = np.floor(df['exp.hour'] / 24)
 
     # ── 2. enviro.light inference ─────────────────────────────────────────────
     enviro_col = 'enviro.light'
@@ -954,16 +995,19 @@ def _enrich_df(df: 'pd.DataFrame', session: dict) -> 'pd.DataFrame':
     df[enviro_col] = pd.to_numeric(df[enviro_col], errors='coerce')
 
     if df[enviro_col].isna().all():
-        time_col = next((c for c in ('Date.Time', 'Time.Date') if c in df.columns), None)
-        if time_col:
-            ts = pd.to_datetime(df[time_col], errors='coerce')
-            h = ts.dt.hour
+        if times is not None and times.notna().any():
+            h = times.dt.hour
             df[enviro_col] = np.where(
                 (h >= light_cycle_start) & (h < dark_cycle_start), 5.0, 0.0
             )
 
-    # ── 3. Derived time columns ───────────────────────────────────────────────
-    clock_hour = (df['exp.minute'] / 60) % 24
+    # ── 3. light / dark / clockHour ───────────────────────────────────────────
+    # clockHour is hour-of-day from the timestamp when available; otherwise
+    # derived from exp.minute as a fallback.
+    if times is not None and times.notna().any():
+        clock_hour = times.dt.hour + times.dt.minute / 60.0
+    else:
+        clock_hour = (df['exp.minute'] / 60) % 24
     enviro_light = df[enviro_col]
     light_from_enviro = (enviro_light > 1).astype(float)
     light_from_clock = (
@@ -972,8 +1016,6 @@ def _enrich_df(df: 'pd.DataFrame', session: dict) -> 'pd.DataFrame':
     df['light'] = np.where(enviro_light.notna(), light_from_enviro, light_from_clock)
     df['dark'] = 1.0 - df['light']
     df['clockHour'] = clock_hour
-    df['day'] = np.floor((df['exp.hour'] - light_cycle_start) / 24)
-    df['exp.day'] = df['day']
 
     # ── 4. Subject mass fallbacks ─────────────────────────────────────────────
     subject_map = {str(s['subject']): s for s in subjects}
@@ -1016,44 +1058,22 @@ def _enrich_df(df: 'pd.DataFrame', session: dict) -> 'pd.DataFrame':
     fallback = df['groupIndex'].map(lambda i: _group_attr(i, 'color', '#888'))
     df['color'] = df['color'].where(df['color'].notna(), fallback)
 
-    # ── 6. Kcal conversion ────────────────────────────────────────────────────
-    for g in groups:
-        kcal = g.get('diet_kcal')
-        if kcal is not None:
-            mask = df['group'] == g['name']
-            if 'feed' in df.columns:
-                df.loc[mask, 'feed'] = (
-                    pd.to_numeric(df.loc[mask, 'feed'], errors='coerce') * kcal
-                )
-            if 'feed.acc' in df.columns:
-                df.loc[mask, 'feed.acc'] = (
-                    pd.to_numeric(df.loc[mask, 'feed.acc'], errors='coerce') * kcal
-                )
-
-    # ── 7. Accumulator fill ───────────────────────────────────────────────────
-    # minute_bin = 60 / modal row-to-row interval in minutes (JS: computeMinuteBin)
-    minute_bin = 1.0
-    valid_minutes = df['exp.minute'].dropna().sort_values()
-    if len(valid_minutes) >= 2:
-        diffs = valid_minutes.diff().dropna()
-        pos_diffs = diffs[diffs > 0]
-        if not pos_diffs.empty:
-            modal_diff = float(pos_diffs.mode().iloc[0])
-            minute_bin = 60.0 / modal_diff if modal_diff > 0 else 1.0
-
-    # Fill ee.acc per subject when absent or entirely null
+    # ── 6. Accumulator fill ───────────────────────────────────────────────────
+    # Plain per-subject cumulative sum of ee, matching the legacy R output.
+    # The /bin_factor scaling (for kcal-balance math) is applied inside
+    # quality_control(), not here.
     if 'ee.acc' not in df.columns or df['ee.acc'].isna().all():
         if 'ee' in df.columns:
             def _cumsum_ee(grp):
                 grp = grp.sort_values('exp.minute').copy()
                 ee = pd.to_numeric(grp['ee'], errors='coerce')
-                grp['ee.acc'] = (ee / minute_bin).cumsum()
+                grp['ee.acc'] = ee.cumsum()
                 return grp
             subject_id = df['subject.id']
             df = df.groupby('subject.id', group_keys=False).apply(_cumsum_ee)
             df['subject.id'] = subject_id
 
-    # ── 8. eb / eb.acc ────────────────────────────────────────────────────────
+    # ── 7. eb / eb.acc ────────────────────────────────────────────────────────
     feed = pd.to_numeric(df['feed'], errors='coerce') if 'feed' in df.columns else None
     ee = pd.to_numeric(df['ee'], errors='coerce') if 'ee' in df.columns else None
     feed_acc = pd.to_numeric(df['feed.acc'], errors='coerce') if 'feed.acc' in df.columns else None
@@ -1195,6 +1215,7 @@ async def run_ancova(
             mass_variable=request.mass_variable,
             light_cycle_start=session['light_cycle_start'],
             dark_cycle_start=session['dark_cycle_start'],
+            group_diet_kcal=_session_group_diet_kcal(session),
         )
     except Exception as e:
         raise fastapi.HTTPException(status_code=500, detail=f"ANCOVA table calculation failed: {str(e)}")
@@ -1252,7 +1273,14 @@ async def run_power_calc(
         raise fastapi.HTTPException(status_code=422, detail="No data remaining after filters")
 
     try:
-        result = power_calc(df, request.variable, request.mass_variable, request.sample_sizes, request.alpha)
+        result = power_calc(
+            df,
+            request.variable,
+            request.mass_variable,
+            request.sample_sizes,
+            request.alpha,
+            group_diet_kcal=_session_group_diet_kcal(session),
+        )
     except Exception as e:
         raise fastapi.HTTPException(status_code=500, detail=f"Power calculation failed: {str(e)}")
 
@@ -1317,10 +1345,12 @@ async def run_quality_control(
                 lambda x: x - x.dropna().iloc[0] if x.dropna().size > 0 else x
             )
 
-    # Pass group_diet_kcal=None: _enrich_df already applied kcal conversion.
-    # quality_control() skips its internal conversion when the argument is falsy.
     try:
-        result = quality_control(df, request.n_mass_measurements)
+        result = quality_control(
+            df,
+            request.n_mass_measurements,
+            group_diet_kcal=_session_group_diet_kcal(session),
+        )
     except Exception as e:
         raise fastapi.HTTPException(status_code=500, detail=f"QC analysis failed: {str(e)}")
 
