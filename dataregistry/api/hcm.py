@@ -231,7 +231,8 @@ def _validate_filename(filename: str) -> Optional[str]:
     if not HCM_FILENAME_PATTERN.match(filename):
         return (
             f"Filename '{filename}' does not match the required pattern: "
-            "HCM_{{SARC}}_{{STUDY}}_{{ANCESTRY}}_{{SEX}}_{{BUILD}}_{{SOFTWARE}}_{{ANALYST}}_{{DDMMYY}}.gz"
+            "HCM_{SARC}_{STUDY}_{ANCESTRY}_{SEX}_{BUILD}_{SOFTWARE}_{ANALYST}_{DDMMYY}.gz "
+            "(no underscores allowed inside STUDY, SOFTWARE, or ANALYST — use dashes instead)"
         )
     return None
 
