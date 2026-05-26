@@ -2184,7 +2184,7 @@ GWAS_VALIDATOR_JOB_QUEUE = os.getenv('SGC_GWAS_VALIDATOR_JOB_QUEUE', 'sgc-gwas-v
 GWAS_VALIDATOR_JOB_DEFINITION = os.getenv('SGC_GWAS_VALIDATOR_JOB_DEFINITION', 'sgc-gwas-validator-job')
 
 
-def _submit_gwas_validation_and_await(engine_ref, file_id: str, s3_path: str,
+def _submit_gwas_validation_and_await(engine_ref, file_id, s3_path: str,
                                       column_mapping: dict, submitted_by: str,
                                       job_record_id: str, max_n: int = 0):
     """Background task: submit Batch job, poll until done, update DB.
@@ -2192,6 +2192,11 @@ def _submit_gwas_validation_and_await(engine_ref, file_id: str, s3_path: str,
     Follows the same pattern as batch.submit_and_await_job used by Hermes.
     """
     import time
+
+    # pymysql returns binary(32) columns as bytes; ensure str before f-string
+    # formatting so the S3 key doesn't contain a literal b'...' substring.
+    if isinstance(file_id, (bytes, bytearray)):
+        file_id = file_id.decode('ascii')
 
     batch_client = boto3.client('batch', region_name=s3.S3_REGION)
     progress_s3_key = f"sgc/gwas-validation/{file_id}/progress.json"
@@ -2255,13 +2260,20 @@ def _submit_gwas_validation_and_await(engine_ref, file_id: str, s3_path: str,
             pass
 
 
-def _kick_off_gwas_validation(background_tasks: BackgroundTasks, file_id: str,
+def _kick_off_gwas_validation(background_tasks: BackgroundTasks, file_id,
                               s3_path: str, column_mapping: dict,
                               submitted_by: str, max_n: int = 0) -> str:
     """Create a DB record and schedule the background validation task.
 
     Returns the validation job record ID.
     """
+    # pymysql returns binary(32) columns as bytes when the caller pulled file_id
+    # from a SELECT (e.g. the bulk validate-all endpoint reads it from
+    # get_sgc_gwas_files_needing_validation). Decode here so f-string formatting
+    # produces a clean S3 key, not b'...'.
+    if isinstance(file_id, (bytes, bytearray)):
+        file_id = file_id.decode('ascii')
+
     progress_s3_key = f"sgc/gwas-validation/{file_id}/progress.json"
     job = SGCGWASValidationJob(
         file_id=file_id,

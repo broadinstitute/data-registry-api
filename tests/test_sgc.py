@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient
 from uuid import uuid4
 from sqlalchemy.exc import IntegrityError
 
-from dataregistry.api.model import SGCCohort, SGCCohortFile
+from dataregistry.api.model import SGCCohort, SGCCohortFile, SGCGWASFile
 from dataregistry.api import query
 from dataregistry.api.db import DataRegistryReadWriteDB
 from sqlalchemy import text
@@ -467,3 +467,82 @@ def test_validate_cooccurrence_counts_vs_cases(api_client: TestClient):
     assert error is not None, "Expected validation error for invalid co-occurrence counts"
     assert "cooccur=150" in error, f"Expected error message to contain count info, got: {error}"
     assert "min(cases=100, cases=200)" in error, f"Expected error to show cases counts, got: {error}"
+
+
+def test_kick_off_gwas_validation_handles_bytes_file_id(api_client: TestClient):
+    """Regression: bulk validate-all reads file_id from binary(32) as bytes,
+    then passes it to _kick_off_gwas_validation, which f-string-formats it
+    into progress_s3_key. Without a defensive decode, the resulting key
+    contained a literal b'...' substring and the Batch job never ran
+    (status flipped to FAILED with no error detail).
+
+    Verifies _kick_off_gwas_validation decodes bytes -> str so the
+    constructed S3 key is clean.
+    """
+    from fastapi import BackgroundTasks
+    from dataregistry.api.sgc import _kick_off_gwas_validation
+
+    engine = DataRegistryReadWriteDB().get_engine()
+
+    cohort = SGCCohort(
+        name="Bytes Decode Cohort",
+        uploaded_by="testuser",
+        total_sample_size=100,
+        number_of_males=50,
+        number_of_females=50,
+    )
+    cohort_id_hex = query.upsert_sgc_cohort(engine, cohort)
+
+    gwas_file = SGCGWASFile(
+        cohort_id=cohort_id_hex,
+        dataset="ds",
+        phenotype="ph",
+        ancestry="EUR",
+        file_name="test.tsv.gz",
+        file_size=1024,
+        s3_path="sgc/gwas/bytes-decode-test/test.tsv.gz",
+        uploaded_by="testuser",
+        column_mapping={"col_chromosome": "CHR", "col_position": "POS", "col_pvalue": "P"},
+    )
+    file_id_hex = query.insert_sgc_gwas_file(engine, gwas_file)
+
+    # Simulate the bulk path: pymysql returns binary(32) as bytes containing
+    # 32 ASCII-hex chars.
+    file_id_bytes = file_id_hex.encode('ascii')
+    assert isinstance(file_id_bytes, bytes)
+
+    # BackgroundTasks stores tasks but doesn't run them; the actual
+    # _submit_gwas_validation_and_await call is never executed by this test.
+    bg = BackgroundTasks()
+    job_id = _kick_off_gwas_validation(
+        background_tasks=bg,
+        file_id=file_id_bytes,
+        s3_path="s3://bucket/path",
+        column_mapping={"col_chromosome": "CHR", "col_position": "POS", "col_pvalue": "P"},
+        submitted_by="testuser",
+        max_n=100,
+    )
+
+    with engine.connect() as conn:
+        progress_key = conn.execute(text(
+            "SELECT progress_s3_key FROM sgc_gwas_validation_jobs WHERE id = :jid"
+        ), {"jid": job_id}).scalar()
+
+    # Cleanup BEFORE assertions so a failure doesn't leave orphan rows
+    with engine.connect() as conn:
+        conn.execute(text("SET FOREIGN_KEY_CHECKS = 0"))
+        conn.execute(text("DELETE FROM sgc_gwas_validation_jobs WHERE id = :jid"),
+                     {"jid": job_id})
+        conn.execute(text("DELETE FROM sgc_gwas_files WHERE s3_path = :p"),
+                     {"p": "sgc/gwas/bytes-decode-test/test.tsv.gz"})
+        conn.commit()
+        conn.execute(text("SET FOREIGN_KEY_CHECKS = 1"))
+
+    assert progress_key is not None, "validation job row was not inserted"
+    assert "b'" not in progress_key, (
+        f"progress_s3_key contains b' (bytes leaked through f-string): {progress_key!r}"
+    )
+    expected = f"sgc/gwas-validation/{file_id_hex}/progress.json"
+    assert progress_key == expected, (
+        f"progress_s3_key mismatch:\n  got     : {progress_key}\n  expected: {expected}"
+    )
