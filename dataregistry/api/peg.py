@@ -93,6 +93,7 @@ class PEGStudyMetadata(BaseModel):
     published: str
     publication_ref: Optional[str] = None
     phenotype_is_custom: bool = False
+    mondo_id: Optional[str] = None
 
 
 class PEGStudy(BaseModel):
