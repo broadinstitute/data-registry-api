@@ -32,6 +32,11 @@ JOB_QUEUE = os.getenv("SGC_QC_PLOTS_JOB_QUEUE", "sgc-gwas-qc-plots-queue")
 JOB_DEFINITION = os.getenv("SGC_QC_PLOTS_JOB_DEFINITION", "sgc-gwas-qc-plots-job")
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
 
+# The Batch job definition is env-agnostic; the submitter propagates the DB
+# target (and other per-env settings) into each job via containerOverrides.
+# This lets a single CloudFormation stack serve both QA and prod.
+TARGET_DB_NAME = os.getenv("DATA_REGISTRY_DB_NAME", "dataregistry_qa")
+
 
 def _list_files(engine, force: bool, limit: Optional[int]):
     """Return rows to enqueue. By default skip SUCCEEDED; --force overrides."""
@@ -105,6 +110,11 @@ def main(bucket: str, limit: Optional[int], force: bool, dry_run: bool):
                 "bucket": bucket,
                 "file-id": file_id,
                 "output-prefix": f"sgc/qc/plots/{file_id}",
+            },
+            containerOverrides={
+                "environment": [
+                    {"name": "DATA_REGISTRY_DB_NAME", "value": TARGET_DB_NAME},
+                ],
             },
         )
 

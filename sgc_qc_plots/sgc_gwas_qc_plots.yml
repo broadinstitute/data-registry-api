@@ -1,14 +1,9 @@
 AWSTemplateFormatVersion: 2010-09-09
 Description: Batch infrastructure for SGC GWAS QC plot generation
 
-Parameters:
-  DbName:
-    Type: String
-    Default: dataregistry_qa
-    AllowedValues:
-      - dataregistry_qa
-      - dataregistry
-    Description: Target MySQL database. Override at deploy for production.
+# This stack serves both QA and prod. The DB target is selected per-submission
+# by submit_qc_plots_batch.py via containerOverrides.environment, so the job
+# definition itself stays env-agnostic.
 
 Resources:
   EcrRepository:
@@ -146,5 +141,5 @@ Resources:
         Environment:
           - Name: AWS_DEFAULT_REGION
             Value: us-east-1
-          - Name: DATA_REGISTRY_DB_NAME
-            Value: !Ref DbName
+          # DATA_REGISTRY_DB_NAME is injected per-job by the submitter via
+          # containerOverrides.environment (see submit_qc_plots_batch.py).
