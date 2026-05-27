@@ -8,8 +8,8 @@ served to reviewers via the GET /sgc/download-all-files API endpoint.
 GWAS summary-stat files are intentionally excluded — they are large and
 reviewers fetch them individually through the SGC UI.
 
-The script computes a checksum of the current file list and skips rebuilding
-if nothing has changed since the last run.
+The script computes a checksum of the current file list (path + S3 ETag per
+file) and skips rebuilding if nothing has changed since the last run.
 
 Usage:
     python build_sgc_archive.py                # build and upload (skips if unchanged)
@@ -56,15 +56,24 @@ def extract_s3_key(file_path: str) -> str:
     return file_path
 
 
-def compute_file_list_checksum(cohort_files):
-    """Compute a SHA-256 checksum of the sorted file list.
+def compute_file_list_checksum(cohort_files, s3_client):
+    """Compute a SHA-256 checksum of the file list, including S3 ETags.
 
-    This captures additions, deletions, and path changes. If any file
-    record is added, removed, or has its path changed, the checksum
-    will differ and the archive will be rebuilt.
+    Captures additions, deletions, path changes, AND in-place content
+    edits (re-uploads): each entry is (path, ETag), so rewriting a file
+    in S3 changes the checksum even when the path is unchanged. Files
+    missing from S3 contribute a sentinel so disappearance is also detected.
     """
-    paths = sorted(f['file_path'] for f in cohort_files)
-    return hashlib.sha256(json.dumps(paths).encode()).hexdigest()
+    entries = []
+    for f in sorted(cohort_files, key=lambda x: x['file_path']):
+        s3_key = extract_s3_key(f['file_path'])
+        try:
+            response = s3_client.head_object(Bucket=s3.BASE_BUCKET, Key=s3_key)
+            etag = response['ETag'].strip('"')
+        except ClientError:
+            etag = 'MISSING'
+        entries.append([f['file_path'], etag])
+    return hashlib.sha256(json.dumps(entries).encode()).hexdigest()
 
 
 def get_stored_checksum(s3_client):
@@ -90,16 +99,16 @@ def build_archive(engine, s3_client, dry_run=False, force=False):
         logger.warning("No files found. Skipping archive build.")
         return
 
-    current_checksum = compute_file_list_checksum(cohort_files)
+    current_checksum = compute_file_list_checksum(cohort_files, s3_client)
     logger.info(f"Current file list checksum: {current_checksum[:12]}...")
 
     if not dry_run and not force:
         stored_checksum = get_stored_checksum(s3_client)
         if stored_checksum == current_checksum:
-            logger.info("File list unchanged since last build. Skipping. Use --force to rebuild.")
+            logger.info("File list and contents unchanged since last build. Skipping. Use --force to rebuild.")
             return
         if stored_checksum:
-            logger.info(f"Previous checksum: {stored_checksum[:12]}... — file list changed, rebuilding.")
+            logger.info(f"Previous checksum: {stored_checksum[:12]}... — file list or contents changed, rebuilding.")
         else:
             logger.info("No previous checksum found. Building archive.")
 
