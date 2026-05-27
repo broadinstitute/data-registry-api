@@ -2144,3 +2144,106 @@ def _format_sgc_gwas_cohort_row(row) -> dict:
     if isinstance(d.get('metadata'), str):
         d['metadata'] = json.loads(d['metadata'])
     return d
+
+
+def _format_sgc_plot_result_row(d: dict) -> dict:
+    """Format a raw DB row for sgc_gwas_plot_results, converting binary IDs to lowercase hex strings."""
+    for key in ('id', 'file_id', 'cohort_id'):
+        if isinstance(d.get(key), (bytes, bytearray)):
+            d[key] = d[key].decode('ascii')
+    return d
+
+
+def insert_sgc_plot_result_pending(engine, file_id_hex: str) -> str:
+    """Create a PENDING plot-result row; if one already exists for this file, reset it to
+    PENDING and clear all result fields. Returns the row's hex id.
+    """
+    plot_id = str(uuid.uuid4()).replace('-', '')
+    with engine.connect() as conn:
+        conn.execute(text("""
+            INSERT INTO sgc_gwas_plot_results (id, file_id, status)
+            VALUES (:id, :file_id, 'PENDING')
+            ON DUPLICATE KEY UPDATE
+                status='PENDING',
+                batch_job_id=NULL,
+                lambda_gc=NULL,
+                n_variants=NULL,
+                n_sig_5e8=NULL,
+                n_sig_1e5=NULL,
+                manhattan_s3_key=NULL,
+                qq_s3_key=NULL,
+                error_message=NULL
+        """), {'id': plot_id, 'file_id': file_id_hex})
+        conn.commit()
+    return plot_id
+
+
+def update_sgc_plot_result(
+    engine,
+    file_id_hex: str,
+    *,
+    status: str,
+    batch_job_id: Optional[str] = None,
+    lambda_gc: Optional[float] = None,
+    n_variants: Optional[int] = None,
+    n_sig_5e8: Optional[int] = None,
+    n_sig_1e5: Optional[int] = None,
+    manhattan_s3_key: Optional[str] = None,
+    qq_s3_key: Optional[str] = None,
+    error_message: Optional[str] = None,
+) -> None:
+    """Partial update: only non-None fields are written; others left alone via COALESCE.
+
+    Optional fields default to None, in which case the existing DB value is preserved
+    (COALESCE). To clear a previously-set field, re-call insert_sgc_plot_result_pending
+    instead. Raises ValueError if no row matches file_id_hex.
+    """
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+            UPDATE sgc_gwas_plot_results
+            SET status = :status,
+                batch_job_id = COALESCE(:batch_job_id, batch_job_id),
+                lambda_gc = COALESCE(:lambda_gc, lambda_gc),
+                n_variants = COALESCE(:n_variants, n_variants),
+                n_sig_5e8 = COALESCE(:n_sig_5e8, n_sig_5e8),
+                n_sig_1e5 = COALESCE(:n_sig_1e5, n_sig_1e5),
+                manhattan_s3_key = COALESCE(:manhattan_s3_key, manhattan_s3_key),
+                qq_s3_key = COALESCE(:qq_s3_key, qq_s3_key),
+                error_message = COALESCE(:error_message, error_message)
+            WHERE file_id = :file_id
+        """), {
+            'status': status,
+            'batch_job_id': batch_job_id,
+            'lambda_gc': lambda_gc,
+            'n_variants': n_variants,
+            'n_sig_5e8': n_sig_5e8,
+            'n_sig_1e5': n_sig_1e5,
+            'manhattan_s3_key': manhattan_s3_key,
+            'qq_s3_key': qq_s3_key,
+            'error_message': error_message,
+            'file_id': file_id_hex,
+        })
+        if result.rowcount == 0:
+            raise ValueError(f"No sgc_gwas_plot_results row found for file_id={file_id_hex}")
+        conn.commit()
+
+
+def get_sgc_plot_results(engine) -> list[dict]:
+    """All plot-results joined to files, ordered by lambda_gc desc for triage."""
+    with engine.connect() as conn:
+        rs = conn.execute(text("""
+            SELECT
+                p.id,
+                p.file_id,
+                p.batch_job_id,
+                p.status,
+                p.lambda_gc, p.n_variants, p.n_sig_5e8, p.n_sig_1e5,
+                p.manhattan_s3_key, p.qq_s3_key, p.error_message,
+                p.created_at, p.updated_at,
+                f.dataset, f.phenotype, f.ancestry, f.file_name,
+                f.cohort_id
+            FROM sgc_gwas_plot_results p
+            JOIN sgc_gwas_files f ON f.id = p.file_id
+            ORDER BY p.lambda_gc DESC, f.phenotype, f.dataset
+        """))
+        return [_format_sgc_plot_result_row(dict(r._mapping)) for r in rs]

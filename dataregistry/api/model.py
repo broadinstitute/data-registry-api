@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import Union, List, Dict
+from typing import Union, List, Dict, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field, Extra
@@ -454,5 +454,26 @@ class PortalLiftoverConfig(BaseModel):
 
 class PortalConfigUpdateRequest(BaseModel):
     target_genome_build: GenomeBuild
+
+
+class SGCGWASPlotResult(BaseModel):
+    id: str
+    file_id: str
+    batch_job_id: Optional[str] = None
+    status: str
+    lambda_gc: Optional[float] = None
+    n_variants: Optional[int] = None
+    n_sig_5e8: Optional[int] = None
+    n_sig_1e5: Optional[int] = None
+    manhattan_s3_key: Optional[str] = None
+    qq_s3_key: Optional[str] = None
+    error_message: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    dataset: Optional[str] = None
+    phenotype: Optional[str] = None
+    ancestry: Optional[str] = None
+    file_name: Optional[str] = None
+    cohort_id: Optional[str] = None
 
 

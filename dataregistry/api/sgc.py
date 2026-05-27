@@ -18,7 +18,7 @@ from botocore.exceptions import ClientError
 
 from dataregistry.api import file_utils, s3, query
 from dataregistry.api.db import DataRegistryReadWriteDB
-from dataregistry.api.model import SGCPhenotype, SGCCohort, SGCCohortFile, SGCCasesControlsMetadata, SGCCoOccurrenceMetadata, SGCPhenotypeCaseTotals, SGCPhenotypeCaseCountsBySex, User, NewUserRequest, SGCGWASFile, SGCGWASCohort, SGCGWASValidationJob
+from dataregistry.api.model import SGCPhenotype, SGCCohort, SGCCohortFile, SGCCasesControlsMetadata, SGCCoOccurrenceMetadata, SGCPhenotypeCaseTotals, SGCPhenotypeCaseCountsBySex, User, NewUserRequest, SGCGWASFile, SGCGWASCohort, SGCGWASValidationJob, SGCGWASPlotResult
 from dataregistry.api.api import get_current_user
 
 router = fastapi.APIRouter()
@@ -2526,3 +2526,90 @@ async def update_sgc_gwas_metadata(cohort_id: str, cohort: SGCGWASCohort, user: 
         return query.get_sgc_gwas_cohort_by_cohort_id(engine, cohort_id)
     except Exception as e:
         raise fastapi.HTTPException(status_code=500, detail=f"Error updating GWAS metadata: {str(e)}")
+
+
+# ---------------------------------------------------------------------------
+# SGC GWAS QC Plot Results (Manhattan / QQ / lambda_GC)
+# ---------------------------------------------------------------------------
+
+# QC_PLOTS_BUCKET must match the --bucket value passed to the worker by
+# submit_qc_plots_batch.py. The worker writes to that bucket; the API
+# reads from this one.
+QC_PLOTS_BUCKET = os.getenv("SGC_QC_PLOTS_BUCKET", "dig-data-registry")
+QC_PLOTS_PRESIGN_TTL = 900  # 15 minutes
+
+
+def _qc_plots_lookup(file_id: str) -> dict:
+    """Find the QC row matching file_id. 404 if missing."""
+    rows = [r for r in query.get_sgc_plot_results(engine)
+            if r["file_id"] == file_id]
+    if not rows:
+        raise fastapi.HTTPException(status_code=404,
+                                    detail="No QC results for that file_id")
+    return rows[0]
+
+
+def _qc_plots_presign(s3_key: str | None) -> str:
+    """Generate a short-lived presigned GET URL, or 404 if the key is missing."""
+    if not s3_key:
+        raise fastapi.HTTPException(status_code=404,
+                                    detail="Plot not yet available")
+    s3_client = boto3.client("s3", region_name=s3.S3_REGION)
+    return s3_client.generate_presigned_url(
+        "get_object",
+        Params={"Bucket": QC_PLOTS_BUCKET, "Key": s3_key},
+        ExpiresIn=QC_PLOTS_PRESIGN_TTL,
+    )
+
+
+@router.get("/sgc/qc/plots", response_model=list[SGCGWASPlotResult])
+async def list_sgc_qc_plots(user: User = Depends(get_sgc_user)):
+    if not check_review_permissions(user):
+        raise fastapi.HTTPException(status_code=403,
+            detail="You need sgc-review-data permission to view QC plots")
+    return query.get_sgc_plot_results(engine)
+
+
+@router.get("/sgc/qc/plots/{file_id}/manhattan")
+async def get_qc_manhattan(file_id: str, user: User = Depends(get_sgc_user)):
+    if not check_review_permissions(user):
+        raise fastapi.HTTPException(status_code=403,
+            detail="You need sgc-review-data permission to view QC plots")
+    row = _qc_plots_lookup(file_id)
+    return fastapi.responses.RedirectResponse(
+        _qc_plots_presign(row.get("manhattan_s3_key")), status_code=307)
+
+
+@router.get("/sgc/qc/plots/{file_id}/qq")
+async def get_qc_qq(file_id: str, user: User = Depends(get_sgc_user)):
+    if not check_review_permissions(user):
+        raise fastapi.HTTPException(status_code=403,
+            detail="You need sgc-review-data permission to view QC plots")
+    row = _qc_plots_lookup(file_id)
+    return fastapi.responses.RedirectResponse(
+        _qc_plots_presign(row.get("qq_s3_key")), status_code=307)
+
+
+@router.get("/sgc/qc/plots/{file_id}/json")
+async def get_qc_json(file_id: str, user: User = Depends(get_sgc_user)):
+    if not check_review_permissions(user):
+        raise fastapi.HTTPException(status_code=403,
+            detail="You need sgc-review-data permission to view QC plots")
+    row = _qc_plots_lookup(file_id)
+    if not row.get("manhattan_s3_key"):
+        raise fastapi.HTTPException(status_code=404, detail="QC not yet complete")
+    # The worker writes manhattan.png, qq.png, and qc.json to the same
+    # output_prefix (see sgc_qc_plots/qc_plots.py). We derive the qc.json
+    # key from manhattan_s3_key rather than storing it separately on the
+    # DB row.
+    prefix = row["manhattan_s3_key"].rsplit("/", 1)[0]
+    s3_client = boto3.client("s3", region_name=s3.S3_REGION)
+    try:
+        obj = s3_client.get_object(Bucket=QC_PLOTS_BUCKET, Key=f"{prefix}/qc.json")
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code", "")
+        if code in ("NoSuchKey", "404"):
+            raise fastapi.HTTPException(status_code=404, detail="qc.json not found in S3")
+        raise
+    return fastapi.responses.Response(content=obj["Body"].read(),
+                                      media_type="application/json")

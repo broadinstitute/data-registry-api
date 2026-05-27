@@ -1,0 +1,150 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Batch infrastructure for SGC GWAS QC plot generation
+
+Parameters:
+  DbName:
+    Type: String
+    Default: dataregistry_qa
+    AllowedValues:
+      - dataregistry_qa
+      - dataregistry
+    Description: Target MySQL database. Override at deploy for production.
+
+Resources:
+  EcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: sgc-gwas-qc-plots-repo
+
+  BatchServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [batch.amazonaws.com]
+            Action: ['sts:AssumeRole']
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSBatchServiceRole'
+
+  QcPlotsComputeEnv:
+    Type: AWS::Batch::ComputeEnvironment
+    Properties:
+      Type: MANAGED
+      ServiceRole: !GetAtt BatchServiceRole.Arn
+      ComputeResources:
+        Type: Fargate
+        MaxvCpus: 256
+        # Same VPC as the validator (must reach the registry RDS).
+        Subnets: [subnet-041ed74e61806c6f0]
+        SecurityGroupIds: [sg-28485f53]
+
+  QcPlotsJobQueue:
+    Type: AWS::Batch::JobQueue
+    Properties:
+      JobQueueName: 'sgc-gwas-qc-plots-queue'
+      ComputeEnvironmentOrder:
+        - Order: 1
+          ComputeEnvironment: !Ref QcPlotsComputeEnv
+      Priority: 1
+      State: ENABLED
+
+  QcPlotsJobRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: 'Allow'
+            Principal:
+              Service: ['ecs-tasks.amazonaws.com']
+            Action: ['sts:AssumeRole']
+      Path: '/'
+      Policies:
+        - PolicyName: 'S3Access'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action: ['s3:GetObject', 's3:PutObject']
+                Resource:
+                  - 'arn:aws:s3:::dig-data-registry'
+                  - 'arn:aws:s3:::dig-data-registry/*'
+                  - 'arn:aws:s3:::dig-data-registry-qa'
+                  - 'arn:aws:s3:::dig-data-registry-qa/*'
+        # Secrets Manager appends a 6-char random suffix to every secret ARN,
+        # so the trailing wildcard is required to address the named secret.
+        - PolicyName: 'SecretsRead'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action: ['secretsmanager:GetSecretValue']
+                Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:data-registry*'
+        - PolicyName: 'ECRAndLogs'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action:
+                  - 'ecr:GetAuthorizationToken'
+                  - 'ecr:BatchCheckLayerAvailability'
+                  - 'ecr:GetDownloadUrlForLayer'
+                  - 'ecr:BatchGetImage'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: '*'
+
+  QcPlotsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/batch/sgc-gwas-qc-plots
+      RetentionInDays: 30
+
+  QcPlotsJobDefinition:
+    Type: AWS::Batch::JobDefinition
+    Properties:
+      Type: 'container'
+      JobDefinitionName: 'sgc-gwas-qc-plots-job'
+      PlatformCapabilities: ['FARGATE']
+      Timeout:
+        AttemptDurationSeconds: 3600
+      ContainerProperties:
+        Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/sgc-gwas-qc-plots-repo'
+        # Image's ENTRYPOINT is ["python3", "-m", "sgc_qc_plots.qc_plots"];
+        # the values below are appended as CLI args to that entrypoint.
+        Command:
+          - '--s3-path'
+          - 'Ref::s3-path'
+          - '--column-mapping'
+          - 'Ref::column-mapping'
+          - '--bucket'
+          - 'Ref::bucket'
+          - '--file-id'
+          - 'Ref::file-id'
+          - '--output-prefix'
+          - 'Ref::output-prefix'
+        JobRoleArn: !GetAtt QcPlotsJobRole.Arn
+        ExecutionRoleArn: !GetAtt QcPlotsJobRole.Arn
+        ResourceRequirements:
+          - Type: 'VCPU'
+            Value: '4'
+          - Type: 'MEMORY'
+            Value: '16384'
+        NetworkConfiguration:
+          AssignPublicIp: 'ENABLED'
+        FargatePlatformConfiguration:
+          PlatformVersion: 'LATEST'
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group: /aws/batch/sgc-gwas-qc-plots
+            awslogs-region: !Ref AWS::Region
+            awslogs-stream-prefix: qc-plots
+        Environment:
+          - Name: AWS_DEFAULT_REGION
+            Value: us-east-1
+          - Name: DATA_REGISTRY_DB_NAME
+            Value: !Ref DbName
