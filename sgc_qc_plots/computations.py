@@ -14,6 +14,16 @@ def lambda_gc(pvalues: pd.Series) -> float:
     return float(np.median(chi2.isf(pvalues, df=1)) / _CHI2_MEDIAN)
 
 
+def lambda_1000(lam: float, n_cases: int, n_controls: int) -> float:
+    """Sample-size-adjusted lambda: what lambda would be at 1000 cases vs 1000 controls.
+
+    Used to distinguish inflation from polygenicity vs systematic bias in
+    case/control studies. Larger studies are more sensitive to small effects,
+    so naive lambda inflates with N even when there is no confounding.
+    """
+    return 1.0 + (lam - 1.0) * 500.0 * (1.0 / n_cases + 1.0 / n_controls)
+
+
 def normalize_chromosome(s: pd.Series) -> pd.Series:
     """Map chromosome labels to canonical {1..22, X, Y}; unknown -> None.
 

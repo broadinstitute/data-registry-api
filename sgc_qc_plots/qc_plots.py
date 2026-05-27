@@ -14,7 +14,7 @@ import pandas as pd
 from sqlalchemy import text
 
 from sgc_qc_plots.computations import (
-    lambda_gc, normalize_chromosome, filter_valid_pvalues, count_significant,
+    lambda_gc, lambda_1000, normalize_chromosome, filter_valid_pvalues, count_significant,
 )
 from sgc_qc_plots.plots import render_manhattan, render_qq
 
@@ -97,6 +97,18 @@ def run_one(*, s3_path: str, column_mapping: dict, bucket: str,
             n_sig_5e8 = count_significant(df["pvalue"], 5e-8)
             n_sig_1e5 = count_significant(df["pvalue"], 1e-5)
 
+            # lambda_1000 needs cases + controls from the upload metadata; if either
+            # is missing (e.g. continuous-trait GWAS), leave it NULL.
+            with engine.connect() as conn:
+                meta = conn.execute(
+                    text("SELECT cases, controls FROM sgc_gwas_files WHERE CAST(id AS CHAR) = :fid"),
+                    {"fid": file_id},
+                ).fetchone()
+            n_cases = meta.cases if meta else None
+            n_controls = meta.controls if meta else None
+            lam_1000 = (lambda_1000(lam, n_cases, n_controls)
+                        if (n_cases and n_controls) else None)
+
             man_local = os.path.join(tmpdir, "manhattan.png")
             qq_local = os.path.join(tmpdir, "qq.png")
             json_local = os.path.join(tmpdir, "qc.json")
@@ -104,7 +116,8 @@ def run_one(*, s3_path: str, column_mapping: dict, bucket: str,
             render_qq(df["pvalue"], qq_local, title=f"file_id={file_id[:8]}", lambda_gc=lam)
             with open(json_local, "w") as fh:
                 json.dump({
-                    "file_id": file_id, "lambda_gc": lam,
+                    "file_id": file_id, "lambda_gc": lam, "lambda_1000": lam_1000,
+                    "n_cases": n_cases, "n_controls": n_controls,
                     "n_variants": n_variants,
                     "n_sig_5e8": n_sig_5e8, "n_sig_1e5": n_sig_1e5,
                     "column_mapping": column_mapping,
@@ -118,7 +131,7 @@ def run_one(*, s3_path: str, column_mapping: dict, bucket: str,
             _upload(s3, bucket, json_key, json_local)
 
         _update_db(engine, file_id=file_id, status="SUCCEEDED",
-                   lambda_gc=lam, n_variants=n_variants,
+                   lambda_gc=lam, lambda_1000=lam_1000, n_variants=n_variants,
                    n_sig_5e8=n_sig_5e8, n_sig_1e5=n_sig_1e5,
                    manhattan_s3_key=man_key, qq_s3_key=qq_key)
     except SystemExit:

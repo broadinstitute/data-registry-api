@@ -462,6 +462,7 @@ class SGCGWASPlotResult(BaseModel):
     batch_job_id: Optional[str] = None
     status: str
     lambda_gc: Optional[float] = None
+    lambda_1000: Optional[float] = None
     n_variants: Optional[int] = None
     n_sig_5e8: Optional[int] = None
     n_sig_1e5: Optional[int] = None

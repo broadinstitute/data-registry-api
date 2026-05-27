@@ -7,8 +7,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-# Chromosome layout lifted from dig-aggregator-methods plotAssociations.py
-_COLORS = ["#08306b", "#41ab5d", "#000000", "#f16913", "#3f007d", "#cb181d"]
+# Two-shade grey alternation requested by reviewers (no rainbow colors).
+_COLORS = ["#666666", "#bbbbbb"]
 _CHROMS = [str(i + 1) for i in range(22)] + ["X", "Y"]
 _CHROM_LEN = {
     "1": 247249719, "2": 242951149, "3": 199501827, "4": 191273063,
@@ -24,7 +24,7 @@ def _build_chrom_layout():
     xtick: dict[str, int] = {}
     pos = 0
     for i, c in enumerate(_CHROMS):
-        frame[c] = {"x": pos, "color": _COLORS[i % len(_COLORS)]}
+        frame[c] = {"x": pos, "color": _COLORS[i % 2]}
         xtick[c] = pos + _CHROM_LEN[c] // 2
         pos += _CHROM_LEN[c]
     xmax = frame["Y"]["x"] + _CHROM_LEN["Y"]

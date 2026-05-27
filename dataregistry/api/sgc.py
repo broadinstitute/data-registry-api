@@ -2576,8 +2576,7 @@ async def get_qc_manhattan(file_id: str, user: User = Depends(get_sgc_user)):
         raise fastapi.HTTPException(status_code=403,
             detail="You need sgc-review-data permission to view QC plots")
     row = _qc_plots_lookup(file_id)
-    return fastapi.responses.RedirectResponse(
-        _qc_plots_presign(row.get("manhattan_s3_key")), status_code=307)
+    return {"url": _qc_plots_presign(row.get("manhattan_s3_key"))}
 
 
 @router.get("/sgc/qc/plots/{file_id}/qq")
@@ -2586,8 +2585,7 @@ async def get_qc_qq(file_id: str, user: User = Depends(get_sgc_user)):
         raise fastapi.HTTPException(status_code=403,
             detail="You need sgc-review-data permission to view QC plots")
     row = _qc_plots_lookup(file_id)
-    return fastapi.responses.RedirectResponse(
-        _qc_plots_presign(row.get("qq_s3_key")), status_code=307)
+    return {"url": _qc_plots_presign(row.get("qq_s3_key"))}
 
 
 @router.get("/sgc/qc/plots/{file_id}/json")
