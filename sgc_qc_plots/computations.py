@@ -41,5 +41,16 @@ def filter_valid_pvalues(df: pd.DataFrame, pcol: str) -> pd.DataFrame:
     return df.assign(**{pcol: p}).loc[(p > 0) & (p <= 1)]
 
 
+def filter_by_eaf(df: pd.DataFrame, eaf_col: str, lo: float = 0.01, hi: float = 0.99) -> pd.DataFrame:
+    """Keep common variants: rows where lo <= effect AF <= hi (default MAF >= 1%).
+
+    Coerces eaf_col to numeric; blank/non-numeric values become NaN and are
+    dropped (NaN comparisons are False). EAF and 1-EAF describe the same
+    variant, so the symmetric [lo, hi] window is exactly MAF >= lo.
+    """
+    eaf = pd.to_numeric(df[eaf_col], errors="coerce")
+    return df.loc[(eaf >= lo) & (eaf <= hi)]
+
+
 def count_significant(pvalues: pd.Series, threshold: float) -> int:
     return int((pvalues <= threshold).sum())
