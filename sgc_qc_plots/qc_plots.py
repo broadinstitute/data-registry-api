@@ -15,6 +15,7 @@ from sqlalchemy import text
 
 from sgc_qc_plots.computations import (
     lambda_gc, lambda_1000, normalize_chromosome, filter_valid_pvalues, count_significant,
+    filter_by_eaf,
 )
 from sgc_qc_plots.plots import render_manhattan, render_qq
 
@@ -50,13 +51,19 @@ def _download_to_tmpdir(s3_client, bucket: str, key: str, tmpdir: str) -> str:
     return local
 
 
-def _read_three_cols(local_path: str, chrom_hdr: str, pos_hdr: str, p_hdr: str) -> pd.DataFrame:
-    """Read only the three needed columns. pandas auto-detects .gz."""
+def _read_cols(local_path: str, chrom_hdr: str, pos_hdr: str, p_hdr: str,
+               eaf_hdr: Optional[str] = None) -> pd.DataFrame:
+    """Read the needed columns (pandas auto-detects .gz). EAF is optional."""
+    usecols = [chrom_hdr, pos_hdr, p_hdr]
+    rename = {chrom_hdr: "chromosome", pos_hdr: "position", p_hdr: "pvalue"}
+    if eaf_hdr:
+        usecols.append(eaf_hdr)
+        rename[eaf_hdr] = "eaf"
     return pd.read_csv(
-        local_path, sep="\t", usecols=[chrom_hdr, pos_hdr, p_hdr],
+        local_path, sep="\t", usecols=usecols,
         dtype={chrom_hdr: str},
         low_memory=False,
-    ).rename(columns={chrom_hdr: "chromosome", pos_hdr: "position", p_hdr: "pvalue"})
+    ).rename(columns=rename)
 
 
 def _upload(s3_client, bucket: str, key: str, local_path: str) -> None:
@@ -70,6 +77,7 @@ def run_one(*, s3_path: str, column_mapping: dict, bucket: str,
     chrom_hdr = column_mapping.get("col_chromosome")
     pos_hdr = column_mapping.get("col_position")
     p_hdr = column_mapping.get("col_pvalue")
+    eaf_hdr = column_mapping.get("col_effect_allele_freq")
     missing = [k for k, v in [("col_chromosome", chrom_hdr),
                               ("col_position", pos_hdr),
                               ("col_pvalue", p_hdr)] if not v]
@@ -85,7 +93,11 @@ def run_one(*, s3_path: str, column_mapping: dict, bucket: str,
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
             local = _download_to_tmpdir(s3, bucket, s3_path, tmpdir)
-            df = _read_three_cols(local, chrom_hdr, pos_hdr, p_hdr)
+            # Peek at the header so a stale/missing EAF mapping degrades to a
+            # null lambda_maf01 instead of failing the whole job.
+            available = pd.read_csv(local, sep="\t", nrows=0).columns
+            use_eaf = eaf_hdr if (eaf_hdr and eaf_hdr in available) else None
+            df = _read_cols(local, chrom_hdr, pos_hdr, p_hdr, eaf_hdr=use_eaf)
             df["chromosome"] = normalize_chromosome(df["chromosome"])
             df = df.dropna(subset=["chromosome"])
             df = filter_valid_pvalues(df, "pvalue")
@@ -109,6 +121,15 @@ def run_one(*, s3_path: str, column_mapping: dict, bucket: str,
             lam_1000 = (lambda_1000(lam, n_cases, n_controls)
                         if (n_cases and n_controls) else None)
 
+            # lambda_gc over common variants only (effect AF in [1%, 99%]); helps
+            # distinguish rare-variant/sparse-data inflation from genome-wide
+            # confounding. None when there is no usable EAF column.
+            lam_maf01 = None
+            if use_eaf:
+                common = filter_by_eaf(df, "eaf")
+                if len(common) > 0:
+                    lam_maf01 = lambda_gc(common["pvalue"])
+
             man_local = os.path.join(tmpdir, "manhattan.png")
             qq_local = os.path.join(tmpdir, "qq.png")
             json_local = os.path.join(tmpdir, "qc.json")
@@ -117,6 +138,7 @@ def run_one(*, s3_path: str, column_mapping: dict, bucket: str,
             with open(json_local, "w") as fh:
                 json.dump({
                     "file_id": file_id, "lambda_gc": lam, "lambda_1000": lam_1000,
+                    "lambda_maf01": lam_maf01,
                     "n_cases": n_cases, "n_controls": n_controls,
                     "n_variants": n_variants,
                     "n_sig_5e8": n_sig_5e8, "n_sig_1e5": n_sig_1e5,
@@ -131,7 +153,8 @@ def run_one(*, s3_path: str, column_mapping: dict, bucket: str,
             _upload(s3, bucket, json_key, json_local)
 
         _update_db(engine, file_id=file_id, status="SUCCEEDED",
-                   lambda_gc=lam, lambda_1000=lam_1000, n_variants=n_variants,
+                   lambda_gc=lam, lambda_1000=lam_1000, lambda_maf01=lam_maf01,
+                   n_variants=n_variants,
                    n_sig_5e8=n_sig_5e8, n_sig_1e5=n_sig_1e5,
                    manhattan_s3_key=man_key, qq_s3_key=qq_key)
     except SystemExit:
