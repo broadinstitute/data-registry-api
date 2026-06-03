@@ -463,6 +463,7 @@ class SGCGWASPlotResult(BaseModel):
     status: str
     lambda_gc: Optional[float] = None
     lambda_1000: Optional[float] = None
+    lambda_maf01: Optional[float] = None
     n_variants: Optional[int] = None
     n_sig_5e8: Optional[int] = None
     n_sig_1e5: Optional[int] = None
@@ -475,6 +476,8 @@ class SGCGWASPlotResult(BaseModel):
     phenotype: Optional[str] = None
     ancestry: Optional[str] = None
     file_name: Optional[str] = None
+    cases: Optional[int] = None
+    controls: Optional[int] = None
     cohort_id: Optional[str] = None
 
 

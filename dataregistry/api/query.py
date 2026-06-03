@@ -2168,6 +2168,7 @@ def insert_sgc_plot_result_pending(engine, file_id_hex: str) -> str:
                 batch_job_id=NULL,
                 lambda_gc=NULL,
                 lambda_1000=NULL,
+                lambda_maf01=NULL,
                 n_variants=NULL,
                 n_sig_5e8=NULL,
                 n_sig_1e5=NULL,
@@ -2238,10 +2239,11 @@ def get_sgc_plot_results(engine) -> list[dict]:
                 p.file_id,
                 p.batch_job_id,
                 p.status,
-                p.lambda_gc, p.lambda_1000, p.n_variants, p.n_sig_5e8, p.n_sig_1e5,
+                p.lambda_gc, p.lambda_1000, p.lambda_maf01, p.n_variants, p.n_sig_5e8, p.n_sig_1e5,
                 p.manhattan_s3_key, p.qq_s3_key, p.error_message,
                 p.created_at, p.updated_at,
                 f.dataset, f.phenotype, f.ancestry, f.file_name,
+                f.cases, f.controls,
                 f.cohort_id
             FROM sgc_gwas_plot_results p
             JOIN sgc_gwas_files f ON f.id = p.file_id
