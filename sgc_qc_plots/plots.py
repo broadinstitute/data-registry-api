@@ -19,19 +19,22 @@ _CHROM_LEN = {
     "21": 46944323, "22": 49691432, "X": 154913754, "Y": 57772954,
 }
 
-def _build_chrom_layout():
+def _build_chrom_layout(chroms: list[str]):
+    """Layout x-coordinates only for the chromosomes actually present in this file.
+
+    Files commonly omit X/Y (e.g. male-only analyses, autosome-only pipelines).
+    Reserving empty axis space for absent chromosomes wastes the visible range,
+    so callers pass the chromosomes that are present rather than reusing a
+    fixed full-genome layout.
+    """
     frame: dict[str, dict] = {}
     xtick: dict[str, int] = {}
     pos = 0
-    for i, c in enumerate(_CHROMS):
+    for i, c in enumerate(chroms):
         frame[c] = {"x": pos, "color": _COLORS[i % 2]}
         xtick[c] = pos + _CHROM_LEN[c] // 2
         pos += _CHROM_LEN[c]
-    xmax = frame["Y"]["x"] + _CHROM_LEN["Y"]
-    return frame, xtick, xmax
-
-
-_CHROM_FRAME, _CHROM_XTICK, _XMAX = _build_chrom_layout()
+    return frame, xtick, pos  # pos == xmax
 
 
 def render_manhattan(df: pd.DataFrame, out_path: str, *, title: Optional[str] = None,
@@ -47,17 +50,20 @@ def render_manhattan(df: pd.DataFrame, out_path: str, *, title: Optional[str] = 
     thinned = work.loc[~keep_sig].iloc[::thin_factor]
     work = pd.concat([work.loc[keep_sig], thinned], ignore_index=True)
 
-    work["x_base"] = work["chromosome"].map(lambda c: _CHROM_FRAME[c]["x"])
-    work["color"] = work["chromosome"].map(lambda c: _CHROM_FRAME[c]["color"])
+    present_chroms = [c for c in _CHROMS if c in set(work["chromosome"].unique())]
+    chrom_frame, chrom_xtick, xmax = _build_chrom_layout(present_chroms)
+
+    work["x_base"] = work["chromosome"].map(lambda c: chrom_frame[c]["x"])
+    work["color"] = work["chromosome"].map(lambda c: chrom_frame[c]["color"])
     work["x"] = work["x_base"] + work["position"].astype(int)
 
     fig, ax = plt.subplots(figsize=(15, 6))
     ax.set_ylabel("-log10(p)")
     ax.set_xlabel("chromosome")
-    ax.set_xticks([_CHROM_XTICK[c] for c in _CHROMS])
-    ax.set_xticklabels(_CHROMS)
-    ax.hlines(5, 0, _XMAX, linestyle="dashed", color="gray")    # suggestive 1e-5
-    ax.hlines(8, 0, _XMAX, linestyle="dashed", color="red")     # GWAS 5e-8
+    ax.set_xticks([chrom_xtick[c] for c in present_chroms])
+    ax.set_xticklabels(present_chroms)
+    ax.hlines(5, 0, xmax, linestyle="dashed", color="gray")    # suggestive 1e-5
+    ax.hlines(8, 0, xmax, linestyle="dashed", color="red")     # GWAS 5e-8
     ax.scatter(work["x"], work["y"], s=4, c=work["color"], rasterized=True)
     if title:
         ax.set_title(title)

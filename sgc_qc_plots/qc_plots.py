@@ -112,8 +112,8 @@ def run_one(*, s3_path: str, column_mapping: dict, bucket: str,
             man_local = os.path.join(tmpdir, "manhattan.png")
             qq_local = os.path.join(tmpdir, "qq.png")
             json_local = os.path.join(tmpdir, "qc.json")
-            render_manhattan(df, man_local, title=f"file_id={file_id[:8]}")
-            render_qq(df["pvalue"], qq_local, title=f"file_id={file_id[:8]}", lambda_gc=lam)
+            render_manhattan(df, man_local)
+            render_qq(df["pvalue"], qq_local)
             with open(json_local, "w") as fh:
                 json.dump({
                     "file_id": file_id, "lambda_gc": lam, "lambda_1000": lam_1000,
