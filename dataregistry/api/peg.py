@@ -189,7 +189,34 @@ async def create_peg_user(request: PEGNewUserRequest):
                 }
             )
             if response.status_code in (200, 201):
-                return {"message": "Account created successfully", "username": request.user_name}
+                return {
+                    "message": "Account created successfully",
+                    "username": request.user_name,
+                    "existing_user": False,
+                }
+
+            # The user service is shared across tenants/groups and usernames are
+            # globally unique, so an "already exists" rejection often just means
+            # the account isn't in this token's group yet. Fall back to adding the
+            # existing user to the token's group/roles (mirrors copy_*_to_prod.py).
+            # Note: the existing account's password is left unchanged.
+            if response.status_code == 400 and "already exists" in response.text.lower():
+                add_response = await client.post(
+                    f"{USER_SERVICE_URL}/api/auth/add-user-to-group/",
+                    data={"token": PEG_USER_TOKEN, "username": request.user_name},
+                )
+                if add_response.status_code == 200:
+                    return {
+                        "message": "Existing account granted access",
+                        "username": request.user_name,
+                        "existing_user": True,
+                    }
+                try:
+                    detail = add_response.json()
+                except Exception:
+                    detail = add_response.text
+                raise fastapi.HTTPException(status_code=add_response.status_code, detail=detail)
+
             try:
                 detail = response.json()
             except Exception:
