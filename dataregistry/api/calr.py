@@ -668,6 +668,9 @@ def _csv_to_session_dict(csv_bytes: bytes, submission_id: str) -> dict:
             'subject': subj_id,
             'groupIndex': subject_to_group.get(subj_id, 0),
             'total_mass': fval(r.get('Total.Mass')),
+            'lean_mass': fval(r.get('Lean.Mass')),
+            'fat_mass': fval(r.get('Fat.Mass')),
+            'mass_change': fval(r.get('Mass.Change')),
             'exc_hour': exc_hour,
             'exc_reason': exc_reason,
         })
@@ -840,7 +843,14 @@ def _session_json_to_csv(session_data: dict) -> bytes:
     annotations = [s.get('exc_reason') or '' for s in subjects_sorted]
     cols['exc'] = exclusions + annotations
 
-    cols['Total.Mass'] = pad([s['total_mass'] if s.get('total_mass') is not None else 'NA' for s in subjects_sorted], total_rows)
+    def mass_col(key):
+        return pad([s[key] if s.get(key) is not None else 'NA' for s in subjects_sorted], total_rows)
+
+    # Per-subject mass columns, in the CalR session CSV's native order
+    cols['Mass.Change'] = mass_col('mass_change')
+    cols['Total.Mass']  = mass_col('total_mass')
+    cols['Lean.Mass']   = mass_col('lean_mass')
+    cols['Fat.Mass']    = mass_col('fat_mass')
     cols['id'] = [s['subject'] for s in subjects_sorted] + ['NA'] * N
 
     headers = list(cols.keys())

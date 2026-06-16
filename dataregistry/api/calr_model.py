@@ -103,6 +103,7 @@ class Subject(BaseModel):
     total_mass: Optional[float] = None
     lean_mass: Optional[float] = None
     fat_mass: Optional[float] = None
+    mass_change: Optional[float] = None
     exc_hour: Optional[float] = None
     exc_reason: Optional[str] = None
 
