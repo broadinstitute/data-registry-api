@@ -5,6 +5,7 @@ import csv
 import gzip
 import glob
 import json
+import math
 import os
 import shutil
 import tempfile
@@ -24,6 +25,13 @@ from sgc_ldsc.compute import run_univariate
 def _get_engine():
     from dataregistry.api.db import DataRegistryReadWriteDB
     return DataRegistryReadWriteDB().get_engine()
+
+
+def _finite_or_none(x):
+    """Map non-finite floats (NaN/inf) to None so a MySQL DOUBLE write never fails.
+    NaN/inf can legitimately arise (e.g. ratio for a deflated GWAS), and pymysql
+    rejects them outright — turning the whole result write into a failure."""
+    return x if (x is not None and math.isfinite(x)) else None
 
 
 def _download(s3, bucket: str, key: str, dst: str) -> None:
@@ -118,8 +126,9 @@ def run_one(*, s3_path, column_mapping, bucket, file_id, ancestry, genome_build,
             res = _compute_for_file(engine, file_id, local, column_mapping, ancestry, genome_build, cache_dir)
         query.update_sgc_ldsc_result(
             engine, file_id, ldsc_status="SUCCEEDED",
-            ldsc_intercept=res["intercept"], ldsc_h2=res["h2"], ldsc_ratio=res["ratio"],
-            ldsc_effective_n=res["effective_n"], ldsc_n_snps=res["n_snps"])
+            ldsc_intercept=_finite_or_none(res["intercept"]), ldsc_h2=_finite_or_none(res["h2"]),
+            ldsc_ratio=_finite_or_none(res["ratio"]),
+            ldsc_effective_n=_finite_or_none(res["effective_n"]), ldsc_n_snps=res["n_snps"])
     except Exception as e:
         # Best-effort failure write: if this DB write itself raises (engine gone,
         # network), it must not mask the original error — always re-raise that.

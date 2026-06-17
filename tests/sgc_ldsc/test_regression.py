@@ -35,3 +35,18 @@ def test_univariate_ldsc_recovers_planted_intercept_and_slope():
     assert abs(res["h2"] - true_per_snp_h2 * 1_000_000.0) < 1e-3 * (true_per_snp_h2 * 1_000_000.0) + 1e-6
     assert res["n_snps"] == M
     assert abs(res["effective_n"] - 100000.0) < 1e-6
+
+
+def test_univariate_ldsc_ratio_is_none_when_not_inflated():
+    # Deflated/null statistics (mean chi^2 <= 1): ratio is undefined -> None, not NaN
+    # (a NaN would break the MySQL DOUBLE write downstream). Intercept stays finite.
+    rng = np.random.default_rng(2)
+    M = 3000
+    ld = rng.uniform(1.0, 30.0, size=(M, 1))
+    n = np.full((M, 1), 50000.0)
+    chisq = 0.9 + n * 1e-9 * ld  # mean chi^2 < 1 (deflated)
+    res = univariate_ldsc(chisq=chisq, ld=ld, w_ld=np.ones((M, 1)), sample_size=n,
+                          m_snps=np.array([[1_000_000.0]]))
+    assert res["mean_chisq"] < 1.0
+    assert res["ratio"] is None
+    assert np.isfinite(res["intercept"])

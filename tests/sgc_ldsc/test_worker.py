@@ -11,14 +11,17 @@ import sgc_ldsc.ldsc_worker as w
 @patch("sgc_ldsc.ldsc_worker._compute_for_file")
 @patch("sgc_ldsc.ldsc_worker._get_engine")
 def test_run_one_writes_succeeded_with_metrics(_eng, compute, upd, _ref, _boto3):
-    compute.return_value = {"intercept": 1.04, "h2": 0.2, "ratio": 0.12,
+    # ratio is NaN here (deflated GWAS) — it must be sanitized to None for the DB write.
+    compute.return_value = {"intercept": 1.04, "h2": 0.2, "ratio": float("nan"),
                             "effective_n": 9999.0, "n_snps": 800000}
     w.run_one(s3_path="s3path", column_mapping={"col_chromosome": "CHR"},
               bucket="b", file_id="fid", ancestry="EUR", genome_build="GRCh38",
               ref_bucket="ref", batch_job_id="J1")
     statuses = [c.kwargs["ldsc_status"] for c in upd.call_args_list]
     assert statuses[0] == "RUNNING" and statuses[-1] == "SUCCEEDED"
-    assert upd.call_args_list[-1].kwargs["ldsc_intercept"] == 1.04
+    last = upd.call_args_list[-1].kwargs
+    assert last["ldsc_intercept"] == 1.04
+    assert last["ldsc_ratio"] is None  # NaN -> None, so the write can't fail
 
 
 @patch("sgc_ldsc.ldsc_worker.boto3")

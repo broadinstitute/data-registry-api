@@ -63,6 +63,9 @@ def univariate_ldsc(*, chisq, ld, w_ld, sample_size, m_snps, max_blocks=MAX_BLOC
     intercept = float(coef[1, 0])
     h2 = (float(coef[0, 0]) / mean_n) * total_m
     mean_chisq = float(np.mean(chisq))
-    ratio = (intercept - 1.0) / (mean_chisq - 1.0) if mean_chisq > 1.0 else float("nan")
+    # Ratio is only defined for inflated statistics (mean chi^2 > 1). For null or
+    # deflated GWAS (mean chi^2 <= 1) it is meaningless -> None (and must not be
+    # NaN, which a MySQL DOUBLE column rejects).
+    ratio = (intercept - 1.0) / (mean_chisq - 1.0) if mean_chisq > 1.0 else None
     return {"intercept": intercept, "h2": h2, "ratio": ratio,
             "mean_chisq": mean_chisq, "effective_n": mean_n, "n_snps": int(ld.shape[0])}
