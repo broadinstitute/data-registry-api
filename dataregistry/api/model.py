@@ -467,6 +467,12 @@ class SGCGWASPlotResult(BaseModel):
     n_variants: Optional[int] = None
     n_sig_5e8: Optional[int] = None
     n_sig_1e5: Optional[int] = None
+    ldsc_status: Optional[str] = None
+    ldsc_intercept: Optional[float] = None
+    ldsc_h2: Optional[float] = None
+    ldsc_ratio: Optional[float] = None
+    ldsc_effective_n: Optional[float] = None
+    ldsc_n_snps: Optional[int] = None
     manhattan_s3_key: Optional[str] = None
     qq_s3_key: Optional[str] = None
     error_message: Optional[str] = None

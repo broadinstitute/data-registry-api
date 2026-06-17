@@ -2230,6 +2230,60 @@ def update_sgc_plot_result(
         conn.commit()
 
 
+def update_sgc_ldsc_pending(engine, file_id_hex: str) -> None:
+    """Reset only the ldsc_* columns to PENDING on the existing plot-result row.
+    Never touches QC columns. The row MUST already exist (created by the QC job)."""
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+            UPDATE sgc_gwas_plot_results
+            SET ldsc_status='PENDING', ldsc_batch_job_id=NULL,
+                ldsc_intercept=NULL, ldsc_h2=NULL, ldsc_ratio=NULL,
+                ldsc_effective_n=NULL, ldsc_n_snps=NULL, ldsc_error=NULL
+            WHERE file_id = :file_id
+        """), {'file_id': file_id_hex})
+        if result.rowcount == 0:
+            raise ValueError(f"No sgc_gwas_plot_results row for file_id={file_id_hex} "
+                             f"(run QC first; LDSC shares the row)")
+        conn.commit()
+
+
+def update_sgc_ldsc_result(
+    engine, file_id_hex: str, *, ldsc_status: str,
+    ldsc_batch_job_id: Optional[str] = None,
+    ldsc_intercept: Optional[float] = None, ldsc_h2: Optional[float] = None,
+    ldsc_ratio: Optional[float] = None, ldsc_effective_n: Optional[float] = None,
+    ldsc_n_snps: Optional[int] = None, ldsc_error: Optional[str] = None,
+) -> None:
+    """Partial update of ldsc_* columns only (COALESCE preserves unset fields).
+
+    Like update_sgc_plot_result, passing None for an optional field preserves the
+    existing DB value rather than clearing it. To clear a previously-set field
+    (e.g. a stale ldsc_error from a prior failed attempt), call
+    update_sgc_ldsc_pending first, which resets every ldsc_* column.
+    """
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+            UPDATE sgc_gwas_plot_results
+            SET ldsc_status = :ldsc_status,
+                ldsc_batch_job_id = COALESCE(:ldsc_batch_job_id, ldsc_batch_job_id),
+                ldsc_intercept = COALESCE(:ldsc_intercept, ldsc_intercept),
+                ldsc_h2 = COALESCE(:ldsc_h2, ldsc_h2),
+                ldsc_ratio = COALESCE(:ldsc_ratio, ldsc_ratio),
+                ldsc_effective_n = COALESCE(:ldsc_effective_n, ldsc_effective_n),
+                ldsc_n_snps = COALESCE(:ldsc_n_snps, ldsc_n_snps),
+                ldsc_error = COALESCE(:ldsc_error, ldsc_error)
+            WHERE file_id = :file_id
+        """), {
+            'ldsc_status': ldsc_status, 'ldsc_batch_job_id': ldsc_batch_job_id,
+            'ldsc_intercept': ldsc_intercept, 'ldsc_h2': ldsc_h2, 'ldsc_ratio': ldsc_ratio,
+            'ldsc_effective_n': ldsc_effective_n, 'ldsc_n_snps': ldsc_n_snps,
+            'ldsc_error': ldsc_error, 'file_id': file_id_hex,
+        })
+        if result.rowcount == 0:
+            raise ValueError(f"No sgc_gwas_plot_results row for file_id={file_id_hex}")
+        conn.commit()
+
+
 def get_sgc_plot_results(engine) -> list[dict]:
     """All plot-results joined to files, ordered by lambda_gc desc for triage."""
     with engine.connect() as conn:
@@ -2240,6 +2294,8 @@ def get_sgc_plot_results(engine) -> list[dict]:
                 p.batch_job_id,
                 p.status,
                 p.lambda_gc, p.lambda_1000, p.lambda_maf01, p.n_variants, p.n_sig_5e8, p.n_sig_1e5,
+                p.ldsc_status, p.ldsc_intercept, p.ldsc_h2, p.ldsc_ratio,
+                p.ldsc_effective_n, p.ldsc_n_snps,
                 p.manhattan_s3_key, p.qq_s3_key, p.error_message,
                 p.created_at, p.updated_at,
                 f.dataset, f.phenotype, f.ancestry, f.file_name,

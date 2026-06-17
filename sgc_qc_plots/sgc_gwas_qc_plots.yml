@@ -30,7 +30,12 @@ Resources:
       Type: MANAGED
       ServiceRole: !GetAtt BatchServiceRole.Arn
       ComputeResources:
-        Type: Fargate
+        # Spot for the one-time QC/LDSC passes (~70% cheaper than on-demand).
+        # No retry strategy on the job def by design: a reclaimed task just
+        # fails, leaving its DB row stuck in RUNNING (the killed worker can't
+        # write a terminal status). Stragglers are recovered manually — find
+        # them with a stale-RUNNING query and re-run the submitter.
+        Type: FARGATE_SPOT
         MaxvCpus: 256
         # Same VPC as the validator (must reach the registry RDS).
         Subnets: [subnet-041ed74e61806c6f0]

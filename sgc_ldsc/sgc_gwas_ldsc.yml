@@ -1,0 +1,135 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Batch job definition for SGC univariate LDSC (reuses the QC compute env / queue)
+
+# This stack adds only an ECR repo + a Batch job definition + its job role.
+# It deliberately does NOT create a compute environment or queue: LDSC jobs are
+# submitted onto the existing QC queue (sgc-gwas-qc-plots-queue) by
+# submit_ldsc_batch.py. The job definition is env-agnostic; the submitter injects
+# DATA_REGISTRY_DB_NAME per job via containerOverrides.
+
+Parameters:
+  LdscRefBucket:
+    Type: String
+    Default: dig-ldsc-server
+    Description: S3 bucket holding the LDSC reference panels (snpmap/weights/sldsc_inputs under bin/)
+
+Resources:
+  LdscEcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: sgc-gwas-ldsc-repo
+
+  LdscJobRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ['ecs-tasks.amazonaws.com']
+            Action: ['sts:AssumeRole']
+      Path: '/'
+      Policies:
+        - PolicyName: 'RegistryS3Access'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: ['s3:GetObject', 's3:PutObject']
+                Resource:
+                  - 'arn:aws:s3:::dig-data-registry'
+                  - 'arn:aws:s3:::dig-data-registry/*'
+                  - 'arn:aws:s3:::dig-data-registry-qa'
+                  - 'arn:aws:s3:::dig-data-registry-qa/*'
+        - PolicyName: 'LdscRefRead'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: ['s3:GetObject', 's3:ListBucket']
+                Resource:
+                  - !Sub 'arn:aws:s3:::${LdscRefBucket}'
+                  - !Sub 'arn:aws:s3:::${LdscRefBucket}/*'
+        # Secrets Manager appends a 6-char random suffix to every secret ARN,
+        # so the trailing wildcard is required to address the named secret.
+        - PolicyName: 'SecretsRead'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: ['secretsmanager:GetSecretValue']
+                Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:data-registry*'
+        - PolicyName: 'ECRAndLogs'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'ecr:GetAuthorizationToken'
+                  - 'ecr:BatchCheckLayerAvailability'
+                  - 'ecr:GetDownloadUrlForLayer'
+                  - 'ecr:BatchGetImage'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: '*'
+
+  LdscLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/batch/sgc-gwas-ldsc
+      RetentionInDays: 30
+
+  LdscJobDefinition:
+    Type: AWS::Batch::JobDefinition
+    Properties:
+      Type: 'container'
+      JobDefinitionName: 'sgc-gwas-ldsc-job'
+      PlatformCapabilities: ['FARGATE']
+      Timeout:
+        AttemptDurationSeconds: 7200
+      ContainerProperties:
+        Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/sgc-gwas-ldsc-repo'
+        # Image ENTRYPOINT is ["python3", "-m", "sgc_ldsc.ldsc_worker"];
+        # the values below are appended as CLI args by the submitter.
+        Command:
+          - '--s3-path'
+          - 'Ref::s3-path'
+          - '--column-mapping'
+          - 'Ref::column-mapping'
+          - '--bucket'
+          - 'Ref::bucket'
+          - '--file-id'
+          - 'Ref::file-id'
+          - '--ancestry'
+          - 'Ref::ancestry'
+          - '--genome-build'
+          - 'Ref::genome-build'
+          - '--ref-bucket'
+          - 'Ref::ref-bucket'
+        JobRoleArn: !GetAtt LdscJobRole.Arn
+        ExecutionRoleArn: !GetAtt LdscJobRole.Arn
+        ResourceRequirements:
+          - Type: 'VCPU'
+            Value: '2'
+          - Type: 'MEMORY'
+            Value: '16384'
+        # The sldsc_inputs.{anc}.zip reference is 5-6 GB; Fargate's 20 GiB
+        # ephemeral default is tight once a large GWAS file is also on disk.
+        EphemeralStorage:
+          SizeInGiB: 50
+        NetworkConfiguration:
+          AssignPublicIp: 'ENABLED'
+        FargatePlatformConfiguration:
+          PlatformVersion: 'LATEST'
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group: /aws/batch/sgc-gwas-ldsc
+            awslogs-region: !Ref AWS::Region
+            awslogs-stream-prefix: ldsc
+        Environment:
+          - Name: AWS_DEFAULT_REGION
+            Value: us-east-1
+          # DATA_REGISTRY_DB_NAME is injected per-job by submit_ldsc_batch.py
+          # via containerOverrides.environment (QA vs prod).
