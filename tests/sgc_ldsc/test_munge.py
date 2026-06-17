@@ -20,20 +20,18 @@ def test_effective_n_case_control_harmonic():
     assert abs(effective_n(1000.0, 3000.0) - 3000.0) < 1e-6
 
 
-def test_munge_records_maps_flips_and_signs():
-    col_map = {"chrom": "CHR", "pos": "BP", "ea": "EA", "oa": "OA",
-               "p": "P", "beta": "BETA", "ncase": "N_case", "ncontrol": "N_control"}
+def test_munge_records_applies_scalar_effective_n_with_flips():
+    # SGC files have no per-variant case/control columns; N is the study-level
+    # effective sample size, passed in as a scalar and applied to every variant.
+    col_map = {"chrom": "CHR", "pos": "BP", "ea": "EA", "oa": "OA", "p": "P", "beta": "BETA"}
     rows = [
-        {"CHR": "1", "BP": "100", "OA": "A", "EA": "G", "P": "0.01", "BETA": "0.5",
-         "N_case": "1000", "N_control": "3000"},           # standard hit -> rs1
-        {"CHR": "1", "BP": "100", "OA": "G", "EA": "A", "P": "0.01", "BETA": "0.5",
-         "N_case": "1000", "N_control": "3000"},           # flipped hit -> rs1f, beta sign reversed
-        {"CHR": "9", "BP": "999", "OA": "A", "EA": "T", "P": "0.01", "BETA": "0.5",
-         "N_case": "1", "N_control": "1"},                 # not in snpmap -> dropped
+        {"CHR": "1", "BP": "100", "OA": "A", "EA": "G", "P": "0.01", "BETA": "0.5"},  # standard -> rs1
+        {"CHR": "1", "BP": "100", "OA": "G", "EA": "A", "P": "0.01", "BETA": "0.5"},  # flipped -> rs1f
+        {"CHR": "9", "BP": "999", "OA": "A", "EA": "T", "P": "0.01", "BETA": "0.5"},  # not in maps -> dropped
     ]
-    out = munge_records(rows, col_map, SNPMAP, SNPMAP_FLIP)
+    out = munge_records(rows, col_map, SNPMAP, SNPMAP_FLIP, effective_n=3000.0)
     by_rs = {r[0]: r for r in out}
     assert set(by_rs) == {"rs1", "rs1f"}
-    assert by_rs["rs1"][1] > 0      # beta +0.5 -> +Z
-    assert by_rs["rs1f"][1] < 0     # flipped -> sign reversed
-    assert abs(by_rs["rs1"][2] - 3000.0) < 1e-6   # effective N
+    assert by_rs["rs1"][1] > 0       # beta +0.5 -> +Z
+    assert by_rs["rs1f"][1] < 0      # flipped -> sign reversed
+    assert by_rs["rs1"][2] == 3000.0 and by_rs["rs1f"][2] == 3000.0   # scalar effective N

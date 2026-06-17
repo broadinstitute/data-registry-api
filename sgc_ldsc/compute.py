@@ -29,6 +29,14 @@ def align_and_filter(data, ld_rs):
 
 
 def run_univariate(*, data, ld_rs, baseline_ld, input_weights, m_snps) -> dict:
+    # ld_rs (live-read from the weights files) and baseline_ld/input_weights
+    # (prebuilt npy) must be the SAME panel ordering, row for row. If a panel
+    # version ever skews these, a shorter weights set would silently misalign and
+    # produce wrong numbers — so fail loudly instead.
+    if not (len(ld_rs) == baseline_ld.shape[0] == input_weights.shape[0]):
+        raise ValueError(
+            f"reference panel length mismatch: ld_rs={len(ld_rs)} "
+            f"baseline_ld={baseline_ld.shape[0]} input_weights={input_weights.shape[0]}")
     chisq, n, idxs = align_and_filter(data, ld_rs)
     if chisq.shape[0] < 200:
         raise ValueError(f"too few SNPs after filtering for stable LDSC: {chisq.shape[0]}")

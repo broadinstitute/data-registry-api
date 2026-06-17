@@ -14,6 +14,7 @@ from typing import Optional
 
 import boto3
 import click
+from sqlalchemy import text
 
 from dataregistry.api import query
 from sgc_ldsc import reference, munge
@@ -71,11 +72,26 @@ def _read_rows(local_path: str, sep: str = "\t"):
             yield row
 
 
-def _compute_for_file(local_path, column_mapping, ancestry, genome_build, cache_dir) -> dict:
+def _study_effective_n(engine, file_id: str) -> float:
+    """Study-level effective N = 4/(1/cases + 1/controls) from sgc_gwas_files.
+    SGC GWAS are case/control with study-level cases/controls; there is no usable
+    per-variant effective-N column (see sgc_ldsc.munge)."""
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT cases, controls FROM sgc_gwas_files WHERE CAST(id AS CHAR) = :fid"),
+            {"fid": file_id},
+        ).fetchone()
+    if not row or not row.cases or not row.controls:
+        raise ValueError(f"cases/controls missing for file {file_id}; cannot compute effective N")
+    return munge.effective_n(float(row.cases), float(row.controls))
+
+
+def _compute_for_file(engine, file_id, local_path, column_mapping, ancestry, genome_build, cache_dir) -> dict:
+    eff_n = _study_effective_n(engine, file_id)
     cm = munge.build_col_map(column_mapping)
     snpmap = reference.load_snpmap(cache_dir, ancestry, genome_build, "standard")
     snpmap_flipped = reference.load_snpmap(cache_dir, ancestry, genome_build, "flipped")
-    records = munge.munge_records(_read_rows(local_path), cm, snpmap, snpmap_flipped)
+    records = munge.munge_records(_read_rows(local_path), cm, snpmap, snpmap_flipped, eff_n)
     data = munge.n90_filter(records)
     if not data:
         raise ValueError("no variants mapped to the reference panel")
@@ -99,7 +115,7 @@ def run_one(*, s3_path, column_mapping, bucket, file_id, ancestry, genome_build,
             s3.download_file(bucket, s3_path, local)
             cache_dir = os.getenv("LDSC_REF_CACHE", "/tmp/ldsc_ref")
             _ensure_reference(ref_bucket, ancestry, genome_build, cache_dir)
-            res = _compute_for_file(local, column_mapping, ancestry, genome_build, cache_dir)
+            res = _compute_for_file(engine, file_id, local, column_mapping, ancestry, genome_build, cache_dir)
         query.update_sgc_ldsc_result(
             engine, file_id, ldsc_status="SUCCEEDED",
             ldsc_intercept=res["intercept"], ldsc_h2=res["h2"], ldsc_ratio=res["ratio"],
