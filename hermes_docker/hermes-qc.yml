@@ -67,6 +67,10 @@ Resources:
           - 'Ref::col-map'
           - '-o'
           - 'Ref::script-options'
+          - '-b'
+          - 'Ref::genome-build'
+          - '-a'
+          - 'Ref::ancestry'
         JobRoleArn: !GetAtt HermesQCJobRole.Arn
         ExecutionRoleArn: !GetAtt HermesQCJobRole.Arn
         ResourceRequirements:
