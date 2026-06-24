@@ -172,6 +172,60 @@ async def upload_calr_files(
         raise fastapi.HTTPException(status_code=500, detail=f"Error uploading files: {str(e)}")
 
 
+@router.put("/calr/files/{submission_id}", status_code=200)
+async def replace_calr_standard_file(
+    submission_id: str,
+    standard_file: UploadFile,
+    user: User = Depends(get_calr_user)
+):
+    """
+    Replace the standard file of an existing CalR submission in place.
+
+    The submission_id and its metadata/sessions are preserved; only the standard
+    file's contents (and filename) change. Use this instead of POST /calr/files
+    when re-uploading, to avoid creating a duplicate submission for the same experiment.
+    """
+    files = calr_query.get_calr_files_by_submission(engine, submission_id)
+    if not files:
+        raise fastapi.HTTPException(status_code=404, detail="Submission not found")
+
+    existing = next((f for f in files if f['file_type'] == 'standard'), None)
+    if not existing:
+        raise fastapi.HTTPException(status_code=404, detail="Standard file not found in submission")
+    if existing['uploaded_by'] != user.user_name:
+        raise fastapi.HTTPException(status_code=403, detail="You can only replace your own submissions")
+
+    file_id = existing['id']
+    if isinstance(file_id, (bytes, bytearray)):
+        file_id = file_id.decode()
+
+    try:
+        content = await standard_file.read()
+        new_s3_key = f"calr/{user.user_name}/{submission_id}/standard/{standard_file.filename}"
+
+        # A differently-named replacement lands at a new S3 key; drop the stale object.
+        if existing['s3_path'] != new_s3_key:
+            s3_client = boto3.client('s3', region_name=s3.S3_REGION)
+            try:
+                s3_client.delete_object(Bucket=s3.BASE_BUCKET, Key=existing['s3_path'])
+            except Exception:
+                pass  # Best-effort cleanup of the old object
+
+        _upload_file_to_s3(content, new_s3_key, standard_file.content_type)
+        calr_query.update_calr_file(engine, file_id, standard_file.filename, len(content), new_s3_key)
+
+        return {
+            "submission_id": submission_id,
+            "file_id": file_id,
+            "file_name": standard_file.filename,
+            "uploaded_by": user.user_name,
+        }
+    except fastapi.HTTPException:
+        raise
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Error replacing file: {str(e)}")
+
+
 @router.get("/calr/files")
 async def list_calr_submissions(user: User = Depends(get_calr_user)):
     """
