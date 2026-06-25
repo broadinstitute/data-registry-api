@@ -38,6 +38,7 @@ class CALRSubmission(BaseModel):
     name: str
     description: Union[str, None] = None
     public: bool = False
+    shared: bool = False
     uploaded_by: str
     uploaded_at: Union[datetime, None] = None
 

@@ -79,6 +79,15 @@ async def get_calr_user(credentials: Optional[HTTPAuthorizationCredentials] = De
     return await _verify_calr_token(credentials.credentials)
 
 
+def _can_read(file_info, username: Optional[str]) -> bool:
+    """Read access for a CalR file/submission: public, link-shared, or owned by the caller."""
+    return bool(
+        file_info['public']
+        or file_info['shared']
+        or (username is not None and file_info['uploaded_by'] == username)
+    )
+
+
 def _upload_file_to_s3(file_content: bytes, s3_key: str, content_type: str):
     """Upload file bytes to S3."""
     s3_client = boto3.client('s3', region_name=s3.S3_REGION)
@@ -251,6 +260,19 @@ async def list_public_calr_submissions():
         raise fastapi.HTTPException(status_code=500, detail=f"Error retrieving public submissions: {str(e)}")
 
 
+@router.get("/calr/shared/{submission_id}")
+async def get_calr_shared_submission(submission_id: str):
+    """
+    Unauthenticated entry point for a link-shared submission. Returns the submission
+    bundle (no s3_path) only if it is marked shared; otherwise 404 so a non-shared id
+    is not confirmed to exist.
+    """
+    submission = calr_query.get_shared_calr_submission(engine, submission_id)
+    if not submission:
+        raise fastapi.HTTPException(status_code=404, detail="Shared submission not found")
+    return submission
+
+
 @router.get("/calr/files/{file_id}")
 async def download_calr_file(file_id: str, user: Optional[User] = Depends(get_calr_user_optional)):
     """
@@ -261,7 +283,7 @@ async def download_calr_file(file_id: str, user: Optional[User] = Depends(get_ca
         file_info = calr_query.get_calr_file_by_id(engine, file_id)
         if not file_info:
             raise fastapi.HTTPException(status_code=404, detail="File not found")
-        if not file_info['public'] and (user is None or file_info['uploaded_by'] != user.user_name):
+        if not _can_read(file_info, user.user_name if user else None):
             raise fastapi.HTTPException(status_code=404, detail="File not found")
 
         s3_client = boto3.client('s3', region_name=s3.S3_REGION)
@@ -298,12 +320,12 @@ async def download_calr_file(file_id: str, user: Optional[User] = Depends(get_ca
 @router.get("/calr/files/{file_id}/info")
 async def get_calr_file_info(file_id: str):
     """
-    Get metadata for a public CALR file without downloading it.
-    No authentication required. Returns 404 for non-public files.
+    Get metadata for a public or shared CALR file without downloading it.
+    No authentication required. Returns 404 for private (non-public, non-shared) files.
     """
     try:
         file_info = calr_query.get_calr_file_by_id(engine, file_id)
-        if not file_info or not file_info['public']:
+        if not file_info or not _can_read(file_info, None):
             raise fastapi.HTTPException(status_code=404, detail="File not found")
 
         # Don't expose s3_path in public info
@@ -461,14 +483,19 @@ async def delete_calr_submission(submission_id: str, user: User = Depends(get_ca
 
 
 @router.patch("/calr/files/{submission_id}")
-async def update_calr_submission_public(
+async def update_calr_submission_visibility(
     submission_id: str,
-    public: bool,
+    public: Optional[bool] = None,
+    shared: Optional[bool] = None,
     user: User = Depends(get_calr_user)
 ):
     """
-    Update the public flag on a CALR submission.
-    Only the submission owner can change this.
+    Update the visibility flags on a CALR submission. `public` lists the dataset in
+    the public directory; `shared` enables link-only read access. Either flag may be
+    omitted (left unchanged); with neither provided this is a no-op. Owner only.
+
+    NOTE: path is /calr/files/{submission_id} for historical reasons but operates on
+    the submission (see DELETE /calr/files/{submission_id}).
     """
     files = calr_query.get_calr_files_by_submission(engine, submission_id)
     if not files:
@@ -478,8 +505,17 @@ async def update_calr_submission_public(
     if not file_info or file_info['uploaded_by'] != user.user_name:
         raise fastapi.HTTPException(status_code=403, detail="You can only modify your own submissions")
 
-    calr_query.set_calr_submission_public(engine, submission_id, public)
-    return {"submission_id": submission_id, "public": public}
+    if public is not None:
+        calr_query.set_calr_submission_public(engine, submission_id, public)
+    if shared is not None:
+        calr_query.set_calr_submission_shared(engine, submission_id, shared)
+
+    # Response reflects post-update state, computed locally from file_info + the provided args (no re-read).
+    return {
+        "submission_id": submission_id,
+        "public": public if public is not None else bool(file_info['public']),
+        "shared": shared if shared is not None else bool(file_info['shared']),
+    }
 
 
 @router.patch("/calr/submissions/{submission_id}/metadata")
@@ -818,7 +854,7 @@ async def get_calr_session(
     file_info = calr_query.get_calr_file_by_id(engine, session_id)
     if not file_info or file_info['file_type'] != 'session':
         raise fastapi.HTTPException(status_code=404, detail="Session not found")
-    if not file_info['public'] and (user is None or file_info['uploaded_by'] != user.user_name):
+    if not _can_read(file_info, user.user_name if user else None):
         raise fastapi.HTTPException(status_code=403, detail="Access denied")
 
     try:
@@ -933,7 +969,7 @@ async def download_calr_session_csv(
     file_info = calr_query.get_calr_file_by_id(engine, session_id)
     if not file_info or file_info['file_type'] != 'session':
         raise fastapi.HTTPException(status_code=404, detail="Session not found")
-    if not file_info['public'] and (user is None or file_info['uploaded_by'] != user.user_name):
+    if not _can_read(file_info, user.user_name if user else None):
         raise fastapi.HTTPException(status_code=403, detail="Access denied")
 
     try:
@@ -1178,7 +1214,7 @@ def _load_session_and_standard_df(session_id: str, username: str):
     file_info = calr_query.get_calr_file_by_id(engine, session_id)
     if not file_info or file_info['file_type'] != 'session':
         raise fastapi.HTTPException(status_code=404, detail="Session not found")
-    if not file_info['public'] and file_info['uploaded_by'] != username:
+    if not _can_read(file_info, username):
         raise fastapi.HTTPException(status_code=403, detail="Access denied")
 
     try:

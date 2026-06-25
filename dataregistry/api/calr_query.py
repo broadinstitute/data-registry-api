@@ -54,7 +54,7 @@ def get_calr_submissions_by_user(engine, uploaded_by: str):
     """Get all CALR submissions for a user, with their associated files."""
     with engine.connect() as conn:
         rows = conn.execute(text("""
-            SELECT s.id AS submission_id, s.name, s.description, s.public,
+            SELECT s.id AS submission_id, s.name, s.description, s.public, s.shared,
                    s.uploaded_by, s.uploaded_at, s.metadata,
                    f.id AS file_id, f.file_type, f.file_name, f.file_size
             FROM calr_submissions s
@@ -70,7 +70,7 @@ def get_public_calr_submissions(engine):
     """Get all public CALR submissions with their associated files."""
     with engine.connect() as conn:
         rows = conn.execute(text("""
-            SELECT s.id AS submission_id, s.name, s.description, s.public,
+            SELECT s.id AS submission_id, s.name, s.description, s.public, s.shared,
                    s.uploaded_by, s.uploaded_at, s.metadata,
                    f.id AS file_id, f.file_type, f.file_name, f.file_size
             FROM calr_submissions s
@@ -80,6 +80,23 @@ def get_public_calr_submissions(engine):
         """)).mappings().all()
 
         return _group_calr_submissions(rows)
+
+
+def get_shared_calr_submission(engine, submission_id: str):
+    """Return a single shared submission bundle (submission + files), or None if it
+    does not exist or is not shared. Excludes s3_path (via _group_calr_submissions)."""
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT s.id AS submission_id, s.name, s.description, s.public, s.shared,
+                   s.uploaded_by, s.uploaded_at, s.metadata,
+                   f.id AS file_id, f.file_type, f.file_name, f.file_size
+            FROM calr_submissions s
+            LEFT JOIN calr_files f ON f.submission_id = s.id
+            WHERE s.id = :submission_id AND s.shared = 1
+            ORDER BY f.file_type
+        """), {'submission_id': submission_id}).mappings().all()
+        grouped = _group_calr_submissions(rows)
+        return grouped[0] if grouped else None
 
 
 def _group_calr_submissions(rows):
@@ -95,6 +112,7 @@ def _group_calr_submissions(rows):
                 'name': row['name'],
                 'description': row['description'],
                 'public': bool(row['public']),
+                'shared': bool(row['shared']),
                 'uploaded_by': row['uploaded_by'],
                 'uploaded_at': row['uploaded_at'],
                 'metadata': json.loads(raw_metadata) if isinstance(raw_metadata, str) else (raw_metadata or {}),
@@ -116,7 +134,7 @@ def get_calr_file_by_id(engine, file_id: str):
         result = conn.execute(text("""
             SELECT f.id, f.submission_id, f.file_type, f.file_name, f.file_size,
                    f.s3_path, f.uploaded_at,
-                   s.public, s.uploaded_by
+                   s.public, s.shared, s.uploaded_by
             FROM calr_files f
             JOIN calr_submissions s ON s.id = f.submission_id
             WHERE f.id = :file_id
@@ -144,6 +162,16 @@ def set_calr_submission_public(engine, submission_id: str, public: bool) -> bool
         result = conn.execute(text("""
             UPDATE calr_submissions SET public = :public WHERE id = :id
         """), {'public': 1 if public else 0, 'id': submission_id})
+        conn.commit()
+        return result.rowcount > 0
+
+
+def set_calr_submission_shared(engine, submission_id: str, shared: bool) -> bool:
+    """Set the shared flag on a submission. Returns True if the record was found and updated."""
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+            UPDATE calr_submissions SET shared = :shared WHERE id = :id
+        """), {'shared': 1 if shared else 0, 'id': submission_id})
         conn.commit()
         return result.rowcount > 0
 
