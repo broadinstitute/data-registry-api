@@ -20,6 +20,19 @@ def upload_file_to_s3(file_name, file_guid, extra_args={'ContentType': 'image/pn
     s3.upload_file(file_name, bucket, key, ExtraArgs=extra_args)
 
 
+def convert_ancestry_code(ancestry):
+    ancestry_mapping = {
+        'AF': 'AFR',
+        'AA': 'AFR',
+        'SSAF': 'AFR',
+        'HS': 'AMR',      # not sure about this?
+        'SA': 'SAS',
+        'EA': 'EAS',
+        'EU': 'EUR',
+    }
+    return ancestry_mapping.get(ancestry, ancestry)
+
+
 def convert_to_genepi_map(col_map):
     mapping = {
         'chromosome': 'chr',
@@ -37,13 +50,15 @@ def convert_to_genepi_map(col_map):
     return {mapping[k]: v for k, v in col_map.items() if k in mapping}
 
 
-def run_r_commands(file_path, file_guid, col_map, script_options):
+def run_r_commands(file_path, file_guid, col_map, script_options, genome_build, ancestry):
     genepi_map = convert_to_genepi_map(col_map)
     script_option_str = " ".join(["-noind" if k == "noind" else f"-{k} {v}" for k, v in script_options.items()])
     col_mapping = " ".join([f"-{k} {v}" for k, v in genepi_map.items()])
     ref_mapping = "-r_chr \"#CHROM\" -r_bp POS -r_ea ALT -r_oa REF -r_eaf AF -r_id ID -o out"
-    r_script_command = (f"Rscript heRmes/scripts/gwas_qc.R -r HRC.r1-1.GRCh37.wgs.mac5.sites.tab.gz -g {file_path} "
-                        f"{col_mapping} {ref_mapping} {script_option_str} -o .")
+    r_script_command = (f"Rscript heRmes/scripts/gwas_qc.R -g {file_path} "
+                        f"{col_mapping} {ref_mapping} {script_option_str} "
+                        f"--eaf_ref all_afreq.tsv.gz --genome_ref Homo_sapiens.GRCh37.75.dna.primary_assembly.fa "
+                        f"--chainfile hg38ToHg19.over.chain --build {genome_build} --ancestry {ancestry} -o .")
     try:
         print("Running command:", r_script_command)
         result = subprocess.run(r_script_command, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -78,10 +93,19 @@ def run_r_commands(file_path, file_guid, col_map, script_options):
 @click.option('--file_guid', '-g', type=str, required=True)
 @click.option('--column_map', '-c', type=str, required=True)
 @click.option('--script_options', '-o', type=str, required=True)
-def main(s3_path, file_guid, column_map, script_options):
-    download_file_from_s3("s3://dig-data-registry-qa/hermes/nick-reference/HRC.r1-1.GRCh37.wgs.mac5.sites.tab.gz")
+@click.option('--genome-build', '-b', type=str, required=True)
+@click.option('--ancestry', '-a', type=str, required=True)
+def main(s3_path, file_guid, column_map, script_options, genome_build, ancestry):
+    # Download reference files
+    download_file_from_s3("s3://dig-data-registry-qa/hermes/nick-reference/all_afreq.tsv.gz")
+    download_file_from_s3("s3://dig-data-registry-qa/hermes/nick-reference/Homo_sapiens.GRCh37.75.dna.primary_assembly.fa")
+    download_file_from_s3("s3://dig-data-registry-qa/hermes/nick-reference/hg38ToHg19.over.chain")
+
+    # Convert ancestry code to standardized format
+    standardized_ancestry = convert_ancestry_code(ancestry)
+
     local_file = download_file_from_s3(s3_path)
-    run_r_commands(local_file, file_guid, json.loads(column_map), json.loads(script_options))
+    run_r_commands(local_file, file_guid, json.loads(column_map), json.loads(script_options), genome_build, standardized_ancestry)
 
 
 if __name__ == "__main__":
