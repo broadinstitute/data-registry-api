@@ -18,7 +18,7 @@ from botocore.exceptions import ClientError
 
 from dataregistry.api import file_utils, s3, query
 from dataregistry.api.db import DataRegistryReadWriteDB
-from dataregistry.api.model import SGCPhenotype, SGCCohort, SGCCohortFile, SGCCasesControlsMetadata, SGCCoOccurrenceMetadata, SGCPhenotypeCaseTotals, SGCPhenotypeCaseCountsBySex, User, NewUserRequest, SGCGWASFile, SGCGWASCohort, SGCGWASValidationJob, SGCGWASPlotResult
+from dataregistry.api.model import SGCPhenotype, SGCCohort, SGCCohortFile, SGCCasesControlsMetadata, SGCCoOccurrenceMetadata, SGCPhenotypeCaseTotals, SGCPhenotypeCaseCountsBySex, User, NewUserRequest, SGCGWASFile, SGCGWASCohort, SGCGWASValidationJob, SGCGWASPlotResult, SGCMAResult
 from dataregistry.api.api import get_current_user
 
 router = fastapi.APIRouter()
@@ -2611,3 +2611,98 @@ async def get_qc_json(file_id: str, user: User = Depends(get_sgc_user)):
         raise
     return fastapi.responses.Response(content=obj["Body"].read(),
                                       media_type="application/json")
+
+
+# ---------------------------------------------------------------------------
+# SGC GWAS Meta-Analysis (MA) Results (Manhattan / QQ / meta / summary / top loci)
+# ---------------------------------------------------------------------------
+
+def _ma_lookup(phenotype: str, ancestry: str) -> dict:
+    """Find the MA result row matching (phenotype, ancestry). 404 if missing."""
+    rows = [r for r in query.get_sgc_ma_results(engine)
+            if r["phenotype"] == phenotype and r["ancestry"] == ancestry]
+    if not rows:
+        raise fastapi.HTTPException(status_code=404,
+                                    detail="No meta-analysis results for that phenotype/ancestry")
+    return rows[0]
+
+
+@router.get("/sgc/ma/results", response_model=list[SGCMAResult])
+async def list_sgc_ma_results(user: User = Depends(get_sgc_user)):
+    if not check_review_permissions(user):
+        raise fastapi.HTTPException(status_code=403,
+            detail="You need sgc-review-data permission to view meta-analysis results")
+    return query.get_sgc_ma_results(engine)
+
+
+@router.get("/sgc/ma/results/{phenotype}/{ancestry}/manhattan")
+async def get_ma_manhattan(phenotype: str, ancestry: str, user: User = Depends(get_sgc_user)):
+    if not check_review_permissions(user):
+        raise fastapi.HTTPException(status_code=403,
+            detail="You need sgc-review-data permission to view meta-analysis results")
+    row = _ma_lookup(phenotype, ancestry)
+    return {"url": _qc_plots_presign(row.get("manhattan_s3_key"))}
+
+
+@router.get("/sgc/ma/results/{phenotype}/{ancestry}/qq")
+async def get_ma_qq(phenotype: str, ancestry: str, user: User = Depends(get_sgc_user)):
+    if not check_review_permissions(user):
+        raise fastapi.HTTPException(status_code=403,
+            detail="You need sgc-review-data permission to view meta-analysis results")
+    row = _ma_lookup(phenotype, ancestry)
+    return {"url": _qc_plots_presign(row.get("qq_s3_key"))}
+
+
+@router.get("/sgc/ma/results/{phenotype}/{ancestry}/meta")
+async def get_ma_meta(phenotype: str, ancestry: str, user: User = Depends(get_sgc_user)):
+    if not check_review_permissions(user):
+        raise fastapi.HTTPException(status_code=403,
+            detail="You need sgc-review-data permission to view meta-analysis results")
+    row = _ma_lookup(phenotype, ancestry)
+    return {"url": _qc_plots_presign(row.get("meta_s3_key"))}
+
+
+@router.get("/sgc/ma/results/{phenotype}/{ancestry}/summary")
+async def get_ma_summary(phenotype: str, ancestry: str, user: User = Depends(get_sgc_user)):
+    if not check_review_permissions(user):
+        raise fastapi.HTTPException(status_code=403,
+            detail="You need sgc-review-data permission to view meta-analysis results")
+    row = _ma_lookup(phenotype, ancestry)
+    key = row.get("summary_json_s3_key")
+    if not key:
+        raise fastapi.HTTPException(status_code=404, detail="Summary not yet available")
+    s3_client = boto3.client("s3", region_name=s3.S3_REGION)
+    try:
+        obj = s3_client.get_object(Bucket=QC_PLOTS_BUCKET, Key=key)
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code", "")
+        if code in ("NoSuchKey", "404"):
+            raise fastapi.HTTPException(status_code=404, detail="summary.json not found in S3")
+        raise
+    return fastapi.responses.Response(content=obj["Body"].read(),
+                                      media_type="application/json")
+
+
+@router.get("/sgc/ma/results/{phenotype}/{ancestry}/top-loci")
+async def get_ma_top_loci(phenotype: str, ancestry: str, user: User = Depends(get_sgc_user)):
+    if not check_review_permissions(user):
+        raise fastapi.HTTPException(status_code=403,
+            detail="You need sgc-review-data permission to view meta-analysis results")
+    row = _ma_lookup(phenotype, ancestry)
+    key = row.get("top_loci_s3_key")
+    if not key:
+        raise fastapi.HTTPException(status_code=404, detail="Top loci not yet available")
+    s3_client = boto3.client("s3", region_name=s3.S3_REGION)
+    try:
+        obj = s3_client.get_object(Bucket=QC_PLOTS_BUCKET, Key=key)
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code", "")
+        if code in ("NoSuchKey", "404"):
+            raise fastapi.HTTPException(status_code=404, detail="top_loci.tsv not found in S3")
+        raise
+    raw = obj["Body"].read().decode()
+    lines = [ln for ln in raw.splitlines() if ln.strip()]
+    if not lines:
+        return []
+    header = lines[0].split("\t")
+    return [dict(zip(header, ln.split("\t"))) for ln in lines[1:]]

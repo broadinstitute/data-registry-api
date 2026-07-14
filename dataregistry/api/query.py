@@ -2306,3 +2306,136 @@ def get_sgc_plot_results(engine) -> list[dict]:
             ORDER BY p.lambda_gc DESC, f.phenotype, f.dataset
         """))
         return [_format_sgc_plot_result_row(dict(r._mapping)) for r in rs]
+
+
+# SGC GWAS meta-analysis (MA) result queries
+
+MA_INSERT_SQL = """
+    INSERT INTO sgc_gwas_ma_results (id, phenotype, ancestry, status)
+    VALUES (:id, :phenotype, :ancestry, 'PENDING')
+    ON DUPLICATE KEY UPDATE
+        status='PENDING',
+        batch_job_id=NULL,
+        meta_lambda_gc=NULL,
+        n_meta_variants=NULL,
+        n_genome_wide_sig=NULL,
+        n_cohorts=NULL,
+        n_cohorts_used=NULL,
+        manhattan_s3_key=NULL,
+        qq_s3_key=NULL,
+        meta_s3_key=NULL,
+        summary_json_s3_key=NULL,
+        summary_tsv_s3_key=NULL,
+        top_loci_s3_key=NULL,
+        error_message=NULL
+"""
+
+MA_LIST_SQL = """
+    SELECT
+        id, phenotype, ancestry, status,
+        meta_lambda_gc, n_meta_variants, n_genome_wide_sig, n_cohorts, n_cohorts_used,
+        manhattan_s3_key, qq_s3_key, meta_s3_key,
+        summary_json_s3_key, summary_tsv_s3_key, top_loci_s3_key,
+        batch_job_id, error_message,
+        created_at, updated_at
+    FROM sgc_gwas_ma_results
+    ORDER BY updated_at DESC
+"""
+
+
+def _format_sgc_ma_row(d: dict) -> dict:
+    """Format a raw DB row for sgc_gwas_ma_results, converting the binary id to a hex string."""
+    if isinstance(d.get('id'), (bytes, bytearray)):
+        d['id'] = d['id'].decode('ascii')
+    return d
+
+
+def insert_sgc_ma_pending(engine, phenotype: str, ancestry: str) -> str:
+    """Create a PENDING meta-analysis result row for (phenotype, ancestry); if one already
+    exists, reset it to PENDING and clear all result fields. Returns the row's hex id.
+    """
+    ma_id = str(uuid.uuid4()).replace('-', '')
+    with engine.connect() as conn:
+        conn.execute(text(MA_INSERT_SQL), {
+            'id': ma_id,
+            'phenotype': phenotype,
+            'ancestry': ancestry,
+        })
+        conn.commit()
+    return ma_id
+
+
+def update_sgc_ma_result(
+    engine,
+    phenotype: str,
+    ancestry: str,
+    *,
+    status: str,
+    batch_job_id: Optional[str] = None,
+    meta_lambda_gc: Optional[float] = None,
+    n_meta_variants: Optional[int] = None,
+    n_genome_wide_sig: Optional[int] = None,
+    n_cohorts: Optional[int] = None,
+    n_cohorts_used: Optional[int] = None,
+    manhattan_s3_key: Optional[str] = None,
+    qq_s3_key: Optional[str] = None,
+    meta_s3_key: Optional[str] = None,
+    summary_json_s3_key: Optional[str] = None,
+    summary_tsv_s3_key: Optional[str] = None,
+    top_loci_s3_key: Optional[str] = None,
+    error_message: Optional[str] = None,
+) -> None:
+    """Partial update: only non-None fields are written; others left alone via COALESCE.
+
+    Optional fields default to None, in which case the existing DB value is preserved
+    (COALESCE). To clear a previously-set field, re-call insert_sgc_ma_pending
+    instead. Raises ValueError if no row matches (phenotype, ancestry).
+    """
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+            UPDATE sgc_gwas_ma_results
+            SET status = :status,
+                batch_job_id = COALESCE(:batch_job_id, batch_job_id),
+                meta_lambda_gc = COALESCE(:meta_lambda_gc, meta_lambda_gc),
+                n_meta_variants = COALESCE(:n_meta_variants, n_meta_variants),
+                n_genome_wide_sig = COALESCE(:n_genome_wide_sig, n_genome_wide_sig),
+                n_cohorts = COALESCE(:n_cohorts, n_cohorts),
+                n_cohorts_used = COALESCE(:n_cohorts_used, n_cohorts_used),
+                manhattan_s3_key = COALESCE(:manhattan_s3_key, manhattan_s3_key),
+                qq_s3_key = COALESCE(:qq_s3_key, qq_s3_key),
+                meta_s3_key = COALESCE(:meta_s3_key, meta_s3_key),
+                summary_json_s3_key = COALESCE(:summary_json_s3_key, summary_json_s3_key),
+                summary_tsv_s3_key = COALESCE(:summary_tsv_s3_key, summary_tsv_s3_key),
+                top_loci_s3_key = COALESCE(:top_loci_s3_key, top_loci_s3_key),
+                error_message = COALESCE(:error_message, error_message)
+            WHERE phenotype = :phenotype AND ancestry = :ancestry
+        """), {
+            'status': status,
+            'batch_job_id': batch_job_id,
+            'meta_lambda_gc': meta_lambda_gc,
+            'n_meta_variants': n_meta_variants,
+            'n_genome_wide_sig': n_genome_wide_sig,
+            'n_cohorts': n_cohorts,
+            'n_cohorts_used': n_cohorts_used,
+            'manhattan_s3_key': manhattan_s3_key,
+            'qq_s3_key': qq_s3_key,
+            'meta_s3_key': meta_s3_key,
+            'summary_json_s3_key': summary_json_s3_key,
+            'summary_tsv_s3_key': summary_tsv_s3_key,
+            'top_loci_s3_key': top_loci_s3_key,
+            'error_message': error_message,
+            'phenotype': phenotype,
+            'ancestry': ancestry,
+        })
+        if result.rowcount == 0:
+            raise ValueError(
+                f"No sgc_gwas_ma_results row found for phenotype={phenotype}, ancestry={ancestry}"
+            )
+        conn.commit()
+
+
+def get_sgc_ma_results(engine) -> list[dict]:
+    """All meta-analysis results, ordered by updated_at desc (most recently updated first)."""
+    with engine.connect() as conn:
+        rs = conn.execute(text(MA_LIST_SQL))
+        return [_format_sgc_ma_row(dict(r._mapping)) for r in rs]

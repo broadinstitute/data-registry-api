@@ -487,3 +487,25 @@ class SGCGWASPlotResult(BaseModel):
     cohort_id: Optional[str] = None
 
 
+class SGCMAResult(BaseModel):
+    id: str
+    phenotype: str
+    ancestry: str
+    status: str
+    meta_lambda_gc: Optional[float] = None
+    n_meta_variants: Optional[int] = None
+    n_genome_wide_sig: Optional[int] = None
+    n_cohorts: Optional[int] = None
+    n_cohorts_used: Optional[int] = None
+    manhattan_s3_key: Optional[str] = None
+    qq_s3_key: Optional[str] = None
+    meta_s3_key: Optional[str] = None
+    summary_json_s3_key: Optional[str] = None
+    summary_tsv_s3_key: Optional[str] = None
+    top_loci_s3_key: Optional[str] = None
+    batch_job_id: Optional[str] = None
+    error_message: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
