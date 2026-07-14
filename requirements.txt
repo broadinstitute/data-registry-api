@@ -76,6 +76,7 @@ yarg==0.1.9
 yarl==1.23.0
 pandas==3.0.2
 numpy==2.4.4
+matplotlib==3.10.9
 statsmodels==0.14.6
 pytz==2026.1.post1
 tzdata==2026.1
