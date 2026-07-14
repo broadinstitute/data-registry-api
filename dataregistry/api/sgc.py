@@ -2535,7 +2535,7 @@ async def update_sgc_gwas_metadata(cohort_id: str, cohort: SGCGWASCohort, user: 
 # QC_PLOTS_BUCKET must match the --bucket value passed to the worker by
 # submit_qc_plots_batch.py. The worker writes to that bucket; the API
 # reads from this one.
-QC_PLOTS_BUCKET = os.getenv("SGC_QC_PLOTS_BUCKET", "dig-data-registry")
+QC_PLOTS_BUCKET = os.getenv("DATA_REGISTRY_BUCKET", "dig-data-registry")
 QC_PLOTS_PRESIGN_TTL = 900  # 15 minutes
 
 
