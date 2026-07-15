@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from dataregistry.api.model import SavedDataset, DataSet, Study, SavedStudy, SavedPhenotypeDataSet, SavedCredibleSet, \
     CsvBioIndexRequest, SavedCsvBioIndexRequest, User, FileUpload, NewUserRequest, HermesUser, MetaAnalysisRequest, \
     HermesMetaAnalysisStatus, SavedMetaAnalysisRequest, HermesPhenotype, SGCPhenotype, SGCGWASFile, \
-    SGCGWASCohort, SGCGWASValidationJob, LiftoverJob, LiftoverJobStatus, GenomeBuild
+    SGCGWASCohort, SGCGWASValidationJob, LiftoverJob, LiftoverJobStatus, GenomeBuild, QCRun, QCStepResult
 from dataregistry.id_shortener import shorten_uuid
 
 
@@ -2306,6 +2306,109 @@ def get_sgc_plot_results(engine) -> list[dict]:
             ORDER BY p.lambda_gc DESC, f.phenotype, f.dataset
         """))
         return [_format_sgc_plot_result_row(dict(r._mapping)) for r in rs]
+
+
+def _parse_qc_run_row(row) -> dict:
+    d = dict(row)
+    if isinstance(d.get('id'), (bytes, bytearray)):
+        d['id'] = d['id'].decode()
+    return d
+
+
+def insert_qc_run(engine, run: QCRun) -> str:
+    """Insert a qc_run row. Returns the run id as a 32-char hex string."""
+    with engine.connect() as conn:
+        run_id = str(uuid.uuid4()).replace('-', '')
+        conn.execute(text("""
+            INSERT INTO qc_run
+            (id, input_s3_path, pipeline, pinned_commit, image_digest, status, submitted_by)
+            VALUES (:id, :input_s3_path, :pipeline, :pinned_commit, :image_digest, :status, :submitted_by)
+        """), {
+            'id': run_id,
+            'input_s3_path': run.input_s3_path,
+            'pipeline': run.pipeline,
+            'pinned_commit': run.pinned_commit,
+            'image_digest': run.image_digest,
+            'status': run.status,
+            'submitted_by': run.submitted_by,
+        })
+        conn.commit()
+        return run_id
+
+
+def get_qc_run_by_id(engine, run_id) -> Optional[dict]:
+    with engine.connect() as conn:
+        row = conn.execute(text("""
+            SELECT id, input_s3_path, pipeline, pinned_commit, image_digest, status,
+                   overall_verdict, gwas_filtered_s3_key, qc_report_s3_key, batch_job_id,
+                   error_message, submitted_by, created_at, completed_at
+            FROM qc_run WHERE id = :id
+        """), {'id': str(run_id).replace('-', '')}).mappings().first()
+        return _parse_qc_run_row(row) if row else None
+
+
+def _parse_qc_step_row(row) -> dict:
+    d = dict(row)
+    for key in ('id', 'run_id'):
+        if isinstance(d.get(key), (bytes, bytearray)):
+            d[key] = d[key].decode()  # binary(32) holds the 32-char ASCII hex id; decode, NOT .hex()
+    for key in ('metrics', 'messages', 'artifacts'):
+        if isinstance(d.get(key), str):
+            d[key] = json.loads(d[key])
+    return d
+
+
+def insert_qc_step_result(engine, step: QCStepResult) -> str:
+    with engine.connect() as conn:
+        step_id = str(uuid.uuid4()).replace('-', '')
+        conn.execute(text("""
+            INSERT INTO qc_step_result (id, run_id, step, verdict, metrics, messages, artifacts, step_index)
+            VALUES (:id, :run_id, :step, :verdict, :metrics, :messages, :artifacts, :step_index)
+        """), {
+            'id': step_id,
+            'run_id': str(step.run_id).replace('-', ''),
+            'step': step.step,
+            'verdict': step.verdict,
+            'metrics': json.dumps(step.metrics) if step.metrics is not None else None,
+            'messages': json.dumps(step.messages) if step.messages is not None else None,
+            'artifacts': json.dumps(step.artifacts) if step.artifacts is not None else None,
+            'step_index': step.step_index,
+        })
+        conn.commit()
+        return step_id
+
+
+def list_qc_step_results(engine, run_id) -> List[dict]:
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT id, run_id, step, verdict, metrics, messages, artifacts, created_at, step_index
+            FROM qc_step_result WHERE run_id = :run_id ORDER BY step_index
+        """), {'run_id': str(run_id).replace('-', '')}).mappings().all()
+        return [_parse_qc_step_row(r) for r in rows]
+
+
+def update_qc_run_status(engine, run_id, status, overall_verdict=None,
+                         gwas_filtered_s3_key=None, qc_report_s3_key=None,
+                         batch_job_id=None, error_message=None) -> None:
+    with engine.connect() as conn:
+        params = {
+            'id': str(run_id).replace('-', ''),
+            'status': status,
+            'overall_verdict': overall_verdict,
+            'gwas_filtered_s3_key': gwas_filtered_s3_key,
+            'qc_report_s3_key': qc_report_s3_key,
+            'batch_job_id': batch_job_id,
+            'error_message': error_message,
+        }
+        set_clauses = ["status = :status"]
+        for col in ('overall_verdict', 'gwas_filtered_s3_key', 'qc_report_s3_key',
+                    'batch_job_id', 'error_message'):
+            if params[col] is not None:
+                set_clauses.append(f"{col} = :{col}")
+        if status in ('COMPLETED', 'FAILED'):
+            set_clauses.append("completed_at = NOW()")
+        conn.execute(text(f"UPDATE qc_run SET {', '.join(set_clauses)} WHERE id = :id"), params)
+        conn.commit()
 
 
 # SGC GWAS meta-analysis (MA) result queries

@@ -420,6 +420,34 @@ class SGCGWASValidationJob(BaseModel):
     submitted_by: str = ''
 
 
+class QCRun(BaseModel):
+    id: Union[UUID, None] = None
+    input_s3_path: str
+    pipeline: str
+    pinned_commit: Union[str, None] = None
+    image_digest: Union[str, None] = None
+    status: str = 'SUBMITTED'  # SUBMITTED, RUNNING, COMPLETED, FAILED
+    overall_verdict: Union[str, None] = None  # pass, warn, fail
+    gwas_filtered_s3_key: Union[str, None] = None
+    qc_report_s3_key: Union[str, None] = None
+    batch_job_id: Union[str, None] = None
+    error_message: Union[str, None] = None
+    submitted_by: str = ''
+    created_at: Union[datetime, None] = None
+    completed_at: Union[datetime, None] = None
+
+
+class QCStepResult(BaseModel):
+    id: Union[UUID, None] = None
+    run_id: UUID
+    step: str
+    verdict: Union[str, None] = None
+    metrics: Union[Dict, None] = None
+    messages: Union[List[str], None] = None
+    artifacts: Union[List[Dict], None] = None
+    step_index: int = 0
+
+
 class SGCGWASCohort(BaseModel):
     id: Union[UUID, None] = None
     cohort_id: Union[UUID, None] = None

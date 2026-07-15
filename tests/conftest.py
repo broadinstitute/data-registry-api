@@ -51,6 +51,8 @@ def before_each_test():
         con.execute(text("TRUNCATE TABLE sgc_phenotypes"))
         con.execute(text("TRUNCATE TABLE liftover_jobs"))
         con.execute(text("TRUNCATE TABLE portal_liftover_config"))
+        con.execute(text("TRUNCATE TABLE qc_step_result"))
+        con.execute(text("TRUNCATE TABLE qc_run"))
         con.execute(text("INSERT INTO users (id, user_name, oauth_provider, created_at) "
                          "values (1, 'testuser@broadinstitute.org', 'google', NOW())"))
         con.execute(text("INSERT INTO roles (role) VALUES ('admin')"))

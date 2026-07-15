@@ -31,8 +31,25 @@ LIST_SQL = """
     JOIN sgc_gwas_plot_results p ON p.file_id = f.id
     LEFT JOIN sgc_gwas_cohorts gc ON gc.cohort_id = f.cohort_id
     WHERE f.ancestry NOT IN ('Combined','MID')
+      AND (p.ldsc_status IS NULL OR p.ldsc_status IN ('PENDING','FAILED'))
     ORDER BY f.ancestry, f.dataset, f.phenotype
 """
+
+
+# Free-text genome_build labels seen in prod that denote canonical builds.
+# Closed map; unknown values pass through unchanged so the build skip-check in
+# main() still rejects them. "GRCh37 liftover to GRCh38" data is already on
+# GRCh38 coordinates, so it maps to GRCh38 (drives which snpmap the worker loads).
+_BUILD_ALIASES = {
+    "GRCh38": "GRCh38",
+    "GRCh37": "GRCh37",
+    "GRCh38 / hg38": "GRCh38",
+    "GRCh37 liftover to GRCh38": "GRCh38",
+}
+
+
+def _normalize_build(raw):
+    return _BUILD_ALIASES.get(raw, raw)
 
 
 def _coerce_mapping(raw) -> dict:
@@ -87,6 +104,7 @@ def main(bucket, ref_bucket, db_name, limit, dry_run):
     batch = boto3.client("batch", region_name=AWS_REGION)
     n = 0
     for row in rows:
+        row["genome_build"] = _normalize_build(row["genome_build"])
         skip = row["genome_build"] not in ("GRCh38", "GRCh37")
         flag = " SKIP(build)" if skip else ""
         click.echo(f"  {row['file_id'][:8]} {row['ancestry']:4} {str(row['genome_build']):8} "
