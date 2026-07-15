@@ -26,6 +26,12 @@ from sgc_qc_plots.computations import lambda_gc
 META_COLUMNS = ["chromosome", "position", "ref", "alt", "beta", "se", "pvalue",
                 "n", "n_cohorts", "dir_concordance", "i2"]
 
+# S3 ContentType by file extension, so browsers/consumers get the right MIME
+# type instead of the default binary/octet-stream. os.path.splitext keys on the
+# last extension only: "meta.tsv.gz" -> ".gz", "summary.tsv" -> ".tsv".
+_CONTENT_TYPES = {".png": "image/png", ".json": "application/json",
+                  ".tsv": "text/tab-separated-values", ".gz": "application/gzip"}
+
 
 def _read_meta_for_plot(meta_path):
     """Read back the meta output for plotting. dtype={"chromosome": str} is
@@ -128,7 +134,13 @@ def main(phenotype, ancestry, bucket, out_prefix, local_out):
     prefix = out_prefix or f"sgc/ma/{phenotype}/{ancestry}"
 
     query.insert_sgc_ma_pending(engine, phenotype, ancestry)
-    query.update_sgc_ma_result(engine, phenotype, ancestry, status="RUNNING")
+    # AWS Batch injects AWS_BATCH_JOB_ID into every job container. Record it so a
+    # completed row stays traceable to the Batch job that produced it. The
+    # insert_sgc_ma_pending above reset batch_job_id to NULL, so we re-set it
+    # here from the job we're actually running as (None on local runs, where
+    # COALESCE then leaves the column NULL).
+    query.update_sgc_ma_result(engine, phenotype, ancestry, status="RUNNING",
+                               batch_job_id=os.environ.get("AWS_BATCH_JOB_ID"))
     try:
         cohorts = sel.select_cohorts(engine, phenotype, ancestry)
         click.echo(f"selected {len(cohorts)} cohorts for {phenotype}/{ancestry}")
@@ -147,7 +159,9 @@ def main(phenotype, ancestry, bucket, out_prefix, local_out):
         for name in ["meta.tsv.gz", "manhattan.png", "qq.png", "summary.json", "summary.tsv", "top_loci.tsv"]:
             p = os.path.join(local_out, name)
             if os.path.exists(p):
-                s3.upload_file(p, bucket, f"{prefix}/{name}")
+                ctype = _CONTENT_TYPES.get(os.path.splitext(name)[1])
+                s3.upload_file(p, bucket, f"{prefix}/{name}",
+                               ExtraArgs={"ContentType": ctype} if ctype else None)
         click.echo(json.dumps(summary, indent=2))
 
         query.update_sgc_ma_result(

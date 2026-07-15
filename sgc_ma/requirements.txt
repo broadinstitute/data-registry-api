@@ -6,3 +6,10 @@ scipy>=1.11.0
 matplotlib>=3.8.0
 sqlalchemy>=2.0.0
 pymysql>=1.1.0
+# Pulled in transitively by dataregistry.api.query -> .model (imported by the
+# worker to write results). Pinned to match the main API's requirements.txt so
+# the dataregistry code imports identically to production (pydantic MUST stay
+# v1 — model.py uses v1 idioms; EmailStr needs email-validator at class build).
+bcrypt==5.0.0
+pydantic==1.10.26
+email-validator==2.3.0

@@ -67,6 +67,98 @@ def test_meta_analyze_aborts_on_infra_error(tmp_path):
     with pytest.raises(RuntimeError):
         meta_analyze(cohorts, chunks_fn, str(tmp_path))
 
+def test_main_records_batch_job_id_and_content_types(tmp_path, monkeypatch):
+    """main() should (a) stamp the row with its AWS_BATCH_JOB_ID on the RUNNING
+    update, and (b) upload every artifact with an explicit ContentType. Fully
+    mocked: no DB, no S3, no network."""
+    from click.testing import CliRunner
+    import sgc_ma.run_ma as rm
+    import dataregistry.api.query as q
+    import dataregistry.api.db as db
+
+    updates = []
+    monkeypatch.setattr(q, "insert_sgc_ma_pending", lambda *a, **k: "id")
+    monkeypatch.setattr(q, "update_sgc_ma_result", lambda *a, **k: updates.append(k))
+
+    class _DummyDB:
+        def get_engine(self):
+            return object()
+    monkeypatch.setattr(db, "DataRegistryReadWriteDB", _DummyDB)
+    monkeypatch.setattr(rm.sel, "select_cohorts", lambda *a, **k: [])
+
+    def fake_meta(cohorts, chunks_fn, outdir, label=""):
+        import os
+        os.makedirs(outdir, exist_ok=True)
+        for n in ["meta.tsv.gz", "manhattan.png", "qq.png", "summary.json", "summary.tsv", "top_loci.tsv"]:
+            with open(os.path.join(outdir, n), "wb") as fh:
+                fh.write(b"x")
+        return {"meta_lambda_gc": 1.0, "n_meta_variants": 1, "n_genome_wide_sig": 0,
+                "n_cohorts": 0, "n_cohorts_used": 0}
+    monkeypatch.setattr(rm, "meta_analyze", fake_meta)
+
+    uploads = []
+    class FakeS3:
+        def upload_file(self, Filename, Bucket, Key, ExtraArgs=None):
+            uploads.append((Key, ExtraArgs))
+        def download_file(self, *a, **k):
+            pass
+    monkeypatch.setattr(rm.boto3, "client", lambda *a, **k: FakeS3())
+    monkeypatch.setenv("AWS_BATCH_JOB_ID", "job-xyz")
+
+    res = CliRunner().invoke(rm.main, ["--phenotype", "PH", "--ancestry", "EUR",
+                                       "--bucket", "b", "--local-out", str(tmp_path / "out")])
+    assert res.exit_code == 0, res.output
+
+    # (a) the RUNNING update carried this container's Batch job id
+    running = [u for u in updates if u.get("status") == "RUNNING"]
+    assert running and running[0].get("batch_job_id") == "job-xyz"
+
+    # (b) every artifact uploaded with the right ContentType
+    ct = {k: (ea or {}).get("ContentType") for k, ea in uploads}
+    assert ct["sgc/ma/PH/EUR/manhattan.png"] == "image/png"
+    assert ct["sgc/ma/PH/EUR/qq.png"] == "image/png"
+    assert ct["sgc/ma/PH/EUR/summary.json"] == "application/json"
+    assert ct["sgc/ma/PH/EUR/summary.tsv"] == "text/tab-separated-values"
+    assert ct["sgc/ma/PH/EUR/top_loci.tsv"] == "text/tab-separated-values"
+    assert ct["sgc/ma/PH/EUR/meta.tsv.gz"] == "application/gzip"
+
+
+def test_main_local_run_leaves_batch_job_id_none(tmp_path, monkeypatch):
+    """With no AWS_BATCH_JOB_ID (local run), the RUNNING update passes None so
+    COALESCE leaves the column untouched."""
+    from click.testing import CliRunner
+    import sgc_ma.run_ma as rm
+    import dataregistry.api.query as q
+    import dataregistry.api.db as db
+
+    updates = []
+    monkeypatch.setattr(q, "insert_sgc_ma_pending", lambda *a, **k: "id")
+    monkeypatch.setattr(q, "update_sgc_ma_result", lambda *a, **k: updates.append(k))
+
+    class _DummyDB:
+        def get_engine(self):
+            return object()
+    monkeypatch.setattr(db, "DataRegistryReadWriteDB", _DummyDB)
+    monkeypatch.setattr(rm.sel, "select_cohorts", lambda *a, **k: [])
+    monkeypatch.setattr(rm, "meta_analyze",
+                        lambda *a, **k: {"meta_lambda_gc": None, "n_meta_variants": 0,
+                                         "n_genome_wide_sig": 0, "n_cohorts": 0, "n_cohorts_used": 0})
+
+    class FakeS3:
+        def upload_file(self, *a, **k):
+            pass
+        def download_file(self, *a, **k):
+            pass
+    monkeypatch.setattr(rm.boto3, "client", lambda *a, **k: FakeS3())
+    monkeypatch.delenv("AWS_BATCH_JOB_ID", raising=False)
+
+    res = CliRunner().invoke(rm.main, ["--phenotype", "PH", "--ancestry", "EUR",
+                                       "--bucket", "b", "--local-out", str(tmp_path / "out")])
+    assert res.exit_code == 0, res.output
+    running = [u for u in updates if u.get("status") == "RUNNING"]
+    assert running and running[0].get("batch_job_id") is None
+
+
 def test_read_meta_for_plot_keeps_chromosome_string(tmp_path):
     import gzip
     from sgc_ma.run_ma import _read_meta_for_plot
