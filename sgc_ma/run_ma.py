@@ -56,6 +56,16 @@ def _clump(sig, window=500_000):
     return pd.DataFrame(leads, columns=sig.columns)
 
 
+def totals_from_per_cohort(per_cohort):
+    """Sum cases/controls over cohorts actually used in the meta (skipped
+    excluded). None-safe: returns None for a total when no used cohort carries
+    that count."""
+    used = [c for c in per_cohort if not c.get("skipped")]
+    cases = [c["cases"] for c in used if c.get("cases") is not None]
+    controls = [c["controls"] for c in used if c.get("controls") is not None]
+    return (sum(cases) if cases else None, sum(controls) if controls else None)
+
+
 def meta_analyze(cohorts: list[dict], chunks_fn, outdir: str, label: str = "meta-analysis") -> dict:
     os.makedirs(outdir, exist_ok=True)
     per_cohort = []
@@ -72,11 +82,13 @@ def meta_analyze(cohorts: list[dict], chunks_fn, outdir: str, label: str = "meta
                 stats = extract_sorted(chunks_fn(co), sorted_path)
             except ValueError as e:
                 per_cohort.append({"dataset": co["dataset"], "file_id": co.get("file_id"),
+                                   "cohort": co.get("cohort"),
                                    "skipped": True, "reason": str(e)})
                 continue
             n_cohorts_used += 1
             sorted_paths.append(sorted_path)
             per_cohort.append({"dataset": co["dataset"], "file_id": co["file_id"],
+                               "cohort": co.get("cohort"),
                                "cases": co.get("cases"), "controls": co.get("controls"),
                                "n_variants_in": stats["n_in"], "n_variants_used": stats["n_kept"],
                                "sum_n": stats["sum_n"]})
@@ -104,9 +116,11 @@ def meta_analyze(cohorts: list[dict], chunks_fn, outdir: str, label: str = "meta
     else:
         lam = None
 
+    total_cases, total_controls = totals_from_per_cohort(per_cohort)
     summary = {"n_cohorts": len(cohorts), "n_cohorts_used": n_cohorts_used,
                "n_meta_variants": n_meta,
                "meta_lambda_gc": lam, "n_genome_wide_sig": len(sig_rows),
+               "total_cases": total_cases, "total_controls": total_controls,
                "per_cohort": per_cohort,
                "caveats": [
                    "SE not rescaled across cohorts (assumes comparable log-OR betas)",
@@ -171,6 +185,8 @@ def main(phenotype, ancestry, bucket, out_prefix, local_out):
             n_genome_wide_sig=summary["n_genome_wide_sig"],
             n_cohorts=summary["n_cohorts"],
             n_cohorts_used=summary["n_cohorts_used"],
+            total_cases=summary["total_cases"],
+            total_controls=summary["total_controls"],
             manhattan_s3_key=f"{prefix}/manhattan.png",
             qq_s3_key=f"{prefix}/qq.png",
             meta_s3_key=f"{prefix}/meta.tsv.gz",

@@ -34,3 +34,10 @@ def test_selection_sql_requires_qc_success_and_reads_cohort_build():
     assert "p.status = 'SUCCEEDED'" in _SQL
     assert "sgc_gwas_cohorts" in _SQL
     assert "$.genome_build" in _SQL
+
+def test_selection_sql_exposes_registry_cohort_name():
+    # sc.name is the authoritative disambiguator when the free-text `dataset`
+    # label was mis-copied between cohorts (the "two GEL datasets" bug).
+    assert "LEFT JOIN sgc_cohorts sc ON sc.id = f.cohort_id" in _SQL
+    assert "sc.name AS cohort" in _SQL
+    assert "AS cohort_id" in _SQL

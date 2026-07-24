@@ -1,6 +1,6 @@
 import json
 import pandas as pd
-from sgc_ma.run_ma import meta_analyze
+from sgc_ma.run_ma import meta_analyze, totals_from_per_cohort
 
 def _norm(rows):
     return pd.DataFrame(rows)
@@ -67,6 +67,50 @@ def test_meta_analyze_aborts_on_infra_error(tmp_path):
     with pytest.raises(RuntimeError):
         meta_analyze(cohorts, chunks_fn, str(tmp_path))
 
+def test_meta_analyze_reports_totals_and_cohort(tmp_path):
+    cohorts = [{"file_id": "a", "dataset": "A", "cohort": "CohortA", "cases": 10, "controls": 20},
+               {"file_id": "b", "dataset": "B", "cohort": "CohortB", "cases": 5, "controls": 7}]
+    base = dict(se=0.1, pvalue=0.01, eaf=0.3, n=1000)
+    frames = {"a": _norm([dict(chromosome="1", position=100, ea="G", oa="A", beta=0.2, **base)]),
+              "b": _norm([dict(chromosome="1", position=100, ea="A", oa="G", beta=-0.2, **base)])}
+    summary = meta_analyze(cohorts, lambda co: [frames[co["file_id"]]], str(tmp_path))
+    assert summary["total_cases"] == 15
+    assert summary["total_controls"] == 27
+    assert {c["cohort"] for c in summary["per_cohort"]} == {"CohortA", "CohortB"}
+
+
+def test_meta_analyze_totals_exclude_skipped_and_handle_none(tmp_path):
+    cohorts = [{"file_id": "a", "dataset": "A", "cohort": "CA", "cases": 10, "controls": None},
+               {"file_id": "bad", "dataset": "BAD", "cohort": "CB", "cases": 99, "controls": 99}]
+    base = dict(se=0.1, pvalue=0.01, eaf=0.3, n=1000)
+    good = _norm([dict(chromosome="1", position=100, ea="G", oa="A", beta=0.2, **base),
+                  dict(chromosome="2", position=50, ea="C", oa="A", beta=0.2, **base)])
+
+    def chunks_fn(co):
+        if co["file_id"] == "bad":
+            raise ValueError("boom")
+        return [good.copy()]
+
+    summary = meta_analyze(cohorts, chunks_fn, str(tmp_path))
+    assert summary["total_cases"] == 10        # skipped "bad" (99) excluded
+    assert summary["total_controls"] is None    # only used cohort had None controls
+    skipped = [c for c in summary["per_cohort"] if c.get("skipped")][0]
+    assert skipped["cohort"] == "CB"
+
+def test_totals_from_per_cohort_sums_present_values_when_mixed_with_none():
+    # A refactor that swaps the per-element `is not None` filter for an
+    # all(...) check would make a single None poison the whole sum -- this is
+    # the case collaborators actually hit, since not every cohort reports both.
+    per_cohort = [
+        {"dataset": "A", "cases": 10, "controls": None},
+        {"dataset": "B", "cases": None, "controls": 20},
+        {"dataset": "C", "cases": 7, "controls": 3},
+        {"dataset": "D", "skipped": True, "cases": 99999, "controls": 99999},
+    ]
+    total_cases, total_controls = totals_from_per_cohort(per_cohort)
+    assert total_cases == 17      # 10 (A) + 7 (C); B's None dropped, D skipped
+    assert total_controls == 23   # 20 (B) + 3 (C); A's None dropped, D skipped
+
 def test_main_records_batch_job_id_and_content_types(tmp_path, monkeypatch):
     """main() should (a) stamp the row with its AWS_BATCH_JOB_ID on the RUNNING
     update, and (b) upload every artifact with an explicit ContentType. Fully
@@ -93,7 +137,8 @@ def test_main_records_batch_job_id_and_content_types(tmp_path, monkeypatch):
             with open(os.path.join(outdir, n), "wb") as fh:
                 fh.write(b"x")
         return {"meta_lambda_gc": 1.0, "n_meta_variants": 1, "n_genome_wide_sig": 0,
-                "n_cohorts": 0, "n_cohorts_used": 0}
+                "n_cohorts": 0, "n_cohorts_used": 0,
+                "total_cases": 15, "total_controls": 27}
     monkeypatch.setattr(rm, "meta_analyze", fake_meta)
 
     uploads = []
@@ -112,6 +157,9 @@ def test_main_records_batch_job_id_and_content_types(tmp_path, monkeypatch):
     # (a) the RUNNING update carried this container's Batch job id
     running = [u for u in updates if u.get("status") == "RUNNING"]
     assert running and running[0].get("batch_job_id") == "job-xyz"
+
+    succeeded = [u for u in updates if u.get("status") == "SUCCEEDED"][0]
+    assert succeeded["total_cases"] == 15 and succeeded["total_controls"] == 27
 
     # (b) every artifact uploaded with the right ContentType
     ct = {k: (ea or {}).get("ContentType") for k, ea in uploads}
@@ -142,7 +190,8 @@ def test_main_local_run_leaves_batch_job_id_none(tmp_path, monkeypatch):
     monkeypatch.setattr(rm.sel, "select_cohorts", lambda *a, **k: [])
     monkeypatch.setattr(rm, "meta_analyze",
                         lambda *a, **k: {"meta_lambda_gc": None, "n_meta_variants": 0,
-                                         "n_genome_wide_sig": 0, "n_cohorts": 0, "n_cohorts_used": 0})
+                                         "n_genome_wide_sig": 0, "n_cohorts": 0, "n_cohorts_used": 0,
+                                         "total_cases": None, "total_controls": None})
 
     class FakeS3:
         def upload_file(self, *a, **k):

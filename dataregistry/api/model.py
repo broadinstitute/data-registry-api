@@ -525,6 +525,8 @@ class SGCMAResult(BaseModel):
     n_genome_wide_sig: Optional[int] = None
     n_cohorts: Optional[int] = None
     n_cohorts_used: Optional[int] = None
+    total_cases: Optional[int] = None
+    total_controls: Optional[int] = None
     manhattan_s3_key: Optional[str] = None
     qq_s3_key: Optional[str] = None
     meta_s3_key: Optional[str] = None
