@@ -1417,7 +1417,8 @@ async def run_ancova(
             mass_variable=request.mass_variable,
             light_cycle_start=session['light_cycle_start'],
             dark_cycle_start=session['dark_cycle_start'],
-            group_diet_kcal=_session_group_diet_kcal(session),
+            group_order=[g.get('name') for g in session.get('groups', []) if g.get('name')],
+            reference_group=request.reference_group,
         )
     except Exception as e:
         raise fastapi.HTTPException(status_code=500, detail=f"ANCOVA table calculation failed: {str(e)}")

@@ -6,6 +6,7 @@ import pandas as pd
 import statsmodels.formula.api as smf
 from scipy import stats
 from statsmodels.stats.anova import anova_lm
+from typing import Optional
 
 
 def _p_to_annotation(p: float) -> str:
@@ -480,19 +481,55 @@ def _aggregate_subjects(df: pd.DataFrame, var_col: str, mass_col: str) -> pd.Dat
     return agg
 
 
-def _fit_ancova_period(subj_df: pd.DataFrame):
+def _ordered_groups(subj_df: pd.DataFrame, group_order: Optional[list] = None) -> list:
+    """Return present groups in configured order, then any remaining groups."""
+    present = [g for g in (group_order or []) if g in set(subj_df['group'].dropna())]
+    present_set = set(present)
+    present.extend([g for g in subj_df['group'].dropna().unique() if g not in present_set])
+    return present
+
+
+def _comparison_key(group_name: str, reference_group: str) -> str:
+    return f'{group_name} vs {reference_group}'
+
+
+def _group_term_pvalues(model, groups: list, reference_group: str, interaction: bool = False) -> dict:
+    """Extract coefficient p-values for each non-reference group."""
+    out = {}
+    for group_name in groups:
+        if group_name == reference_group:
+            continue
+        marker = f'[T.{group_name}]'
+        for name, p in model.pvalues.items():
+            is_interaction = ':' in name
+            if marker in name and is_interaction == interaction:
+                out[_comparison_key(group_name, reference_group)] = round(float(p), 4)
+                break
+    return out
+
+
+def _fit_ancova_period(
+    subj_df: pd.DataFrame,
+    group_order: Optional[list] = None,
+    reference_group: Optional[str] = None,
+):
     """
     Fit var ~ mass + C(group) + mass:C(group).
     If interaction p > 0.05, re-fit without interaction.
-    Returns (p_mass, p_group, p_interaction) — p_interaction is None when dropped.
+    Returns a dict containing the mass p-value and per-comparison group /
+    interaction p-values. Interaction p-values are None when the model is
+    re-fit without the interaction term.
     Returns None when there is insufficient data.
 
     Uses Wald T-test p-values from the model coefficients (matches the legacy
-    R app's `summary(glm(...))$coefficients[..., 4]` extraction). For 2-group
-    binary contrast this is one coefficient per term, so each coefficient's
-    Wald p is the natural per-term significance.
+    R app's `summary(glm(...))$coefficients[..., 4]` extraction). With 3+ groups,
+    each non-reference factor coefficient is a reference-vs-group comparison.
     """
-    n_groups = subj_df['group'].nunique()
+    groups = _ordered_groups(subj_df, group_order)
+    if reference_group in groups:
+        groups = [reference_group] + [g for g in groups if g != reference_group]
+    reference_group = groups[0] if groups else None
+    n_groups = len(groups)
     if n_groups < 2 or len(subj_df) <= n_groups + 2:
         return None
 
@@ -502,49 +539,68 @@ def _fit_ancova_period(subj_df: pd.DataFrame):
                 return float(p)
         return None
 
+    subj_df = subj_df.copy()
+    subj_df['group'] = pd.Categorical(subj_df['group'], categories=groups, ordered=True)
+    comparisons = [_comparison_key(g, reference_group) for g in groups if g != reference_group]
+
     try:
         m_full = smf.ols('var ~ mass + C(group) + mass:C(group)', data=subj_df).fit()
-        # Interaction term: a coefficient name containing ':' but starting with
-        # 'mass:' (avoids matching any future interaction order).
-        p_int = _coef_p(m_full, lambda n: ':' in n and 'mass' in n)
-        if p_int is None:
+        interaction_p = _group_term_pvalues(m_full, groups, reference_group, interaction=True)
+        if not interaction_p:
             return None
 
-        if p_int > 0.05:
+        if all(p > 0.05 for p in interaction_p.values()):
             m_noint = smf.ols('var ~ mass + C(group)', data=subj_df).fit()
             p_mass = _coef_p(m_noint, lambda n: n == 'mass')
-            p_group = _coef_p(m_noint, lambda n: n.startswith('C(group)'))
-            if p_mass is None or p_group is None:
+            group_p = _group_term_pvalues(m_noint, groups, reference_group)
+            if p_mass is None or not group_p:
                 return None
-            return (round(p_mass, 4), round(p_group, 4), None)
+            return {
+                'mass': round(p_mass, 4),
+                'group': group_p,
+                'interaction': {comparison: None for comparison in comparisons},
+            }
         else:
             p_mass = _coef_p(m_full, lambda n: n == 'mass')
-            p_group = _coef_p(m_full, lambda n: n.startswith('C(group)') and ':' not in n)
-            if p_mass is None or p_group is None:
+            group_p = _group_term_pvalues(m_full, groups, reference_group)
+            if p_mass is None or not group_p:
                 return None
-            return (round(p_mass, 4), round(p_group, 4), round(p_int, 4))
+            return {
+                'mass': round(p_mass, 4),
+                'group': group_p,
+                'interaction': interaction_p,
+            }
     except Exception:
         return None
 
 
-def _fit_anova_period(subj_df: pd.DataFrame):
+def _fit_anova_period(
+    subj_df: pd.DataFrame,
+    group_order: Optional[list] = None,
+    reference_group: Optional[str] = None,
+):
     """
-    Fit var ~ C(group). Returns the Wald T p-value of the group coefficient
-    (matches legacy R's `summary(glm)$coefficients[-1, 4]`), or None when
-    there is insufficient data.
+    Fit var ~ C(group). Returns Wald T p-values for each non-reference group
+    coefficient (matches legacy R's `summary(glm)$coefficients[-1, 4]`), or
+    None when there is insufficient data.
 
     For binary group, this equals the F-test p-value from anova_lm.
     """
-    n_groups = subj_df['group'].nunique()
+    groups = _ordered_groups(subj_df, group_order)
+    if reference_group in groups:
+        groups = [reference_group] + [g for g in groups if g != reference_group]
+    reference_group = groups[0] if groups else None
+    n_groups = len(groups)
     if n_groups < 2 or len(subj_df) <= n_groups:
         return None
 
+    subj_df = subj_df.copy()
+    subj_df['group'] = pd.Categorical(subj_df['group'], categories=groups, ordered=True)
+
     try:
         m = smf.ols('var ~ C(group)', data=subj_df).fit()
-        for name, p in m.pvalues.items():
-            if name.startswith('C(group)'):
-                return round(float(p), 4)
-        return None
+        group_p = _group_term_pvalues(m, groups, reference_group)
+        return group_p or None
     except Exception:
         return None
 
@@ -555,6 +611,8 @@ def ancova_table(
     light_cycle_start: int = 6,
     dark_cycle_start: int = 18,
     group_diet_kcal: dict = None,
+    group_order: Optional[list] = None,
+    reference_group: Optional[str] = None,
 ) -> dict:
     """
     Compute the summary ANCOVA/ANOVA table, mirroring anovaTab() from calR.
@@ -563,6 +621,8 @@ def ancova_table(
         var ~ mass + C(group) + mass:C(group)
     and if the interaction p-value > 0.05 drops the interaction term, mirroring the
     R code that tests ``a$coefficients[nrow(a$coefficients), 4] > 0.05``.
+    With 3+ groups, each non-reference group coefficient is returned as a
+    comparison against `reference_group`.
 
     For each variable in _ANOVA_VARS, runs:
         var ~ C(group)
@@ -574,6 +634,8 @@ def ancova_table(
     -------
     {
       "mass_variable": str,
+      "reference_group": str,
+      "comparisons": [{"key": str, "group": str, "reference": str, "label": str}],
       "ancova": [
         {
           "variable": str,
@@ -591,26 +653,39 @@ def ancova_table(
           "light":    {"group": float|null},
           "dark":     {"group": float|null}
         }, ...
+      ],
+      "ancova_pairwise": [
+        {"comparison": str, "label": str, "group": str, "reference": str, "rows": [...]}
+      ],
+      "anova_pairwise": [
+        {"comparison": str, "label": str, "group": str, "reference": str, "rows": [...]}
       ]
     }
     """
-    # Per-group kcal conversion (mirrors R: feed *= cal_i, feed.acc *= cal_i)
-    if group_diet_kcal:
-        df = df.copy()
-        for group_name, kcal_per_g in group_diet_kcal.items():
-            if not kcal_per_g:
-                continue
-            mask = df['group'] == group_name
-            for col in ('feed', 'feed.acc'):
-                if col in df.columns:
-                    df.loc[mask, col] = (
-                        pd.to_numeric(df.loc[mask, col], errors='coerce') * kcal_per_g
-                    )
+    # `df` is expected to be enriched before analysis, including CalR-style
+    # feed kcal conversion/cutoff repair. Keep this function analysis-only so
+    # food is not converted twice.
 
-    # Compute energy balance if missing (after kcal conversion so eb is in kcal)
+    # Compute energy balance if missing.
     if 'eb' not in df.columns and 'feed' in df.columns and 'ee' in df.columns:
         df = df.copy()
         df['eb'] = df['feed'] - df['ee']
+
+    groups = _ordered_groups(df, group_order)
+    if reference_group in groups:
+        groups = [reference_group] + [g for g in groups if g != reference_group]
+    reference_group = groups[0] if groups else None
+    comparisons = [
+        {
+            'key': _comparison_key(group_name, reference_group),
+            'label': _comparison_key(group_name, reference_group),
+            'group': group_name,
+            'reference': reference_group,
+        }
+        for group_name in groups
+        if group_name != reference_group
+    ]
+    comparison_keys = [comparison['key'] for comparison in comparisons]
 
     # Phase subsets
     hour_of_day = df['exp.hour'] % 24
@@ -626,33 +701,84 @@ def ancova_table(
     }
 
     ancova_rows = []
+    ancova_pairwise_rows = {comparison: [] for comparison in comparison_keys}
     for var_col, label in _ANCOVA_VARS:
         if var_col not in df.columns:
             continue
         row: dict = {'variable': var_col, 'label': label}
+        pair_rows = {
+            comparison: {'variable': var_col, 'label': label}
+            for comparison in comparison_keys
+        }
         for phase, phase_df in phase_dfs.items():
             subj = _aggregate_subjects(phase_df, var_col, mass_variable)
-            result = _fit_ancova_period(subj)
+            result = _fit_ancova_period(subj, group_order=groups, reference_group=reference_group)
             if result is None:
                 row[phase] = {'mass': None, 'group': None, 'interaction': None}
+                for comparison in comparison_keys:
+                    pair_rows[comparison][phase] = {'mass': None, 'group': None, 'interaction': None}
             else:
-                p_mass, p_group, p_int = result
-                row[phase] = {'mass': p_mass, 'group': p_group, 'interaction': p_int}
+                first_comparison = comparison_keys[0] if comparison_keys else None
+                row[phase] = {
+                    'mass': result['mass'],
+                    'group': result['group'].get(first_comparison) if first_comparison else None,
+                    'interaction': result['interaction'].get(first_comparison) if first_comparison else None,
+                }
+                for comparison in comparison_keys:
+                    pair_rows[comparison][phase] = {
+                        'mass': result['mass'],
+                        'group': result['group'].get(comparison),
+                        'interaction': result['interaction'].get(comparison),
+                    }
         ancova_rows.append(row)
+        for comparison, pair_row in pair_rows.items():
+            ancova_pairwise_rows[comparison].append(pair_row)
 
     anova_rows = []
+    anova_pairwise_rows = {comparison: [] for comparison in comparison_keys}
     for var_col, label in _ANOVA_VARS:
         if var_col not in df.columns:
             continue
         row = {'variable': var_col, 'label': label}
+        pair_rows = {
+            comparison: {'variable': var_col, 'label': label}
+            for comparison in comparison_keys
+        }
         for phase, phase_df in phase_dfs.items():
             subj = _aggregate_subjects(phase_df, var_col, mass_variable)
-            p_group = _fit_anova_period(subj)
-            row[phase] = {'group': p_group}
+            group_p = _fit_anova_period(subj, group_order=groups, reference_group=reference_group)
+            first_comparison = comparison_keys[0] if comparison_keys else None
+            row[phase] = {'group': group_p.get(first_comparison) if group_p and first_comparison else None}
+            for comparison in comparison_keys:
+                pair_rows[comparison][phase] = {'group': group_p.get(comparison) if group_p else None}
         anova_rows.append(row)
+        for comparison, pair_row in pair_rows.items():
+            anova_pairwise_rows[comparison].append(pair_row)
 
     return {
         'mass_variable': mass_variable,
+        'reference_group': reference_group,
+        'comparisons': comparisons,
         'ancova': ancova_rows,
         'anova': anova_rows,
+        'ancova_pairwise': [
+            {
+                'comparison': comparison['key'],
+                'label': comparison['label'],
+                'group': comparison['group'],
+                'reference': comparison['reference'],
+                'rows': ancova_pairwise_rows[comparison['key']],
+            }
+            for comparison in comparisons
+        ],
+        'anova_pairwise': [
+            {
+                'comparison': comparison['key'],
+                'label': comparison['label'],
+                'group': comparison['group'],
+                'reference': comparison['reference'],
+                'rows': anova_pairwise_rows[comparison['key']],
+            }
+            for comparison in comparisons
+        ],
     }

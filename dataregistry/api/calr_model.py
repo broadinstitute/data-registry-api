@@ -65,6 +65,9 @@ class AncovaTableRequest(BaseModel):
     # Default to the session-stored `total_mass` (matches legacy R's
     # `Total.Mass` from the weights tab). Pass 'subject.mass' to use per-row.
     mass_variable: str = 'total_mass'
+    # Optional baseline group for pairwise model coefficients. Defaults to the
+    # first configured session group, matching legacy CalR factor ordering.
+    reference_group: Optional[str] = None
     # Optional override of session.hour_range (frontend slider).
     min_hour: Optional[float] = None
     max_hour: Optional[float] = None
