@@ -1038,6 +1038,17 @@ def _modal_interval_minutes(df: 'pd.DataFrame') -> float:
     return 60.0
 
 
+def _session_food_cutoff(session: dict):
+    """Return the session feed cutoff, accepting API and CSV-style keys."""
+    cutoff = session.get('food_cutoff', session.get('feedCutoff'))
+    if cutoff in (None, '', 'NA'):
+        return None
+    try:
+        return float(cutoff)
+    except (TypeError, ValueError):
+        return None
+
+
 def _enrich_df(df: 'pd.DataFrame', session: dict) -> 'pd.DataFrame':
     """
     Add derived columns to the standard DataFrame using session metadata.
@@ -1054,12 +1065,14 @@ def _enrich_df(df: 'pd.DataFrame', session: dict) -> 'pd.DataFrame':
       3. light / dark / clockHour.
       4. Subject mass fallbacks from session subjects.
       5. Group metadata (group, groupIndex, color, diet).
-      6. ee.acc fill (per-subject plain cumulative sum of ee) when absent.
-      7. eb = feed - ee; eb.acc = feed.acc - ee.acc/bin.
+      6. Food conversion/cutoff repair from the legacy CalR minute path.
+      7. ee.acc fill (per-subject plain cumulative sum of ee) when absent.
+      8. eb = feed - ee; eb.acc = feed.acc - ee.acc/bin.
 
     Notes:
-      - Uploaded standard CalR files already carry feed/feed.acc in the units
-        expected by the legacy plots; do not re-apply diet_kcal during enrichment.
+      - Uploaded CalR-standard files carry feed as mass per sample. Legacy CalR
+        converts it to kcal using the group's dietCal, applies feedCutoff as
+        kcal/hour, repairs removed samples, and rebuilds feed.acc.
       - Loader outputs store ee.acc as plain cumsum(ee). Legacy CalR divides
         cumulative EE by the intervals-per-hour bin before cumulative EB math.
       - Does NOT zero-base accumulators — that is QC-specific and stays in
@@ -1206,7 +1219,45 @@ def _enrich_df(df: 'pd.DataFrame', session: dict) -> 'pd.DataFrame':
     fallback = df['groupIndex'].map(lambda i: _group_attr(i, 'color', '#888'))
     df['color'] = df['color'].where(df['color'].notna(), fallback)
 
-    # ── 6. Accumulator fill ───────────────────────────────────────────────────
+    # ── 6. Food conversion + cutoff repair ────────────────────────────────────
+    bin_factor = 60.0 / _modal_interval_minutes(df)
+    if 'feed' in df.columns:
+        feed = pd.to_numeric(df['feed'], errors='coerce')
+        diet_kcal = df['group'].map(_session_group_diet_kcal(session))
+        df['feed'] = np.where(diet_kcal.notna(), feed * diet_kcal, feed)
+
+        cutoff = _session_food_cutoff(session)
+        if cutoff is not None and bin_factor:
+            cutoff_per_sample = cutoff / bin_factor
+            df['feed'] = pd.to_numeric(df['feed'], errors='coerce').where(
+                pd.to_numeric(df['feed'], errors='coerce') <= cutoff_per_sample
+            )
+
+            # Legacy CalR removes implausible food samples after kcal conversion,
+            # fills gaps, then rebuilds cumulative food within each subject.
+            def _repair_feed(grp):
+                grp = grp.sort_values('exp.minute').copy()
+                repaired = pd.to_numeric(grp['feed'], errors='coerce')
+                repaired = repaired.ffill().bfill().interpolate(limit_direction='both')
+                grp['feed'] = repaired
+                return grp
+
+            subject_id = df['subject.id']
+            df = df.groupby('subject.id', group_keys=False).apply(_repair_feed)
+            df = df.sort_index()
+            df['subject.id'] = subject_id
+
+        def _cumsum_feed(grp):
+            grp = grp.sort_values('exp.minute').copy()
+            grp['feed.acc'] = pd.to_numeric(grp['feed'], errors='coerce').cumsum()
+            return grp
+
+        subject_id = df['subject.id']
+        df = df.groupby('subject.id', group_keys=False).apply(_cumsum_feed)
+        df = df.sort_index()
+        df['subject.id'] = subject_id
+
+    # ── 7. Accumulator fill ───────────────────────────────────────────────────
     # Plain per-subject cumulative sum of ee, matching the legacy R output.
     if 'ee.acc' not in df.columns or df['ee.acc'].isna().all():
         if 'ee' in df.columns:
@@ -1217,14 +1268,14 @@ def _enrich_df(df: 'pd.DataFrame', session: dict) -> 'pd.DataFrame':
                 return grp
             subject_id = df['subject.id']
             df = df.groupby('subject.id', group_keys=False).apply(_cumsum_ee)
+            df = df.sort_index()
             df['subject.id'] = subject_id
 
-    # ── 7. eb / eb.acc ────────────────────────────────────────────────────────
+    # ── 8. eb / eb.acc ────────────────────────────────────────────────────────
     feed = pd.to_numeric(df['feed'], errors='coerce') if 'feed' in df.columns else None
     ee = pd.to_numeric(df['ee'], errors='coerce') if 'ee' in df.columns else None
     feed_acc = pd.to_numeric(df['feed.acc'], errors='coerce') if 'feed.acc' in df.columns else None
     ee_acc = pd.to_numeric(df['ee.acc'], errors='coerce') if 'ee.acc' in df.columns else None
-    bin_factor = 60.0 / _modal_interval_minutes(df)
     ee_acc_kcal = ee_acc / bin_factor if ee_acc is not None and bin_factor else ee_acc
 
     if feed is not None and ee is not None:

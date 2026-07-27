@@ -7,7 +7,7 @@ Verifies that each enrichment step matches the JS processDetail pipeline:
   3. light / dark / clockHour / day / exp.day derived
   4. Subject mass fallbacks applied from session subjects
   5. group / color / diet / groupIndex joined from session
-  6. feed / feed.acc preserved from the uploaded standard file
+  6. feed converted by diet kcal, repaired by feedCutoff, and feed.acc rebuilt
   7. ee.acc filled by per-subject cumulative sum when absent
   8. eb / eb.acc computed from feed - ee / feed.acc - ee.acc/bin
 """
@@ -36,6 +36,7 @@ def _session(
     subjects=None,
     light_cycle_start=7,
     dark_cycle_start=19,
+    food_cutoff=None,
 ):
     return {
         'groups': groups or [
@@ -48,6 +49,7 @@ def _session(
         ],
         'light_cycle_start': light_cycle_start,
         'dark_cycle_start': dark_cycle_start,
+        'food_cutoff': food_cutoff,
     }
 
 
@@ -237,21 +239,31 @@ class TestGroupMetadata:
         assert pd.isna(result.loc[0, 'group'])
 
 
-class TestFeedNotScaled:
-    """Feed/feed.acc are preserved in enriched output.
-    Uploaded standard CalR files already carry plot-ready food units."""
+class TestFeedProcessing:
+    """Feed matches the legacy CalR minute-path conversion and cutoff repair."""
 
-    def test_feed_unchanged_for_group_with_diet_kcal(self):
+    def test_feed_scaled_for_group_with_diet_kcal(self):
         result = _enrich_df(_df(), _session())
-        assert pytest.approx(result[result['subject.id'] == 'A1']['feed'].iloc[0]) == 0.5
+        assert pytest.approx(result[result['subject.id'] == 'A1']['feed'].iloc[0]) == 0.5 * 3.5
 
-    def test_feed_acc_unchanged_for_group_with_diet_kcal(self):
+    def test_feed_acc_rebuilt_after_diet_scaling(self):
         result = _enrich_df(_df(), _session())
-        assert pytest.approx(result[result['subject.id'] == 'A1']['feed.acc'].iloc[0]) == 0.5
+        a1 = result[result['subject.id'] == 'A1'].sort_values('exp.minute')
+        assert pytest.approx(a1['feed.acc'].iloc[0]) == 0.5 * 3.5
+        assert pytest.approx(a1['feed.acc'].iloc[1]) == (0.5 + 0.6) * 3.5
 
     def test_feed_unchanged_when_diet_kcal_is_none(self):
         result = _enrich_df(_df(), _session())
         assert pytest.approx(result[result['subject.id'] == 'B1']['feed'].iloc[0]) == 0.8
+
+    def test_feed_cutoff_applied_after_scaling_and_feed_acc_rebuilt(self):
+        # 15-minute bins -> bin factor 4; 6 kcal/hour cutoff == 1.5 kcal/sample.
+        # A1 scaled feed is 1.75, 2.1, 1.4, so the first two samples are removed.
+        # The legacy fill path backfills the leading gap from the next valid value.
+        result = _enrich_df(_df(), _session(food_cutoff=6.0))
+        a1 = result[result['subject.id'] == 'A1'].sort_values('exp.minute')
+        assert list(a1['feed'].round(3)) == [1.4, 1.4, 1.4]
+        assert list(a1['feed.acc'].round(3)) == [1.4, 2.8, 4.2]
 
 
 class TestAccumulatorFill:
@@ -274,7 +286,7 @@ class TestAccumulatorFill:
     def test_eb_computed_as_feed_minus_ee(self):
         result = _enrich_df(_df(), _session())
         a1 = result[result['subject.id'] == 'A1'].iloc[0]
-        assert pytest.approx(a1['eb']) == 0.5 - 2.0
+        assert pytest.approx(a1['eb']) == (0.5 * 3.5) - 2.0
 
     def test_eb_acc_computed_as_feed_acc_minus_ee_acc_scaled_by_bin(self):
         result = _enrich_df(_df(), _session())
