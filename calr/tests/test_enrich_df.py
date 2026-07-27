@@ -9,7 +9,7 @@ Verifies that each enrichment step matches the JS processDetail pipeline:
   5. group / color / diet / groupIndex joined from session
   6. feed / feed.acc multiplied by diet_kcal per group
   7. ee.acc filled by per-subject cumulative sum when absent
-  8. eb / eb.acc computed from feed - ee / feed.acc - ee.acc
+  8. eb / eb.acc computed from kcal feed - ee / feed.acc - ee.acc/bin
 """
 
 import io
@@ -237,22 +237,24 @@ class TestGroupMetadata:
         assert pd.isna(result.loc[0, 'group'])
 
 
-class TestFeedNotScaled:
-    """Feed/feed.acc are kept in grams in the enriched output (legacy parity).
-    The kcal conversion is applied inside the analysis functions, not here."""
+class TestFeedKcalConversion:
+    """Feed/feed.acc are converted to kcal in enriched output, matching CalR plots."""
 
-    def test_feed_unchanged_for_group_with_diet_kcal(self):
+    def test_feed_scaled_for_group_with_diet_kcal(self):
         result = _enrich_df(_df(), _session())
-        # GroupA has diet_kcal=3.5 but feed must remain in grams (0.5).
-        assert pytest.approx(result[result['subject.id'] == 'A1']['feed'].iloc[0]) == 0.5
+        assert pytest.approx(result[result['subject.id'] == 'A1']['feed'].iloc[0]) == 0.5 * 3.5
 
-    def test_feed_acc_unchanged_for_group_with_diet_kcal(self):
+    def test_feed_acc_scaled_for_group_with_diet_kcal(self):
         result = _enrich_df(_df(), _session())
-        assert pytest.approx(result[result['subject.id'] == 'A1']['feed.acc'].iloc[0]) == 0.5
+        assert pytest.approx(result[result['subject.id'] == 'A1']['feed.acc'].iloc[0]) == 0.5 * 3.5
 
     def test_feed_unchanged_when_diet_kcal_is_none(self):
         result = _enrich_df(_df(), _session())
         assert pytest.approx(result[result['subject.id'] == 'B1']['feed'].iloc[0]) == 0.8
+
+    def test_food_unit_marked_as_kcal(self):
+        result = _enrich_df(_df(), _session())
+        assert (result['food.unit'] == 'kcal').all()
 
 
 class TestAccumulatorFill:
@@ -263,9 +265,7 @@ class TestAccumulatorFill:
         assert pytest.approx(result[result['subject.id'] == 'A1']['ee.acc'].iloc[0]) == 2.0
 
     def test_ee_acc_filled_when_absent_is_plain_cumsum(self):
-        # Legacy R parity: ee.acc is the plain cumulative sum of ee within each
-        # subject. The /bin scaling for kcal-balance math is applied inside
-        # quality_control(), not here.
+        # Legacy R parity: ee.acc is the plain cumulative sum of ee within each subject.
         df = _df().drop(columns=['ee.acc'])
         result = _enrich_df(df, _session())
         a1 = result[result['subject.id'] == 'A1'].sort_values('exp.minute')
@@ -277,13 +277,13 @@ class TestAccumulatorFill:
     def test_eb_computed_as_feed_minus_ee(self):
         result = _enrich_df(_df(), _session())
         a1 = result[result['subject.id'] == 'A1'].iloc[0]
-        # feed is in grams (no kcal scaling): eb = 0.5 - 2.0 = -1.5
-        assert pytest.approx(a1['eb']) == 0.5 - 2.0
+        assert pytest.approx(a1['eb']) == (0.5 * 3.5) - 2.0
 
-    def test_eb_acc_computed_as_feed_acc_minus_ee_acc(self):
+    def test_eb_acc_computed_as_feed_acc_minus_ee_acc_scaled_by_bin(self):
         result = _enrich_df(_df(), _session())
         a1 = result[result['subject.id'] == 'A1'].iloc[0]
-        assert pytest.approx(a1['eb.acc']) == a1['feed.acc'] - a1['ee.acc']
+        # 15-minute intervals -> bin factor 4 intervals/hour.
+        assert pytest.approx(a1['eb.acc']) == a1['feed.acc'] - (a1['ee.acc'] / 4)
 
 
 class TestEnrichedEndpoint:
