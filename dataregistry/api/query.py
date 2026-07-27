@@ -2553,6 +2553,74 @@ def get_sgc_ma_results(engine) -> list[dict]:
         return [_format_sgc_ma_row(dict(r._mapping)) for r in rs]
 
 
+def insert_sgc_liftover_pending(engine, file_id: str, source_build: str, target_build: str,
+                                original_s3_path: str, unmapped_s3_path: str,
+                                submitted_by: str) -> str:
+    """Create a PENDING sgc_liftover_jobs row; return its hex id."""
+    lid = str(uuid.uuid4()).replace('-', '')
+    with engine.connect() as conn:
+        conn.execute(text("""
+            INSERT INTO sgc_liftover_jobs
+                (id, file_id, source_genome_build, target_genome_build, status,
+                 submitted_by, original_s3_path, unmapped_s3_path)
+            VALUES (:id, :file_id, :src, :tgt, 'PENDING', :by, :orig, :unmapped)
+        """), {'id': lid, 'file_id': file_id, 'src': source_build, 'tgt': target_build,
+               'by': submitted_by, 'orig': original_s3_path, 'unmapped': unmapped_s3_path})
+        conn.commit()
+    return lid
+
+
+def update_sgc_liftover_job(engine, liftover_id: str, *, status: str,
+                            batch_job_id=None, log=None, summary=None,
+                            completed: bool = False) -> None:
+    """Partial update of a sgc_liftover_jobs row. None fields are left untouched
+    (COALESCE); completed=True stamps completed_at=NOW()."""
+    completed_clause = ", completed_at = NOW()" if completed else ""
+    with engine.connect() as conn:
+        conn.execute(text(f"""
+            UPDATE sgc_liftover_jobs
+            SET status = :status,
+                batch_job_id = COALESCE(:batch_job_id, batch_job_id),
+                log = COALESCE(:log, log),
+                summary = COALESCE(:summary, summary)
+                {completed_clause}
+            WHERE id = :id
+        """), {'id': liftover_id, 'status': status, 'batch_job_id': batch_job_id,
+               'log': log, 'summary': json.dumps(summary) if summary is not None else None})
+        conn.commit()
+
+
+def get_sgc_liftover_jobs(engine) -> list[dict]:
+    """All liftover jobs, most recent first."""
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT CAST(id AS CHAR) AS id, CAST(file_id AS CHAR) AS file_id,
+                   source_genome_build, target_genome_build, batch_job_id, status,
+                   submitted_at, completed_at, submitted_by,
+                   original_s3_path, unmapped_s3_path, summary, log
+            FROM sgc_liftover_jobs ORDER BY submitted_at DESC
+        """)).mappings().all()
+    out = []
+    for r in rows:
+        d = dict(r)
+        if isinstance(d.get("summary"), (str, bytes, bytearray)):
+            d["summary"] = json.loads(d["summary"])
+        out.append(d)
+    return out
+
+
+def set_sgc_gwas_file_build(engine, file_id: str, genome_build: str) -> None:
+    """Set the per-file genome build marker in sgc_gwas_files.metadata."""
+    with engine.connect() as conn:
+        conn.execute(text("""
+            UPDATE sgc_gwas_files
+            SET metadata = JSON_SET(COALESCE(metadata, JSON_OBJECT()),
+                                    '$.genome_build', :build)
+            WHERE id = :id
+        """), {'id': file_id, 'build': genome_build})
+        conn.commit()
+
+
 def insert_ma_ignore(engine, cohort_id: str, phenotype: str, ancestry: str,
                      reason: str, excluded_by: str) -> dict:
     """Upsert an MA ignore entry on the unique (cohort_id, phenotype, ancestry)

@@ -55,3 +55,10 @@ def test_not_ignored_predicate():
     assert not_ignored({"ignore_reason": None}) is True
     assert not_ignored({}) is True                       # column absent -> not ignored
     assert not_ignored({"ignore_reason": "lambda too high"}) is False
+
+
+def test_selection_sql_prefers_per_file_build():
+    from sgc_ma.select import _SQL
+    # a lifted file carries its own metadata.genome_build; prefer it over the cohort's
+    assert ("COALESCE(JSON_UNQUOTE(JSON_EXTRACT(f.metadata, '$.genome_build')), "
+            "JSON_UNQUOTE(JSON_EXTRACT(gc.metadata, '$.genome_build'))) AS genome_build") in _SQL

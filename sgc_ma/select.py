@@ -41,7 +41,7 @@ _SQL = """
            CAST(f.cohort_id AS CHAR) AS cohort_id, sc.name AS cohort,
            mi.reason AS ignore_reason,
            JSON_UNQUOTE(JSON_EXTRACT(f.metadata, '$.sex')) AS sex,
-           JSON_UNQUOTE(JSON_EXTRACT(gc.metadata, '$.genome_build')) AS genome_build
+           COALESCE(JSON_UNQUOTE(JSON_EXTRACT(f.metadata, '$.genome_build')), JSON_UNQUOTE(JSON_EXTRACT(gc.metadata, '$.genome_build'))) AS genome_build
     FROM sgc_gwas_files f
     JOIN sgc_gwas_plot_results p ON p.file_id = f.id AND p.status = 'SUCCEEDED'
     LEFT JOIN sgc_gwas_cohorts gc ON gc.cohort_id = f.cohort_id

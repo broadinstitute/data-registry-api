@@ -26,6 +26,7 @@ from sqlalchemy import text
 
 from dataregistry.api import query
 from dataregistry.api.db import DataRegistryReadWriteDB
+from sgc_ma.select import normalize_build
 
 
 JOB_QUEUE = os.getenv("SGC_QC_PLOTS_JOB_QUEUE", "sgc-gwas-qc-plots-queue")
@@ -38,26 +39,39 @@ AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
 TARGET_DB_NAME = os.getenv("DATA_REGISTRY_DB_NAME", "dataregistry_qa")
 
 
+_LIST_SQL = """
+    SELECT
+        CAST(f.id AS CHAR) AS file_id,
+        f.s3_path,
+        f.column_mapping,
+        f.dataset,
+        f.phenotype,
+        COALESCE(JSON_UNQUOTE(JSON_EXTRACT(f.metadata, '$.genome_build')), JSON_UNQUOTE(JSON_EXTRACT(gc.metadata, '$.genome_build'))) AS genome_build
+    FROM sgc_gwas_files f
+    LEFT JOIN sgc_gwas_plot_results p ON p.file_id = f.id
+    LEFT JOIN sgc_gwas_cohorts gc ON gc.cohort_id = f.cohort_id
+    WHERE :force = 1 OR p.status IS NULL OR p.status IN ('PENDING','FAILED')
+    ORDER BY f.uploaded_at
+"""
+
+
+def _is_grch38_effective(row) -> bool:
+    """True iff the file's effective genome build normalizes to GRCh38.
+    Liftover is a precondition for QC — non-GRCh38 files are not eligible."""
+    return normalize_build(row.get("genome_build")) == "GRCh38"
+
+
 def _list_files(engine, force: bool, limit: Optional[int]):
-    """Return rows to enqueue. By default skip SUCCEEDED; --force overrides."""
-    sql = """
-        SELECT
-            CAST(f.id AS CHAR) AS file_id,
-            f.s3_path,
-            f.column_mapping,
-            f.dataset,
-            f.phenotype
-        FROM sgc_gwas_files f
-        LEFT JOIN sgc_gwas_plot_results p ON p.file_id = f.id
-        WHERE :force = 1 OR p.status IS NULL OR p.status IN ('PENDING','FAILED')
-        ORDER BY f.uploaded_at
-    """
+    """Return rows to enqueue: needs-plots AND GRCh38-effective (lifted or native).
+    Non-GRCh38 files are excluded — they must be lifted before QC."""
+    sql = _LIST_SQL
     if limit is not None:
         # int() cast is required — do not interpolate strings here without it
         sql += f" LIMIT {int(limit)}"
     with engine.connect() as c:
         rs = c.execute(text(sql), {"force": 1 if force else 0})
-        return [dict(r._mapping) for r in rs]
+        rows = [dict(r._mapping) for r in rs]
+    return [r for r in rows if _is_grch38_effective(r)]
 
 
 def _coerce_column_mapping(raw) -> dict:
