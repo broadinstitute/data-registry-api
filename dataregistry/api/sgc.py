@@ -2752,3 +2752,20 @@ async def get_sgc_liftover(file_id: str, user: User = Depends(get_sgc_user)):
         raise fastapi.HTTPException(status_code=404,
             detail="No liftover job found for this file")
     return job
+
+
+@router.get("/sgc/liftover/{file_id}/unmapped-url")
+async def get_sgc_liftover_unmapped_url(file_id: str, user: User = Depends(get_sgc_user)):
+    if not check_review_permissions(user):
+        raise fastapi.HTTPException(status_code=403,
+            detail="You need sgc-review-data permission to download unmapped variants")
+    job = query.get_sgc_liftover_job_for_file(engine, file_id)
+    if job is None or not job.get("unmapped_s3_path"):
+        raise fastapi.HTTPException(status_code=404,
+            detail="No unmapped-variants file for this file's liftover")
+    # unmapped_s3_path is a full s3://<bucket>/<key>; the bucket is env-specific
+    # (dig-data-registry-qa on QA), so parse it rather than assuming s3.BASE_BUCKET.
+    uri = job["unmapped_s3_path"]
+    without_scheme = uri[len("s3://"):] if uri.startswith("s3://") else uri
+    bucket, _, key = without_scheme.partition("/")
+    return {"presigned_url": s3.get_signed_url(bucket, key)}
