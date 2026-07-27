@@ -54,3 +54,30 @@ def test_set_sgc_gwas_file_build(api_client):
             "SELECT JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.genome_build')) "
             "FROM sgc_gwas_files WHERE id = :id"), {"id": file_id}).scalar()
     assert got == "GRCh38"
+
+
+def test_get_sgc_liftover_job_for_file_returns_latest(api_client):
+    engine = DataRegistryReadWriteDB().get_engine()
+    file_id = _make_file(engine)
+    with engine.connect() as c:
+        # two jobs for the same file, explicit timestamps + a summary on the later one
+        c.execute(text("""
+            INSERT INTO sgc_liftover_jobs
+                (id, file_id, source_genome_build, target_genome_build, status,
+                 submitted_at, submitted_by, summary)
+            VALUES
+                (:a, :fid, 'hg19', 'hg38', 'FAILED',    '2020-01-01 00:00:00', 'system', NULL),
+                (:b, :fid, 'hg19', 'hg38', 'SUCCEEDED', '2020-01-02 00:00:00', 'system', :summ)
+        """), {"a": "a" * 32, "b": "b" * 32, "fid": file_id,
+               "summ": json.dumps({"total_lifted": 9})})
+        c.commit()
+    got = query.get_sgc_liftover_job_for_file(engine, file_id)
+    assert got is not None
+    assert got["status"] == "SUCCEEDED"                 # the later job
+    assert got["summary"] == {"total_lifted": 9}        # decoded to a dict
+
+
+def test_get_sgc_liftover_job_for_file_none_when_absent(api_client):
+    engine = DataRegistryReadWriteDB().get_engine()
+    file_id = _make_file(engine)                         # a file with no liftover job
+    assert query.get_sgc_liftover_job_for_file(engine, file_id) is None

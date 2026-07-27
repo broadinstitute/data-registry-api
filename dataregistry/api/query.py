@@ -2609,6 +2609,27 @@ def get_sgc_liftover_jobs(engine) -> list[dict]:
     return out
 
 
+def get_sgc_liftover_job_for_file(engine, file_id: str) -> dict | None:
+    """The most recent liftover job for one GWAS file (summary decoded), or None."""
+    with engine.connect() as conn:
+        row = conn.execute(text("""
+            SELECT CAST(id AS CHAR) AS id, CAST(file_id AS CHAR) AS file_id,
+                   source_genome_build, target_genome_build, batch_job_id, status,
+                   submitted_at, completed_at, submitted_by,
+                   original_s3_path, unmapped_s3_path, summary, log
+            FROM sgc_liftover_jobs
+            WHERE file_id = :file_id
+            ORDER BY submitted_at DESC
+            LIMIT 1
+        """), {"file_id": file_id}).mappings().first()
+    if row is None:
+        return None
+    d = dict(row)
+    if isinstance(d.get("summary"), (str, bytes, bytearray)):
+        d["summary"] = json.loads(d["summary"])
+    return d
+
+
 def set_sgc_gwas_file_build(engine, file_id: str, genome_build: str) -> None:
     """Set the per-file genome build marker in sgc_gwas_files.metadata."""
     with engine.connect() as conn:
