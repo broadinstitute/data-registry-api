@@ -1054,13 +1054,12 @@ def _enrich_df(df: 'pd.DataFrame', session: dict) -> 'pd.DataFrame':
       3. light / dark / clockHour.
       4. Subject mass fallbacks from session subjects.
       5. Group metadata (group, groupIndex, color, diet).
-      6. feed / feed.acc converted from grams to kcal using group diet_kcal.
-      7. ee.acc fill (per-subject plain cumulative sum of ee) when absent.
-      8. eb = feed - ee; eb.acc = feed.acc - ee.acc/bin.
+      6. ee.acc fill (per-subject plain cumulative sum of ee) when absent.
+      7. eb = feed - ee; eb.acc = feed.acc - ee.acc/bin.
 
     Notes:
-      - Legacy CalR's revperAve/revfullAve convert feed and feed.acc with the
-        per-group diet kcal before plotting/analysis.
+      - Uploaded standard CalR files already carry feed/feed.acc in the units
+        expected by the legacy plots; do not re-apply diet_kcal during enrichment.
       - Loader outputs store ee.acc as plain cumsum(ee). Legacy CalR divides
         cumulative EE by the intervals-per-hour bin before cumulative EB math.
       - Does NOT zero-base accumulators — that is QC-specific and stays in
@@ -1207,16 +1206,7 @@ def _enrich_df(df: 'pd.DataFrame', session: dict) -> 'pd.DataFrame':
     fallback = df['groupIndex'].map(lambda i: _group_attr(i, 'color', '#888'))
     df['color'] = df['color'].where(df['color'].notna(), fallback)
 
-    # ── 6. Food kcal conversion ───────────────────────────────────────────────
-    for group_name, kcal_per_g in _session_group_diet_kcal(session).items():
-        mask = df['group'] == group_name
-        for col in ('feed', 'feed.acc'):
-            if col in df.columns:
-                df.loc[mask, col] = pd.to_numeric(df.loc[mask, col], errors='coerce') * kcal_per_g
-    if 'feed' in df.columns or 'feed.acc' in df.columns:
-        df['food.unit'] = 'kcal'
-
-    # ── 7. Accumulator fill ───────────────────────────────────────────────────
+    # ── 6. Accumulator fill ───────────────────────────────────────────────────
     # Plain per-subject cumulative sum of ee, matching the legacy R output.
     if 'ee.acc' not in df.columns or df['ee.acc'].isna().all():
         if 'ee' in df.columns:
@@ -1229,7 +1219,7 @@ def _enrich_df(df: 'pd.DataFrame', session: dict) -> 'pd.DataFrame':
             df = df.groupby('subject.id', group_keys=False).apply(_cumsum_ee)
             df['subject.id'] = subject_id
 
-    # ── 8. eb / eb.acc ────────────────────────────────────────────────────────
+    # ── 7. eb / eb.acc ────────────────────────────────────────────────────────
     feed = pd.to_numeric(df['feed'], errors='coerce') if 'feed' in df.columns else None
     ee = pd.to_numeric(df['ee'], errors='coerce') if 'ee' in df.columns else None
     feed_acc = pd.to_numeric(df['feed.acc'], errors='coerce') if 'feed.acc' in df.columns else None

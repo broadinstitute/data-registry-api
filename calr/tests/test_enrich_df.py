@@ -7,9 +7,9 @@ Verifies that each enrichment step matches the JS processDetail pipeline:
   3. light / dark / clockHour / day / exp.day derived
   4. Subject mass fallbacks applied from session subjects
   5. group / color / diet / groupIndex joined from session
-  6. feed / feed.acc multiplied by diet_kcal per group
+  6. feed / feed.acc preserved from the uploaded standard file
   7. ee.acc filled by per-subject cumulative sum when absent
-  8. eb / eb.acc computed from kcal feed - ee / feed.acc - ee.acc/bin
+  8. eb / eb.acc computed from feed - ee / feed.acc - ee.acc/bin
 """
 
 import io
@@ -237,24 +237,21 @@ class TestGroupMetadata:
         assert pd.isna(result.loc[0, 'group'])
 
 
-class TestFeedKcalConversion:
-    """Feed/feed.acc are converted to kcal in enriched output, matching CalR plots."""
+class TestFeedNotScaled:
+    """Feed/feed.acc are preserved in enriched output.
+    Uploaded standard CalR files already carry plot-ready food units."""
 
-    def test_feed_scaled_for_group_with_diet_kcal(self):
+    def test_feed_unchanged_for_group_with_diet_kcal(self):
         result = _enrich_df(_df(), _session())
-        assert pytest.approx(result[result['subject.id'] == 'A1']['feed'].iloc[0]) == 0.5 * 3.5
+        assert pytest.approx(result[result['subject.id'] == 'A1']['feed'].iloc[0]) == 0.5
 
-    def test_feed_acc_scaled_for_group_with_diet_kcal(self):
+    def test_feed_acc_unchanged_for_group_with_diet_kcal(self):
         result = _enrich_df(_df(), _session())
-        assert pytest.approx(result[result['subject.id'] == 'A1']['feed.acc'].iloc[0]) == 0.5 * 3.5
+        assert pytest.approx(result[result['subject.id'] == 'A1']['feed.acc'].iloc[0]) == 0.5
 
     def test_feed_unchanged_when_diet_kcal_is_none(self):
         result = _enrich_df(_df(), _session())
         assert pytest.approx(result[result['subject.id'] == 'B1']['feed'].iloc[0]) == 0.8
-
-    def test_food_unit_marked_as_kcal(self):
-        result = _enrich_df(_df(), _session())
-        assert (result['food.unit'] == 'kcal').all()
 
 
 class TestAccumulatorFill:
@@ -277,7 +274,7 @@ class TestAccumulatorFill:
     def test_eb_computed_as_feed_minus_ee(self):
         result = _enrich_df(_df(), _session())
         a1 = result[result['subject.id'] == 'A1'].iloc[0]
-        assert pytest.approx(a1['eb']) == (0.5 * 3.5) - 2.0
+        assert pytest.approx(a1['eb']) == 0.5 - 2.0
 
     def test_eb_acc_computed_as_feed_acc_minus_ee_acc_scaled_by_bin(self):
         result = _enrich_df(_df(), _session())
