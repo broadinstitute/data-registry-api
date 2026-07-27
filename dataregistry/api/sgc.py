@@ -15,10 +15,11 @@ from streaming_form_data.targets import  S3Target
 import httpx
 import boto3
 from botocore.exceptions import ClientError
+from sqlalchemy.exc import IntegrityError
 
 from dataregistry.api import file_utils, s3, query
 from dataregistry.api.db import DataRegistryReadWriteDB
-from dataregistry.api.model import SGCPhenotype, SGCCohort, SGCCohortFile, SGCCasesControlsMetadata, SGCCoOccurrenceMetadata, SGCPhenotypeCaseTotals, SGCPhenotypeCaseCountsBySex, User, NewUserRequest, SGCGWASFile, SGCGWASCohort, SGCGWASValidationJob, SGCGWASPlotResult, SGCMAResult
+from dataregistry.api.model import SGCPhenotype, SGCCohort, SGCCohortFile, SGCCasesControlsMetadata, SGCCoOccurrenceMetadata, SGCPhenotypeCaseTotals, SGCPhenotypeCaseCountsBySex, User, NewUserRequest, SGCGWASFile, SGCGWASCohort, SGCGWASValidationJob, SGCGWASPlotResult, SGCMAResult, MAIgnoreEntry, MAIgnoreCreateRequest
 from dataregistry.api.api import get_current_user
 
 router = fastapi.APIRouter()
@@ -2706,3 +2707,36 @@ async def get_ma_top_loci(phenotype: str, ancestry: str, user: User = Depends(ge
         return []
     header = lines[0].split("\t")
     return [dict(zip(header, ln.split("\t"))) for ln in lines[1:]]
+
+
+@router.get("/sgc/ma/ignore", response_model=list[MAIgnoreEntry])
+async def list_sgc_ma_ignore(user: User = Depends(get_sgc_user)):
+    if not check_review_permissions(user):
+        raise fastapi.HTTPException(status_code=403,
+            detail="You need sgc-review-data permission to view the MA ignore-list")
+    return query.list_ma_ignore(engine)
+
+
+@router.post("/sgc/ma/ignore", response_model=MAIgnoreEntry)
+async def add_sgc_ma_ignore(req: MAIgnoreCreateRequest, user: User = Depends(get_sgc_user)):
+    if not check_review_permissions(user):
+        raise fastapi.HTTPException(status_code=403,
+            detail="You need sgc-review-data permission to modify the MA ignore-list")
+    try:
+        return query.insert_ma_ignore(engine, req.cohort_id, req.phenotype,
+                                      req.ancestry, req.reason, user.user_name)
+    except IntegrityError:
+        raise fastapi.HTTPException(status_code=400,
+            detail=f"Unknown cohort_id '{req.cohort_id}' (no matching sgc_cohorts row)")
+
+
+@router.delete("/sgc/ma/ignore/{ignore_id}")
+async def delete_sgc_ma_ignore(ignore_id: str, user: User = Depends(get_sgc_user)):
+    if not check_review_permissions(user):
+        raise fastapi.HTTPException(status_code=403,
+            detail="You need sgc-review-data permission to modify the MA ignore-list")
+    deleted = query.delete_ma_ignore(engine, ignore_id)
+    if not deleted:
+        raise fastapi.HTTPException(status_code=404,
+            detail=f"MA ignore entry '{ignore_id}' not found")
+    return {"message": f"MA ignore entry '{ignore_id}' deleted"}

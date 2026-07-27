@@ -111,6 +111,25 @@ def test_totals_from_per_cohort_sums_present_values_when_mixed_with_none():
     assert total_cases == 17      # 10 (A) + 7 (C); B's None dropped, D skipped
     assert total_controls == 23   # 20 (B) + 3 (C); A's None dropped, D skipped
 
+def test_meta_analyze_injects_ignored_without_inflating_counts(tmp_path):
+    from sgc_ma.run_ma import meta_analyze
+    cohorts = [{"file_id": "a", "dataset": "A", "cohort": "CohortA", "cases": 10, "controls": 20},
+               {"file_id": "b", "dataset": "B", "cohort": "CohortB", "cases": 5, "controls": 7}]
+    base = dict(se=0.1, pvalue=0.01, eaf=0.3, n=1000)
+    frames = {"a": _norm([dict(chromosome="1", position=100, ea="G", oa="A", beta=0.2, **base)]),
+              "b": _norm([dict(chromosome="1", position=100, ea="A", oa="G", beta=-0.2, **base)])}
+    ignored = [{"cohort_id": "z", "cohort": "IgnoredCohort", "reason": "lambda 1.5"}]
+    summary = meta_analyze(cohorts, lambda co: [frames[co["file_id"]]], str(tmp_path),
+                           ignored=ignored)
+    # counts and totals reflect only the two real candidates
+    assert summary["n_cohorts"] == 2 and summary["n_cohorts_used"] == 2
+    assert summary["total_cases"] == 15 and summary["total_controls"] == 27
+    # the ignored one shows up as skipped-with-reason
+    ig = [c for c in summary["per_cohort"] if c.get("cohort") == "IgnoredCohort"]
+    assert len(ig) == 1 and ig[0]["skipped"] is True
+    assert ig[0]["reason"] == "MA ignore-list: lambda 1.5"
+
+
 def test_main_records_batch_job_id_and_content_types(tmp_path, monkeypatch):
     """main() should (a) stamp the row with its AWS_BATCH_JOB_ID on the RUNNING
     update, and (b) upload every artifact with an explicit ContentType. Fully
@@ -129,8 +148,9 @@ def test_main_records_batch_job_id_and_content_types(tmp_path, monkeypatch):
             return object()
     monkeypatch.setattr(db, "DataRegistryReadWriteDB", _DummyDB)
     monkeypatch.setattr(rm.sel, "select_cohorts", lambda *a, **k: [])
+    monkeypatch.setattr(rm.sel, "ignored_cohorts", lambda *a, **k: [])
 
-    def fake_meta(cohorts, chunks_fn, outdir, label=""):
+    def fake_meta(cohorts, chunks_fn, outdir, label="", ignored=None):
         import os
         os.makedirs(outdir, exist_ok=True)
         for n in ["meta.tsv.gz", "manhattan.png", "qq.png", "summary.json", "summary.tsv", "top_loci.tsv"]:
@@ -188,6 +208,7 @@ def test_main_local_run_leaves_batch_job_id_none(tmp_path, monkeypatch):
             return object()
     monkeypatch.setattr(db, "DataRegistryReadWriteDB", _DummyDB)
     monkeypatch.setattr(rm.sel, "select_cohorts", lambda *a, **k: [])
+    monkeypatch.setattr(rm.sel, "ignored_cohorts", lambda *a, **k: [])
     monkeypatch.setattr(rm, "meta_analyze",
                         lambda *a, **k: {"meta_lambda_gc": None, "n_meta_variants": 0,
                                          "n_genome_wide_sig": 0, "n_cohorts": 0, "n_cohorts_used": 0,

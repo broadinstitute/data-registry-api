@@ -539,3 +539,20 @@ class SGCMAResult(BaseModel):
     updated_at: Optional[datetime] = None
 
 
+class MAIgnoreEntry(BaseModel):
+    id: str
+    cohort_id: str
+    phenotype: str
+    ancestry: str
+    reason: str
+    excluded_by: str
+    created_at: Optional[datetime] = None
+
+
+class MAIgnoreCreateRequest(BaseModel):
+    cohort_id: str
+    phenotype: str
+    ancestry: str
+    reason: str
+
+

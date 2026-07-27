@@ -29,16 +29,24 @@ def include_file(row: dict) -> bool:
     return True
 
 
+def not_ignored(row: dict) -> bool:
+    """False iff this GWAS has an active MA ignore-list entry for its
+    (cohort, phenotype, ancestry)."""
+    return row.get("ignore_reason") is None
+
+
 _SQL = """
     SELECT CAST(f.id AS CHAR) AS file_id, f.dataset, f.s3_path, f.column_mapping,
            f.cases, f.controls,
            CAST(f.cohort_id AS CHAR) AS cohort_id, sc.name AS cohort,
+           mi.reason AS ignore_reason,
            JSON_UNQUOTE(JSON_EXTRACT(f.metadata, '$.sex')) AS sex,
            JSON_UNQUOTE(JSON_EXTRACT(gc.metadata, '$.genome_build')) AS genome_build
     FROM sgc_gwas_files f
     JOIN sgc_gwas_plot_results p ON p.file_id = f.id AND p.status = 'SUCCEEDED'
     LEFT JOIN sgc_gwas_cohorts gc ON gc.cohort_id = f.cohort_id
     LEFT JOIN sgc_cohorts sc ON sc.id = f.cohort_id
+    LEFT JOIN sgc_ma_ignore mi ON mi.cohort_id = f.cohort_id AND mi.phenotype = f.phenotype AND mi.ancestry = f.ancestry
     WHERE f.phenotype = :phenotype AND f.ancestry = :ancestry
     ORDER BY f.dataset
 """
@@ -62,7 +70,26 @@ def select_cohorts(engine, phenotype: str, ancestry: str) -> list[dict]:
     for r in rows:
         if not include_file(r):
             continue
+        if not not_ignored(r):
+            continue
         r["column_mapping"] = _coerce_map(r["column_mapping"])
         r["genome_build"] = normalize_build(r["genome_build"])
         out.append(r)
     return out
+
+
+_IGNORED_SQL = """
+    SELECT CAST(mi.cohort_id AS CHAR) AS cohort_id, sc.name AS cohort, mi.reason AS reason
+    FROM sgc_ma_ignore mi
+    LEFT JOIN sgc_cohorts sc ON sc.id = mi.cohort_id
+    WHERE mi.phenotype = :phenotype AND mi.ancestry = :ancestry
+    ORDER BY sc.name
+"""
+
+
+def ignored_cohorts(engine, phenotype: str, ancestry: str) -> list[dict]:
+    """The ignore-list entries active for this (phenotype, ancestry), for
+    surfacing in the run summary. Additive: does not affect select_cohorts()."""
+    with engine.connect() as c:
+        return [dict(r._mapping) for r in c.execute(
+            text(_IGNORED_SQL), {"phenotype": phenotype, "ancestry": ancestry})]

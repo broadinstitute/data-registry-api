@@ -2551,3 +2551,46 @@ def get_sgc_ma_results(engine) -> list[dict]:
     with engine.connect() as conn:
         rs = conn.execute(text(MA_LIST_SQL))
         return [_format_sgc_ma_row(dict(r._mapping)) for r in rs]
+
+
+def insert_ma_ignore(engine, cohort_id: str, phenotype: str, ancestry: str,
+                     reason: str, excluded_by: str) -> dict:
+    """Upsert an MA ignore entry on the unique (cohort_id, phenotype, ancestry)
+    triple; updates reason/excluded_by on conflict. Returns the persisted row.
+    Raises IntegrityError if cohort_id has no sgc_cohorts row (FK)."""
+    ignore_id = str(uuid.uuid4()).replace('-', '')
+    with engine.connect() as conn:
+        conn.execute(text("""
+            INSERT INTO sgc_ma_ignore (id, cohort_id, phenotype, ancestry, reason, excluded_by)
+            VALUES (:id, :cohort_id, :phenotype, :ancestry, :reason, :excluded_by)
+            ON DUPLICATE KEY UPDATE reason = VALUES(reason), excluded_by = VALUES(excluded_by)
+        """), {'id': ignore_id, 'cohort_id': cohort_id, 'phenotype': phenotype,
+               'ancestry': ancestry, 'reason': reason, 'excluded_by': excluded_by})
+        conn.commit()
+        row = conn.execute(text("""
+            SELECT CAST(id AS CHAR) AS id, CAST(cohort_id AS CHAR) AS cohort_id,
+                   phenotype, ancestry, reason, excluded_by, created_at
+            FROM sgc_ma_ignore
+            WHERE cohort_id = :cohort_id AND phenotype = :phenotype AND ancestry = :ancestry
+        """), {'cohort_id': cohort_id, 'phenotype': phenotype, 'ancestry': ancestry}).mappings().first()
+    return dict(row)
+
+
+def list_ma_ignore(engine) -> list[dict]:
+    """All MA ignore entries, most recently added first."""
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT CAST(id AS CHAR) AS id, CAST(cohort_id AS CHAR) AS cohort_id,
+                   phenotype, ancestry, reason, excluded_by, created_at
+            FROM sgc_ma_ignore ORDER BY created_at DESC
+        """)).mappings().all()
+    return [dict(r) for r in rows]
+
+
+def delete_ma_ignore(engine, ignore_id: str) -> bool:
+    """Delete one MA ignore entry by id. True iff a row was removed."""
+    with engine.connect() as conn:
+        result = conn.execute(text("DELETE FROM sgc_ma_ignore WHERE id = :id"),
+                              {'id': ignore_id})
+        conn.commit()
+        return result.rowcount > 0

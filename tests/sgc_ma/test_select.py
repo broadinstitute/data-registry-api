@@ -41,3 +41,17 @@ def test_selection_sql_exposes_registry_cohort_name():
     assert "LEFT JOIN sgc_cohorts sc ON sc.id = f.cohort_id" in _SQL
     assert "sc.name AS cohort" in _SQL
     assert "AS cohort_id" in _SQL
+
+
+def test_selection_sql_left_joins_ignore_list():
+    from sgc_ma.select import _SQL
+    assert ("LEFT JOIN sgc_ma_ignore mi ON mi.cohort_id = f.cohort_id "
+            "AND mi.phenotype = f.phenotype AND mi.ancestry = f.ancestry") in _SQL
+    assert "mi.reason AS ignore_reason" in _SQL
+
+
+def test_not_ignored_predicate():
+    from sgc_ma.select import not_ignored
+    assert not_ignored({"ignore_reason": None}) is True
+    assert not_ignored({}) is True                       # column absent -> not ignored
+    assert not_ignored({"ignore_reason": "lambda too high"}) is False

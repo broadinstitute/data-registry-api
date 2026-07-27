@@ -66,7 +66,8 @@ def totals_from_per_cohort(per_cohort):
     return (sum(cases) if cases else None, sum(controls) if controls else None)
 
 
-def meta_analyze(cohorts: list[dict], chunks_fn, outdir: str, label: str = "meta-analysis") -> dict:
+def meta_analyze(cohorts: list[dict], chunks_fn, outdir: str, label: str = "meta-analysis",
+                 ignored: list[dict] = None) -> dict:
     os.makedirs(outdir, exist_ok=True)
     per_cohort = []
     n_cohorts_used = 0
@@ -116,6 +117,11 @@ def meta_analyze(cohorts: list[dict], chunks_fn, outdir: str, label: str = "meta
     else:
         lam = None
 
+    for ig in (ignored or []):
+        per_cohort.append({"cohort": ig.get("cohort"), "dataset": None,
+                           "skipped": True,
+                           "reason": f"MA ignore-list: {ig.get('reason')}"})
+
     total_cases, total_controls = totals_from_per_cohort(per_cohort)
     summary = {"n_cohorts": len(cohorts), "n_cohorts_used": n_cohorts_used,
                "n_meta_variants": n_meta,
@@ -157,7 +163,9 @@ def main(phenotype, ancestry, bucket, out_prefix, local_out):
                                batch_job_id=os.environ.get("AWS_BATCH_JOB_ID"))
     try:
         cohorts = sel.select_cohorts(engine, phenotype, ancestry)
-        click.echo(f"selected {len(cohorts)} cohorts for {phenotype}/{ancestry}")
+        ignored = sel.ignored_cohorts(engine, phenotype, ancestry)
+        click.echo(f"selected {len(cohorts)} cohorts ({len(ignored)} ignore-listed) "
+                   f"for {phenotype}/{ancestry}")
         s3 = boto3.client("s3", region_name="us-east-1")
 
         def chunks_fn(co):
@@ -169,7 +177,8 @@ def main(phenotype, ancestry, bucket, out_prefix, local_out):
                 s3.download_file(bucket, co["s3_path"], local)
                 yield from read_cohort_chunks(local, co["column_mapping"], co.get("cases"), co.get("controls"))
 
-        summary = meta_analyze(cohorts, chunks_fn, local_out, label=f"{phenotype} {ancestry} meta-analysis")
+        summary = meta_analyze(cohorts, chunks_fn, local_out,
+                               label=f"{phenotype} {ancestry} meta-analysis", ignored=ignored)
         for name in ["meta.tsv.gz", "manhattan.png", "qq.png", "summary.json", "summary.tsv", "top_loci.tsv"]:
             p = os.path.join(local_out, name)
             if os.path.exists(p):
