@@ -19,7 +19,7 @@ from sqlalchemy.exc import IntegrityError
 
 from dataregistry.api import file_utils, s3, query
 from dataregistry.api.db import DataRegistryReadWriteDB
-from dataregistry.api.model import SGCPhenotype, SGCCohort, SGCCohortFile, SGCCasesControlsMetadata, SGCCoOccurrenceMetadata, SGCPhenotypeCaseTotals, SGCPhenotypeCaseCountsBySex, User, NewUserRequest, SGCGWASFile, SGCGWASCohort, SGCGWASValidationJob, SGCGWASPlotResult, SGCMAResult, MAIgnoreEntry, MAIgnoreCreateRequest
+from dataregistry.api.model import SGCPhenotype, SGCCohort, SGCCohortFile, SGCCasesControlsMetadata, SGCCoOccurrenceMetadata, SGCPhenotypeCaseTotals, SGCPhenotypeCaseCountsBySex, User, NewUserRequest, SGCGWASFile, SGCGWASCohort, SGCGWASValidationJob, SGCGWASPlotResult, SGCMAResult, MAIgnoreEntry, MAIgnoreCreateRequest, SGCLiftoverJob
 from dataregistry.api.api import get_current_user
 
 router = fastapi.APIRouter()
@@ -2740,3 +2740,15 @@ async def delete_sgc_ma_ignore(ignore_id: str, user: User = Depends(get_sgc_user
         raise fastapi.HTTPException(status_code=404,
             detail=f"MA ignore entry '{ignore_id}' not found")
     return {"message": f"MA ignore entry '{ignore_id}' deleted"}
+
+
+@router.get("/sgc/liftover/{file_id}", response_model=SGCLiftoverJob)
+async def get_sgc_liftover(file_id: str, user: User = Depends(get_sgc_user)):
+    if not check_review_permissions(user):
+        raise fastapi.HTTPException(status_code=403,
+            detail="You need sgc-review-data permission to view liftover output")
+    job = query.get_sgc_liftover_job_for_file(engine, file_id)
+    if job is None:
+        raise fastapi.HTTPException(status_code=404,
+            detail="No liftover job found for this file")
+    return job
