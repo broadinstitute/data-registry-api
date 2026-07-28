@@ -100,7 +100,7 @@ def _partition_liftable(rows):
     return liftable, unrecognized
 
 
-def _select_liftable(engine, limit):
+def select_liftable(engine, limit):
     """Return (liftable, unrecognized). `limit` caps only the liftable list --
     unrecognized files are always reported in full regardless of --limit."""
     with engine.connect() as c:
@@ -108,6 +108,14 @@ def _select_liftable(engine, limit):
         rows = [dict(r._mapping) for r in rs]
     liftable, unrecognized = _partition_liftable(rows)
     return (liftable[:limit] if limit is not None else liftable), unrecognized
+
+
+def plan_liftover_wave(liftable, cap):
+    """Split the liftable list into (wave, remaining) for a bounded submit.
+    wave is the next `cap` files to submit now; remaining is how many liftable
+    files are left for subsequent waves (assuming this wave is submitted)."""
+    wave = liftable[:cap]
+    return wave, len(liftable) - len(wave)
 
 
 def make_liftover_callback(file_id: str):
@@ -140,7 +148,7 @@ def make_liftover_callback(file_id: str):
 @click.option("--dry-run", is_flag=True, default=False, help="Print what would be submitted; no DB writes, no Batch calls")
 def main(bucket: str, limit: Optional[int], dry_run: bool):
     engine = DataRegistryReadWriteDB().get_engine()
-    files, unrecognized = _select_liftable(engine, limit)
+    files, unrecognized = select_liftable(engine, limit)
     click.echo(f"Found {len(files)} build-37 file(s) to lift (bucket={bucket})")
     for r in unrecognized:
         click.echo(f"  WARNING: {r['file_id'][:8]}  genome_build={r.get('genome_build')!r}"

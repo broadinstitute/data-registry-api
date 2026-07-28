@@ -2769,3 +2769,97 @@ async def get_sgc_liftover_unmapped_url(file_id: str, user: User = Depends(get_s
     without_scheme = uri[len("s3://"):] if uri.startswith("s3://") else uri
     bucket, _, key = without_scheme.partition("/")
     return {"presigned_url": s3.get_signed_url(bucket, key)}
+
+
+SGC_LIFTOVER_WAVE_CAP = 50
+
+
+def _kick_off_sgc_liftover(background_tasks: BackgroundTasks, file_row: dict,
+                           submitted_by: str) -> str:
+    """Insert a PENDING sgc_liftover_jobs row and schedule the background
+    submit-and-await for one GWAS file, reusing the operator driver's helpers so
+    the button and the CLI submit identical jobs. Returns the liftover job id.
+    Raises ValueError if the file's build isn't liftable or its column_mapping
+    is missing keys (caller skips + reports that file)."""
+    from dataregistry.api import batch
+    from sgc_ma.select import normalize_build
+    from sgc_liftover.submit_liftover_batch import (
+        to_worker_column_mapping, ucsc_source_build, make_liftover_callback,
+        _coerce_map, _SGC_ARCHIVE_PREFIX,
+    )
+
+    file_id = file_row["file_id"]
+    s3_key = file_row["s3_path"]
+    file_name = os.path.basename(s3_key)
+    src = ucsc_source_build(normalize_build(file_row["genome_build"]))
+    worker_map = to_worker_column_mapping(_coerce_map(file_row["column_mapping"]))
+
+    bucket = s3.BASE_BUCKET
+    input_s3 = f"s3://{bucket}/{s3_key}"
+    archive_s3 = f"s3://{bucket}/{_SGC_ARCHIVE_PREFIX}/{file_id}/{file_name}"
+    unmapped_s3 = f"s3://{bucket}/sgc/liftover/{file_id}/unmapped.tsv"
+    summary_s3 = f"s3://{bucket}/sgc/liftover/{file_id}/summary.json"
+
+    lid = query.insert_sgc_liftover_pending(
+        engine, file_id, src, "hg38", archive_s3, unmapped_s3, submitted_by)
+    query.update_sgc_liftover_job(engine, lid, status="RUNNING")
+
+    job_config = {
+        "jobName": f"sgc-liftover-{file_id[:16]}",
+        "jobQueue": "gwas-liftover-job-queue",
+        "jobDefinition": "gwas-liftover-job",
+        "parameters": {
+            "input-s3-path": input_s3, "output-s3-path": input_s3,  # replace-in-place
+            "archive-s3-path": archive_s3, "unmapped-s3-path": unmapped_s3,
+            "summary-s3-path": summary_s3, "source-build": src, "target-build": "hg38",
+            "column-mapping": json.dumps(worker_map), "job-id": lid,
+        },
+    }
+    background_tasks.add_task(
+        batch.submit_and_await_job, engine, job_config,
+        make_liftover_callback(file_id), lid, False)
+    return lid
+
+
+@router.post("/sgc/liftover/run-all")
+async def run_all_sgc_liftover(background_tasks: BackgroundTasks,
+                               user: User = Depends(get_sgc_user)):
+    """Submit liftover for the next wave of GWAS files that need it.
+
+    Reviewer-gated. Selects files whose effective build is GRCh37 with no
+    SUCCEEDED/in-flight liftover (reusing the operator driver's selection), caps
+    the wave at SGC_LIFTOVER_WAVE_CAP, and submits each in the background. The
+    big historical backlog is cleared operationally; this button governs the
+    steady-state trickle of new GRCh37 uploads. Returns how many were submitted
+    and how many liftable files remain for the next click.
+    """
+    if not check_review_permissions(user):
+        raise fastapi.HTTPException(
+            status_code=403,
+            detail="You need 'sgc-review-data' permission to run liftover")
+
+    from sgc_liftover.submit_liftover_batch import select_liftable, plan_liftover_wave
+
+    try:
+        liftable, unrecognized = select_liftable(engine, None)
+        wave, remaining = plan_liftover_wave(liftable, SGC_LIFTOVER_WAVE_CAP)
+
+        submitted, skipped = [], []
+        for file_row in wave:
+            try:
+                lid = _kick_off_sgc_liftover(background_tasks, file_row, user.user_name)
+                submitted.append({"file_id": file_row["file_id"], "liftover_job_id": lid})
+            except ValueError as e:
+                skipped.append({"file_id": file_row["file_id"], "reason": str(e)})
+
+        return {
+            "message": f"Submitted {len(submitted)} liftover job(s)",
+            "submitted": len(submitted),
+            "remaining": remaining + len(skipped),
+            "skipped": skipped,
+            "unrecognized_count": len(unrecognized),
+        }
+    except fastapi.HTTPException:
+        raise
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Error running liftover: {str(e)}")

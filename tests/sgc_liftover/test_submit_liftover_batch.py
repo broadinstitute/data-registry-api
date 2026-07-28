@@ -84,6 +84,26 @@ def test_callback_parses_nested_summary_json_in_full(monkeypatch):
     assert calls["flip"] == ("FILE1", "GRCh38")
 
 
+def test_plan_liftover_wave_caps_and_reports_remaining():
+    from sgc_liftover.submit_liftover_batch import plan_liftover_wave
+    wave, remaining = plan_liftover_wave(list(range(120)), 50)
+    assert wave == list(range(50))
+    assert remaining == 70
+
+
+def test_plan_liftover_wave_when_fewer_than_cap():
+    from sgc_liftover.submit_liftover_batch import plan_liftover_wave
+    wave, remaining = plan_liftover_wave([1, 2, 3], 50)
+    assert wave == [1, 2, 3]
+    assert remaining == 0
+
+
+def test_select_liftable_is_public():
+    # Endpoint imports the public name; guard against a silent rename back.
+    from sgc_liftover.submit_liftover_batch import select_liftable
+    assert callable(select_liftable)
+
+
 def test_partition_liftable_splits_grch37_grch38_and_unrecognized():
     from sgc_liftover.submit_liftover_batch import _partition_liftable
     rows = [
