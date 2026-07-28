@@ -60,3 +60,43 @@ def test_extract_sorted_dedups_within_cohort(tmp_path):
     assert sa["n_in"] == 2 and sa["n_kept"] == 1                  # dedup collapsed the duplicate
     out = list(merge_and_combine([str(a), str(b)]))
     assert len(out) == 1 and out[0]["n_cohorts"] == 2            # NOT 3 (no double-count)
+
+
+def test_extract_sorted_drops_low_maf(tmp_path):
+    p = tmp_path / "a.tsv"
+    rows = [dict(chromosome="1", position=10, ea="A", oa="G", beta=0.1, se=0.1, eaf=0.002, pvalue=0.5, n=100),
+            dict(chromosome="1", position=20, ea="A", oa="G", beta=0.1, se=0.1, eaf=0.30, pvalue=0.5, n=100)]
+    stats = extract_sorted([pd.DataFrame(rows)], str(p))
+    assert stats["n_dropped_maf"] == 1 and stats["n_kept"] == 1
+    assert stats["maf_filter_applicable"] is True
+
+
+def test_extract_sorted_maf_symmetric_high_tail(tmp_path):
+    p = tmp_path / "a.tsv"
+    rows = [dict(chromosome="1", position=10, ea="A", oa="G", beta=0.1, se=0.1, eaf=0.998, pvalue=0.5, n=100)]
+    stats = extract_sorted([pd.DataFrame(rows)], str(p))
+    assert stats["n_dropped_maf"] == 1 and stats["n_kept"] == 0
+
+
+def test_extract_sorted_drops_low_info(tmp_path):
+    p = tmp_path / "a.tsv"
+    rows = [dict(chromosome="1", position=10, ea="A", oa="G", beta=0.1, se=0.1, eaf=0.3, pvalue=0.5, n=100, info=0.20),
+            dict(chromosome="1", position=20, ea="A", oa="G", beta=0.1, se=0.1, eaf=0.3, pvalue=0.5, n=100, info=0.85)]
+    stats = extract_sorted([pd.DataFrame(rows)], str(p))
+    assert stats["n_dropped_info"] == 1 and stats["n_kept"] == 1
+    assert stats["info_filter_applicable"] is True
+
+
+def test_extract_sorted_info_not_applicable_when_absent(tmp_path):
+    p = tmp_path / "a.tsv"
+    rows = [dict(chromosome="1", position=10, ea="A", oa="G", beta=0.1, se=0.1, eaf=0.3, pvalue=0.5, n=100)]
+    stats = extract_sorted([pd.DataFrame(rows)], str(p))
+    assert stats["n_dropped_info"] == 0 and stats["info_filter_applicable"] is False
+    assert stats["n_kept"] == 1
+
+
+def test_extract_sorted_custom_thresholds(tmp_path):
+    p = tmp_path / "a.tsv"
+    rows = [dict(chromosome="1", position=10, ea="A", oa="G", beta=0.1, se=0.1, eaf=0.02, pvalue=0.5, n=100, info=0.5)]
+    stats = extract_sorted([pd.DataFrame(rows)], str(p), maf_min=0.05, info_min=0.3)
+    assert stats["n_dropped_maf"] == 1 and stats["n_kept"] == 0

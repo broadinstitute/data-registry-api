@@ -5,20 +5,38 @@ import subprocess
 
 from sgc_ma.harmonize import canonicalize
 from sgc_ma.compute import finalize_one
+from sgc_ma.filters import maf_ok, info_ok
 
 
-def extract_sorted(chunks, out_path):
+def extract_sorted(chunks, out_path, maf_min=0.005, info_min=0.3):
     """Canonicalize each row, write per-row sufficient stats keyed by variant,
     sort by key (LC_ALL=C), then keep only the FIRST row per key (within-cohort
-    dedup so one cohort contributes a variant at most once). Returns
-    {"n_in": rows read, "n_kept": rows after dedup, "sum_n": sum of n over kept}."""
+    dedup). Rows failing the MAF or INFO gate are dropped and counted; a missing
+    (NaN) eaf/info is not-applicable and passes. Returns
+    {"n_in", "n_kept", "sum_n", "n_dropped_maf", "n_dropped_info",
+     "maf_filter_applicable", "info_filter_applicable"}."""
     n_in = 0
+    n_dropped_maf = 0
+    n_dropped_info = 0
+    saw_eaf = False
+    saw_info = False
     with open(out_path, "w") as fh:
         for df in chunks:
-            for chrom, pos, ea, oa, beta, se, eaf, nn in zip(
+            infos = df["info"] if "info" in df.columns else [float("nan")] * len(df)
+            for chrom, pos, ea, oa, beta, se, eaf, nn, info in zip(
                     df["chromosome"], df["position"], df["ea"], df["oa"],
-                    df["beta"], df["se"], df["eaf"], df["n"]):
+                    df["beta"], df["se"], df["eaf"], df["n"], infos):
                 n_in += 1
+                if eaf == eaf:      # non-NaN observed -> MAF filter applicable
+                    saw_eaf = True
+                if info == info:    # non-NaN observed -> INFO filter applicable
+                    saw_info = True
+                if not maf_ok(eaf, maf_min):
+                    n_dropped_maf += 1
+                    continue
+                if not info_ok(info, info_min):
+                    n_dropped_info += 1
+                    continue
                 c = canonicalize(chrom, pos, ea, oa, beta, eaf)
                 if c is None:
                     continue
@@ -38,7 +56,9 @@ def extract_sorted(chunks, out_path):
                 n_kept += 1
                 sum_n += float(parts[4])
     os.replace(deduped, out_path)
-    return {"n_in": n_in, "n_kept": n_kept, "sum_n": sum_n}
+    return {"n_in": n_in, "n_kept": n_kept, "sum_n": sum_n,
+            "n_dropped_maf": n_dropped_maf, "n_dropped_info": n_dropped_info,
+            "maf_filter_applicable": saw_eaf, "info_filter_applicable": saw_info}
 
 
 def merge_and_combine(sorted_paths, min_cohorts: int = 2):
