@@ -18,6 +18,27 @@ def normalize_build(raw: Optional[str]) -> Optional[str]:
     return None
 
 
+def classify_liftover_status(normalized_build: Optional[str],
+                             latest_job_status: Optional[str]) -> str:
+    """Map (normalized build, most-recent sgc_liftover_jobs.status) to the
+    at-a-glance gwas-summary column label. Job status wins over build so a
+    re-run resolves correctly (a FAILED-then-SUCCEEDED file reads as lifted).
+    The six return strings are the frontend contract -- keep them byte-for-byte
+    in sync with utils/sgcLiftover.js LIFTOVER_STATUS_OPTIONS."""
+    if latest_job_status in ("PENDING", "RUNNING"):
+        return "In progress"
+    if latest_job_status == "SUCCEEDED":
+        return "Lifted to GRCh38"
+    if latest_job_status == "FAILED":
+        return "Failed"
+    # No liftover job on record.
+    if normalized_build == "GRCh38":
+        return "GRCh38 (native)"
+    if normalized_build == "GRCh37":
+        return "Needs liftover"
+    return "Unknown build"
+
+
 def include_file(row: dict) -> bool:
     """v1 selection predicate: sex=All, GRCh38-effective, not a pre-existing MA."""
     if str(row.get("sex", "")).lower() != "all":

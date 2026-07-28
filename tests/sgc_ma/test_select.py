@@ -1,5 +1,6 @@
 import pytest
 from sgc_ma.select import normalize_build, include_file, _SQL
+from sgc_ma.select import classify_liftover_status
 
 @pytest.mark.parametrize("raw,expected", [
     ("GRCh38", "GRCh38"),
@@ -12,6 +13,22 @@ from sgc_ma.select import normalize_build, include_file, _SQL
 ])
 def test_normalize_build(raw, expected):
     assert normalize_build(raw) == expected
+
+
+@pytest.mark.parametrize("build,job_status,expected", [
+    ("GRCh38", None, "GRCh38 (native)"),
+    ("GRCh37", None, "Needs liftover"),
+    (None, None, "Unknown build"),
+    ("GRCh37", "PENDING", "In progress"),
+    ("GRCh37", "RUNNING", "In progress"),
+    ("GRCh38", "SUCCEEDED", "Lifted to GRCh38"),
+    ("GRCh37", "SUCCEEDED", "Lifted to GRCh38"),   # re-run after failure resolved
+    ("GRCh37", "FAILED", "Failed"),
+    (None, "FAILED", "Failed"),
+    (None, "SUCCEEDED", "Lifted to GRCh38"),        # job status wins over unknown build
+])
+def test_classify_liftover_status(build, job_status, expected):
+    assert classify_liftover_status(build, job_status) == expected
 
 def _row(**kw):
     base = dict(sex="All", genome_build="GRCh38", dataset="CHOP.v1")
