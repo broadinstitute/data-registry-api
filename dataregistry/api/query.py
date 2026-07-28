@@ -14,6 +14,7 @@ from dataregistry.api.model import SavedDataset, DataSet, Study, SavedStudy, Sav
     HermesMetaAnalysisStatus, SavedMetaAnalysisRequest, HermesPhenotype, SGCPhenotype, SGCGWASFile, \
     SGCGWASCohort, SGCGWASValidationJob, LiftoverJob, LiftoverJobStatus, GenomeBuild, QCRun, QCStepResult
 from dataregistry.id_shortener import shorten_uuid
+from sgc_ma.select import normalize_build, classify_liftover_status
 
 
 def get_all_datasets(engine) -> list:
@@ -1862,19 +1863,29 @@ def get_sgc_gwas_file_by_id(engine, file_id: str):
         return row_dict
 
 
-def get_all_sgc_gwas_files(engine):
-    """Get all GWAS files across all cohorts."""
-    with engine.connect() as conn:
-        result = conn.execute(text("""
-            SELECT
-                id, cohort_id, dataset, phenotype, ancestry,
-                file_name, file_size, s3_path, uploaded_at, uploaded_by,
-                column_mapping, cases, controls, metadata
-            FROM sgc_gwas_files
-            ORDER BY phenotype ASC, ancestry ASC, uploaded_at DESC
-        """)).mappings().all()
+_ALL_SGC_GWAS_FILES_SQL = """
+    SELECT
+        f.id, f.cohort_id, f.dataset, f.phenotype, f.ancestry,
+        f.file_name, f.file_size, f.s3_path, f.uploaded_at, f.uploaded_by,
+        f.column_mapping, f.cases, f.controls, f.metadata,
+        COALESCE(JSON_UNQUOTE(JSON_EXTRACT(f.metadata, '$.genome_build')),
+                 JSON_UNQUOTE(JSON_EXTRACT(gc.metadata, '$.genome_build'))) AS genome_build_raw,
+        (SELECT lj.status FROM sgc_liftover_jobs lj
+           WHERE lj.file_id = f.id
+           ORDER BY lj.submitted_at DESC
+           LIMIT 1) AS latest_liftover_status
+    FROM sgc_gwas_files f
+    LEFT JOIN sgc_gwas_cohorts gc ON gc.cohort_id = f.cohort_id
+    ORDER BY f.phenotype ASC, f.ancestry ASC, f.uploaded_at DESC
+"""
 
-        # Parse JSON fields
+
+def get_all_sgc_gwas_files(engine):
+    """Get all GWAS files across all cohorts, annotated with a normalized
+    genome_build and a liftover_status column value for the reviewer summary."""
+    with engine.connect() as conn:
+        result = conn.execute(text(_ALL_SGC_GWAS_FILES_SQL)).mappings().all()
+
         parsed_results = []
         for row in result:
             row_dict = dict(row)
@@ -1882,6 +1893,12 @@ def get_all_sgc_gwas_files(engine):
                 row_dict['column_mapping'] = json.loads(row_dict['column_mapping'])
             if row_dict.get('metadata'):
                 row_dict['metadata'] = json.loads(row_dict['metadata'])
+            # Pop the raw helper columns; expose normalized build + status instead.
+            raw_build = row_dict.pop('genome_build_raw', None)
+            latest_status = row_dict.pop('latest_liftover_status', None)
+            normalized = normalize_build(raw_build)
+            row_dict['genome_build'] = normalized
+            row_dict['liftover_status'] = classify_liftover_status(normalized, latest_status)
             parsed_results.append(row_dict)
 
         return parsed_results
