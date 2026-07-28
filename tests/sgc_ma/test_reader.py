@@ -79,3 +79,29 @@ def test_read_cohort_chunks_raises_eagerly_on_missing_required_mapping_key(tmp_p
     with pytest.raises(ValueError):
         # validation must happen before iteration begins, like read_cohort
         read_cohort_chunks(str(p), bad, cases=None, controls=None)
+
+def test_normalize_frame_reads_info_when_mapped():
+    cm = {**CM, "col_imputation_quality": "INFO"}
+    raw = pd.DataFrame({"CHR": ["1", "1"], "POS": [10, 20], "EA": ["A", "C"], "OA": ["G", "T"],
+                        "BETA": [0.1, 0.2], "SE": [0.1, 0.1], "P": [0.5, 0.5],
+                        "EAF": [0.2, 0.3], "N": [10, 20], "INFO": [0.9, 0.4]})
+    out = normalize_frame(raw, cm, cases=None, controls=None)
+    assert list(out["info"]) == [0.9, 0.4]
+
+
+def test_normalize_frame_info_nan_when_not_mapped():
+    raw = pd.DataFrame({"CHR": ["1"], "POS": [10], "EA": ["A"], "OA": ["G"],
+                        "BETA": [0.1], "SE": [0.1], "P": [0.5], "EAF": [0.2], "N": [10]})
+    out = normalize_frame(raw, CM, cases=None, controls=None)  # CM has no col_imputation_quality
+    assert out["info"].isna().all()
+
+
+def test_read_cohort_includes_info_when_mapped(tmp_path):
+    import gzip
+    cm = {**CM, "col_imputation_quality": "INFO"}
+    p = tmp_path / "c.tsv.gz"
+    with gzip.open(p, "wt") as fh:
+        fh.write("CHR\tPOS\tEA\tOA\tBETA\tSE\tP\tEAF\tN\tINFO\n")
+        fh.write("1\t100\tA\tG\t0.1\t0.1\t0.5\t0.2\t1000\t0.85\n")
+    out = read_cohort(str(p), cm, cases=None, controls=None)
+    assert abs(out.iloc[0]["info"] - 0.85) < 1e-9

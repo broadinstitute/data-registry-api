@@ -24,6 +24,8 @@ def normalize_frame(raw: pd.DataFrame, column_mapping: dict, cases, controls) ->
         "se": pd.to_numeric(raw[m["col_se"]], errors="coerce"),
         "eaf": pd.to_numeric(raw.get(m.get("col_effect_allele_freq")), errors="coerce")
                if m.get("col_effect_allele_freq") in raw else np.nan,
+        "info": pd.to_numeric(raw.get(m.get("col_imputation_quality")), errors="coerce")
+                if m.get("col_imputation_quality") in raw else np.nan,
         "pvalue": pd.to_numeric(raw[m["col_pvalue"]], errors="coerce"),
     })
     n_col = m.get("col_variant_n")
@@ -41,7 +43,7 @@ def normalize_frame(raw: pd.DataFrame, column_mapping: dict, cases, controls) ->
 
 REQUIRED_KEYS = ["col_chromosome", "col_position", "col_effect_allele",
                  "col_non_effect_allele", "col_beta", "col_se", "col_pvalue"]
-OPTIONAL_KEYS = ["col_effect_allele_freq", "col_variant_n"]
+OPTIONAL_KEYS = ["col_effect_allele_freq", "col_imputation_quality", "col_variant_n"]
 
 
 def _validate_and_usecols(path: str, column_mapping: dict) -> list:
