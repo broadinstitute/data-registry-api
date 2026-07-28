@@ -2849,7 +2849,11 @@ async def run_all_sgc_liftover(background_tasks: BackgroundTasks,
             try:
                 lid = _kick_off_sgc_liftover(background_tasks, file_row, user.user_name)
                 submitted.append({"file_id": file_row["file_id"], "liftover_job_id": lid})
-            except ValueError as e:
+            except Exception as e:
+                # Per-file resilience for a bulk submit: a bad build/column_mapping
+                # (ValueError) or a transient DB error on one file records that file
+                # in `skipped` and lets the wave continue, so files already submitted
+                # in this call are still reported instead of being lost to a 500.
                 skipped.append({"file_id": file_row["file_id"], "reason": str(e)})
 
         return {
