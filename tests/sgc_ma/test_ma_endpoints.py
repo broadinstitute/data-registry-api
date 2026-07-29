@@ -158,3 +158,42 @@ def test_list_ma_candidates_endpoint_no_permission_403(monkeypatch):
     with pytest.raises(HTTPException) as e:
         run(sgc.list_ma_candidates_endpoint("PH", "EUR", user=make_user(with_review_perm=False)))
     assert e.value.status_code == 403
+
+
+def test_launch_sgc_ma_run_requires_two_files():
+    from dataregistry.api.model import MARunRequest
+    req = MARunRequest(phenotype="PH", ancestry="EUR", file_ids=["only-one"])
+    with pytest.raises(HTTPException) as e:
+        run(sgc.launch_sgc_ma_run(req, user=make_user()))
+    assert e.value.status_code == 400
+
+
+def test_launch_sgc_ma_run_no_permission_403():
+    from dataregistry.api.model import MARunRequest
+    req = MARunRequest(phenotype="PH", ancestry="EUR", file_ids=["a", "b"])
+    with pytest.raises(HTTPException) as e:
+        run(sgc.launch_sgc_ma_run(req, user=make_user(with_review_perm=False)))
+    assert e.value.status_code == 403
+
+
+def test_launch_sgc_ma_run_creates_manual_run(monkeypatch):
+    from dataregistry.api.model import MARunRequest
+    import sgc_ma.submit_ma_batch as smb
+    captured = {}
+
+    def fake_insert(engine, phenotype, ancestry, **kw):
+        captured.update(dict(phenotype=phenotype, ancestry=ancestry, **kw))
+        return "run-xyz"
+    monkeypatch.setattr(query, "insert_sgc_ma_run", fake_insert)
+    monkeypatch.setattr(smb, "submit_run", lambda **kw: "job-1")
+    monkeypatch.setattr(sgc.boto3, "client", lambda *a, **kw: object())
+
+    req = MARunRequest(phenotype="PH", ancestry="EUR", file_ids=["a", "b"],
+                       maf_min=0.01, info_min=0.4, label="core set")
+    result = run(sgc.launch_sgc_ma_run(req, user=make_user()))
+    assert result == {"run_id": "run-xyz"}
+    assert captured["run_type"] == "manual"
+    assert captured["dataset_file_ids"] == ["a", "b"]
+    assert captured["submitted_by"] == "reviewer"        # make_user() default user_name
+    assert captured["maf_min"] == 0.01 and captured["info_min"] == 0.4
+    assert captured["label"] == "core set"

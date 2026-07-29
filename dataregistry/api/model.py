@@ -576,3 +576,12 @@ class MAIgnoreCreateRequest(BaseModel):
     reason: str
 
 
+class MARunRequest(BaseModel):
+    phenotype: str
+    ancestry: str
+    file_ids: list[str]
+    maf_min: float = 0.005
+    info_min: float = 0.3
+    label: Optional[str] = None
+
+

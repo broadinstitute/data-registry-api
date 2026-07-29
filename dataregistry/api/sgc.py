@@ -19,7 +19,7 @@ from sqlalchemy.exc import IntegrityError
 
 from dataregistry.api import file_utils, s3, query
 from dataregistry.api.db import DataRegistryReadWriteDB
-from dataregistry.api.model import SGCPhenotype, SGCCohort, SGCCohortFile, SGCCasesControlsMetadata, SGCCoOccurrenceMetadata, SGCPhenotypeCaseTotals, SGCPhenotypeCaseCountsBySex, User, NewUserRequest, SGCGWASFile, SGCGWASCohort, SGCGWASValidationJob, SGCGWASPlotResult, SGCMAResult, MAIgnoreEntry, MAIgnoreCreateRequest, SGCLiftoverJob
+from dataregistry.api.model import SGCPhenotype, SGCCohort, SGCCohortFile, SGCCasesControlsMetadata, SGCCoOccurrenceMetadata, SGCPhenotypeCaseTotals, SGCPhenotypeCaseCountsBySex, User, NewUserRequest, SGCGWASFile, SGCGWASCohort, SGCGWASValidationJob, SGCGWASPlotResult, SGCMAResult, MAIgnoreEntry, MAIgnoreCreateRequest, SGCLiftoverJob, MARunRequest
 from dataregistry.api.api import get_current_user
 
 router = fastapi.APIRouter()
@@ -2728,6 +2728,26 @@ async def get_ma_top_loci(run_id: str, user: User = Depends(get_sgc_user)):
         return []
     header = lines[0].split("\t")
     return [dict(zip(header, ln.split("\t"))) for ln in lines[1:]]
+
+
+@router.post("/sgc/ma/run")
+async def launch_sgc_ma_run(req: MARunRequest, user: User = Depends(get_sgc_user)):
+    if not check_review_permissions(user):
+        raise fastapi.HTTPException(status_code=403,
+            detail="You need sgc-review-data permission to launch a meta-analysis")
+    if len(req.file_ids) < 2:
+        raise fastapi.HTTPException(status_code=400,
+            detail="A meta-analysis needs at least two GWAS files")
+    from sgc_ma import submit_ma_batch
+    run_id = query.insert_sgc_ma_run(
+        engine, req.phenotype, req.ancestry, run_type="manual", label=req.label,
+        dataset_file_ids=req.file_ids, maf_min=req.maf_min, info_min=req.info_min,
+        submitted_by=user.user_name)
+    batch = boto3.client("batch", region_name=s3.S3_REGION)
+    submit_ma_batch.submit_run(engine=engine, batch=batch, run_id=run_id,
+                               bucket=s3.BASE_BUCKET,
+                               db_name=os.environ.get("DATA_REGISTRY_DB_NAME", "dataregistry_qa"))
+    return {"run_id": run_id}
 
 
 @router.get("/sgc/ma/ignore", response_model=list[MAIgnoreEntry])
