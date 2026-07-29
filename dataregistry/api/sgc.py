@@ -1782,6 +1782,17 @@ class GWASUploadConfirmRequest(BaseModel):
     metadata: Optional[Dict] = None
 
 
+def _require_imputation_quality_mapping(column_mapping: dict):
+    """New GWAS uploads must map an imputation-quality (INFO) column. Raises 400
+    if col_imputation_quality is absent, None, or blank. Applies only to the two
+    GWAS-file create endpoints (not the phase-0 /sgc/cohort-files endpoint)."""
+    value = (column_mapping or {}).get("col_imputation_quality")
+    if not (value and str(value).strip()):
+        raise fastapi.HTTPException(
+            status_code=400,
+            detail="An INFO / imputation-quality column mapping (col_imputation_quality) is required.")
+
+
 @router.post("/sgc/gwas-upload-url")
 async def generate_gwas_upload_url(request: GWASUploadInitRequest, user: User = Depends(get_sgc_user)):
     try:
@@ -1823,7 +1834,9 @@ async def confirm_gwas_upload(request: GWASUploadConfirmRequest, background_task
         cohort_owner = cohort_data[0]['uploaded_by']
         if not (cohort_owner == user.user_name or check_review_permissions(user)):
             raise fastapi.HTTPException(status_code=403, detail="You can only upload files to cohorts you own")
-        
+
+        _require_imputation_quality_mapping(request.column_mapping)
+
         # Check for duplicate GWAS file
         existing = query.get_sgc_gwas_file_by_s3_path(engine, request.s3_key)
         if existing:
@@ -1957,7 +1970,9 @@ async def upload_gwas_stream(
             col_map = json.loads(column_mapping_str)
         except json.JSONDecodeError as e:
             raise fastapi.HTTPException(status_code=400, detail=f"Invalid column_mapping JSON: {str(e)}")
-        
+
+        _require_imputation_quality_mapping(col_map)
+
         meta_dict = {}
         if metadata_str:
             try:
