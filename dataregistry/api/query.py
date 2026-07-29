@@ -2430,29 +2430,7 @@ def update_qc_run_status(engine, run_id, status, overall_verdict=None,
 
 # SGC GWAS meta-analysis (MA) result queries
 
-MA_INSERT_SQL = """
-    INSERT INTO sgc_gwas_ma_results (id, phenotype, ancestry, status)
-    VALUES (:id, :phenotype, :ancestry, 'PENDING')
-    ON DUPLICATE KEY UPDATE
-        status='PENDING',
-        batch_job_id=NULL,
-        meta_lambda_gc=NULL,
-        n_meta_variants=NULL,
-        n_genome_wide_sig=NULL,
-        n_cohorts=NULL,
-        n_cohorts_used=NULL,
-        total_cases=NULL,
-        total_controls=NULL,
-        manhattan_s3_key=NULL,
-        qq_s3_key=NULL,
-        meta_s3_key=NULL,
-        summary_json_s3_key=NULL,
-        summary_tsv_s3_key=NULL,
-        top_loci_s3_key=NULL,
-        error_message=NULL
-"""
-
-MA_LIST_SQL = """
+_MA_SELECT_COLS = """
     SELECT
         id, phenotype, ancestry, status,
         meta_lambda_gc, n_meta_variants, n_genome_wide_sig, n_cohorts, n_cohorts_used,
@@ -2460,38 +2438,57 @@ MA_LIST_SQL = """
         manhattan_s3_key, qq_s3_key, meta_s3_key,
         summary_json_s3_key, summary_tsv_s3_key, top_loci_s3_key,
         batch_job_id, error_message,
+        label, run_type, dataset_file_ids, maf_min, info_min, submitted_by,
         created_at, updated_at
-    FROM sgc_gwas_ma_results
-    ORDER BY updated_at DESC
 """
+
+MA_LIST_SQL = _MA_SELECT_COLS + " FROM sgc_gwas_ma_results ORDER BY created_at DESC"
 
 
 def _format_sgc_ma_row(d: dict) -> dict:
-    """Format a raw DB row for sgc_gwas_ma_results, converting the binary id to a hex string."""
+    """Format a raw DB row for sgc_gwas_ma_results: binary id -> hex str, dataset_file_ids JSON -> list."""
     if isinstance(d.get('id'), (bytes, bytearray)):
         d['id'] = d['id'].decode('ascii')
+    v = d.get('dataset_file_ids')
+    if isinstance(v, (str, bytes, bytearray)):
+        d['dataset_file_ids'] = json.loads(v)
     return d
 
 
-def insert_sgc_ma_pending(engine, phenotype: str, ancestry: str) -> str:
-    """Create a PENDING meta-analysis result row for (phenotype, ancestry); if one already
-    exists, reset it to PENDING and clear all result fields. Returns the row's hex id.
-    """
-    ma_id = str(uuid.uuid4()).replace('-', '')
+def insert_sgc_ma_run(engine, phenotype: str, ancestry: str, *, run_type: str = "auto",
+                      label=None, dataset_file_ids=None, maf_min=None, info_min=None,
+                      submitted_by=None) -> str:
+    """Create a fresh PENDING MA run row (never an upsert). Returns the hex run_id."""
+    run_id = str(uuid.uuid4()).replace('-', '')
     with engine.connect() as conn:
-        conn.execute(text(MA_INSERT_SQL), {
-            'id': ma_id,
-            'phenotype': phenotype,
-            'ancestry': ancestry,
+        conn.execute(text("""
+            INSERT INTO sgc_gwas_ma_results
+                (id, phenotype, ancestry, status, run_type, label,
+                 dataset_file_ids, maf_min, info_min, submitted_by)
+            VALUES (:id, :phenotype, :ancestry, 'PENDING', :run_type, :label,
+                 :dataset_file_ids, :maf_min, :info_min, :submitted_by)
+        """), {
+            'id': run_id, 'phenotype': phenotype, 'ancestry': ancestry,
+            'run_type': run_type, 'label': label,
+            'dataset_file_ids': json.dumps(list(dataset_file_ids)) if dataset_file_ids is not None else None,
+            'maf_min': maf_min, 'info_min': info_min, 'submitted_by': submitted_by,
         })
         conn.commit()
-    return ma_id
+    return run_id
+
+
+def get_sgc_ma_run(engine, run_id: str) -> Optional[dict]:
+    """A single MA run by run_id (hex), or None."""
+    with engine.connect() as conn:
+        rs = conn.execute(text(_MA_SELECT_COLS + " FROM sgc_gwas_ma_results WHERE id = :id"),
+                          {'id': run_id})
+        row = rs.fetchone()
+    return _format_sgc_ma_row(dict(row._mapping)) if row else None
 
 
 def update_sgc_ma_result(
     engine,
-    phenotype: str,
-    ancestry: str,
+    run_id: str,
     *,
     status: str,
     batch_job_id: Optional[str] = None,
@@ -2513,8 +2510,7 @@ def update_sgc_ma_result(
     """Partial update: only non-None fields are written; others left alone via COALESCE.
 
     Optional fields default to None, in which case the existing DB value is preserved
-    (COALESCE). To clear a previously-set field, re-call insert_sgc_ma_pending
-    instead. Raises ValueError if no row matches (phenotype, ancestry).
+    (COALESCE). Raises ValueError if no row matches run_id.
     """
     with engine.connect() as conn:
         result = conn.execute(text("""
@@ -2535,7 +2531,7 @@ def update_sgc_ma_result(
                 summary_tsv_s3_key = COALESCE(:summary_tsv_s3_key, summary_tsv_s3_key),
                 top_loci_s3_key = COALESCE(:top_loci_s3_key, top_loci_s3_key),
                 error_message = COALESCE(:error_message, error_message)
-            WHERE phenotype = :phenotype AND ancestry = :ancestry
+            WHERE id = :run_id
         """), {
             'status': status,
             'batch_job_id': batch_job_id,
@@ -2553,18 +2549,17 @@ def update_sgc_ma_result(
             'summary_tsv_s3_key': summary_tsv_s3_key,
             'top_loci_s3_key': top_loci_s3_key,
             'error_message': error_message,
-            'phenotype': phenotype,
-            'ancestry': ancestry,
+            'run_id': run_id,
         })
         if result.rowcount == 0:
             raise ValueError(
-                f"No sgc_gwas_ma_results row found for phenotype={phenotype}, ancestry={ancestry}"
+                f"No sgc_gwas_ma_results row found for run_id={run_id}"
             )
         conn.commit()
 
 
 def get_sgc_ma_results(engine) -> list[dict]:
-    """All meta-analysis results, ordered by updated_at desc (most recently updated first)."""
+    """All meta-analysis runs, ordered by created_at desc (most recently created first)."""
     with engine.connect() as conn:
         rs = conn.execute(text(MA_LIST_SQL))
         return [_format_sgc_ma_row(dict(r._mapping)) for r in rs]
