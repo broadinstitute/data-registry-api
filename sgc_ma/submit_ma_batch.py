@@ -12,6 +12,17 @@ JOB_DEFINITION = os.getenv("SGC_MA_JOB_DEFINITION", "sgc-gwas-ma-job")
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
 
 
+def submit_run(*, engine, batch, run_id, bucket, db_name):
+    resp = batch.submit_job(
+        jobName=f"sgc-ma-{run_id}"[:120],
+        jobQueue=JOB_QUEUE, jobDefinition=JOB_DEFINITION,
+        parameters={"run-id": run_id, "bucket": bucket},
+        containerOverrides={"environment": [{"name": "DATA_REGISTRY_DB_NAME", "value": db_name}]},
+    )
+    query.update_sgc_ma_result(engine, run_id, status="PENDING", batch_job_id=resp["jobId"])
+    return resp["jobId"]
+
+
 def submit(*, engine, batch, phenotype, ancestry, bucket, db_name, dry_run):
     cohorts = select_cohorts(engine, phenotype, ancestry)
     click.echo(f"{phenotype}/{ancestry}: {len(cohorts)} cohorts")
@@ -19,16 +30,10 @@ def submit(*, engine, batch, phenotype, ancestry, bucket, db_name, dry_run):
         click.echo(f"  {c['dataset']}")
     if dry_run:
         return None
-    query.insert_sgc_ma_pending(engine, phenotype, ancestry)
-    resp = batch.submit_job(
-        jobName=f"sgc-ma-{phenotype}-{ancestry}"[:120],
-        jobQueue=JOB_QUEUE, jobDefinition=JOB_DEFINITION,
-        parameters={"phenotype": phenotype, "ancestry": ancestry, "bucket": bucket},
-        containerOverrides={"environment": [{"name": "DATA_REGISTRY_DB_NAME", "value": db_name}]},
-    )
-    query.update_sgc_ma_result(engine, phenotype, ancestry, status="PENDING",
-                               batch_job_id=resp["jobId"])
-    return resp["jobId"]
+    run_id = query.insert_sgc_ma_run(engine, phenotype, ancestry, run_type="auto",
+                                     dataset_file_ids=[c["file_id"] for c in cohorts],
+                                     maf_min=0.005, info_min=0.3)
+    return submit_run(engine=engine, batch=batch, run_id=run_id, bucket=bucket, db_name=db_name)
 
 
 @click.command()

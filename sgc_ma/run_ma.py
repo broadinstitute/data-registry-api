@@ -147,30 +147,31 @@ def meta_analyze(cohorts: list[dict], chunks_fn, outdir: str, label: str = "meta
 
 
 @click.command()
-@click.option("--phenotype", required=True)
-@click.option("--ancestry", required=True)
+@click.option("--run-id", required=True)
 @click.option("--bucket", required=True)
-@click.option("--out-prefix", default=None, help="S3 prefix; default sgc/ma/{pheno}/{anc}")
 @click.option("--local-out", default="ma_out", help="local working dir")
-def main(phenotype, ancestry, bucket, out_prefix, local_out):
+def main(run_id, bucket, local_out):
     from dataregistry.api import query
     from dataregistry.api.db import DataRegistryReadWriteDB
     engine = DataRegistryReadWriteDB().get_engine()
-    prefix = out_prefix or f"sgc/ma/{phenotype}/{ancestry}"
+    run = query.get_sgc_ma_run(engine, run_id)
+    if not run:
+        raise SystemExit(f"no MA run {run_id}")
+    phenotype, ancestry = run["phenotype"], run["ancestry"]
+    file_ids = run.get("dataset_file_ids") or []
+    maf_min = 0.005 if run.get("maf_min") is None else run["maf_min"]
+    info_min = 0.3 if run.get("info_min") is None else run["info_min"]
+    prefix = f"sgc/ma/{phenotype}/{ancestry}/{run_id}"
 
-    query.insert_sgc_ma_pending(engine, phenotype, ancestry)
     # AWS Batch injects AWS_BATCH_JOB_ID into every job container. Record it so a
-    # completed row stays traceable to the Batch job that produced it. The
-    # insert_sgc_ma_pending above reset batch_job_id to NULL, so we re-set it
-    # here from the job we're actually running as (None on local runs, where
-    # COALESCE then leaves the column NULL).
-    query.update_sgc_ma_result(engine, phenotype, ancestry, status="RUNNING",
+    # completed row stays traceable to the Batch job that produced it (None on
+    # local runs, where COALESCE then leaves the column untouched).
+    query.update_sgc_ma_result(engine, run_id, status="RUNNING",
                                batch_job_id=os.environ.get("AWS_BATCH_JOB_ID"))
     try:
-        cohorts = sel.select_cohorts(engine, phenotype, ancestry)
+        cohorts = sel.select_cohorts_by_file_ids(engine, file_ids)
         ignored = sel.ignored_cohorts(engine, phenotype, ancestry)
-        click.echo(f"selected {len(cohorts)} cohorts ({len(ignored)} ignore-listed) "
-                   f"for {phenotype}/{ancestry}")
+        click.echo(f"run {run_id}: {len(cohorts)} cohorts for {phenotype}/{ancestry}")
         s3 = boto3.client("s3", region_name="us-east-1")
 
         def chunks_fn(co):
@@ -183,7 +184,8 @@ def main(phenotype, ancestry, bucket, out_prefix, local_out):
                 yield from read_cohort_chunks(local, co["column_mapping"], co.get("cases"), co.get("controls"))
 
         summary = meta_analyze(cohorts, chunks_fn, local_out,
-                               label=f"{phenotype} {ancestry} meta-analysis", ignored=ignored)
+                               label=f"{phenotype} {ancestry} meta-analysis", ignored=ignored,
+                               maf_min=maf_min, info_min=info_min)
         for name in ["meta.tsv.gz", "manhattan.png", "qq.png", "summary.json", "summary.tsv", "top_loci.tsv"]:
             p = os.path.join(local_out, name)
             if os.path.exists(p):
@@ -193,7 +195,7 @@ def main(phenotype, ancestry, bucket, out_prefix, local_out):
         click.echo(json.dumps(summary, indent=2))
 
         query.update_sgc_ma_result(
-            engine, phenotype, ancestry, status="SUCCEEDED",
+            engine, run_id, status="SUCCEEDED",
             meta_lambda_gc=summary["meta_lambda_gc"],
             n_meta_variants=summary["n_meta_variants"],
             n_genome_wide_sig=summary["n_genome_wide_sig"],
@@ -209,7 +211,7 @@ def main(phenotype, ancestry, bucket, out_prefix, local_out):
             top_loci_s3_key=f"{prefix}/top_loci.tsv",
         )
     except Exception as e:
-        query.update_sgc_ma_result(engine, phenotype, ancestry, status="FAILED",
+        query.update_sgc_ma_result(engine, run_id, status="FAILED",
                                    error_message=str(e))
         raise
 

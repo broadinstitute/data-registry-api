@@ -140,17 +140,19 @@ def test_main_records_batch_job_id_and_content_types(tmp_path, monkeypatch):
     import dataregistry.api.db as db
 
     updates = []
-    monkeypatch.setattr(q, "insert_sgc_ma_pending", lambda *a, **k: "id")
+    monkeypatch.setattr(q, "get_sgc_ma_run", lambda *a, **k: {
+        "id": "run-xyz", "phenotype": "PH", "ancestry": "EUR",
+        "dataset_file_ids": ["a", "b"], "maf_min": 0.005, "info_min": 0.3})
     monkeypatch.setattr(q, "update_sgc_ma_result", lambda *a, **k: updates.append(k))
 
     class _DummyDB:
         def get_engine(self):
             return object()
     monkeypatch.setattr(db, "DataRegistryReadWriteDB", _DummyDB)
-    monkeypatch.setattr(rm.sel, "select_cohorts", lambda *a, **k: [])
+    monkeypatch.setattr(rm.sel, "select_cohorts_by_file_ids", lambda *a, **k: [])
     monkeypatch.setattr(rm.sel, "ignored_cohorts", lambda *a, **k: [])
 
-    def fake_meta(cohorts, chunks_fn, outdir, label="", ignored=None):
+    def fake_meta(cohorts, chunks_fn, outdir, label="", ignored=None, maf_min=0.005, info_min=0.3):
         import os
         os.makedirs(outdir, exist_ok=True)
         for n in ["meta.tsv.gz", "manhattan.png", "qq.png", "summary.json", "summary.tsv", "top_loci.tsv"]:
@@ -170,8 +172,8 @@ def test_main_records_batch_job_id_and_content_types(tmp_path, monkeypatch):
     monkeypatch.setattr(rm.boto3, "client", lambda *a, **k: FakeS3())
     monkeypatch.setenv("AWS_BATCH_JOB_ID", "job-xyz")
 
-    res = CliRunner().invoke(rm.main, ["--phenotype", "PH", "--ancestry", "EUR",
-                                       "--bucket", "b", "--local-out", str(tmp_path / "out")])
+    res = CliRunner().invoke(rm.main, ["--run-id", "run-xyz", "--bucket", "b",
+                                       "--local-out", str(tmp_path / "out")])
     assert res.exit_code == 0, res.output
 
     # (a) the RUNNING update carried this container's Batch job id
@@ -183,12 +185,12 @@ def test_main_records_batch_job_id_and_content_types(tmp_path, monkeypatch):
 
     # (b) every artifact uploaded with the right ContentType
     ct = {k: (ea or {}).get("ContentType") for k, ea in uploads}
-    assert ct["sgc/ma/PH/EUR/manhattan.png"] == "image/png"
-    assert ct["sgc/ma/PH/EUR/qq.png"] == "image/png"
-    assert ct["sgc/ma/PH/EUR/summary.json"] == "application/json"
-    assert ct["sgc/ma/PH/EUR/summary.tsv"] == "text/tab-separated-values"
-    assert ct["sgc/ma/PH/EUR/top_loci.tsv"] == "text/tab-separated-values"
-    assert ct["sgc/ma/PH/EUR/meta.tsv.gz"] == "application/gzip"
+    assert ct["sgc/ma/PH/EUR/run-xyz/manhattan.png"] == "image/png"
+    assert ct["sgc/ma/PH/EUR/run-xyz/qq.png"] == "image/png"
+    assert ct["sgc/ma/PH/EUR/run-xyz/summary.json"] == "application/json"
+    assert ct["sgc/ma/PH/EUR/run-xyz/summary.tsv"] == "text/tab-separated-values"
+    assert ct["sgc/ma/PH/EUR/run-xyz/top_loci.tsv"] == "text/tab-separated-values"
+    assert ct["sgc/ma/PH/EUR/run-xyz/meta.tsv.gz"] == "application/gzip"
 
 
 def test_main_local_run_leaves_batch_job_id_none(tmp_path, monkeypatch):
@@ -200,14 +202,16 @@ def test_main_local_run_leaves_batch_job_id_none(tmp_path, monkeypatch):
     import dataregistry.api.db as db
 
     updates = []
-    monkeypatch.setattr(q, "insert_sgc_ma_pending", lambda *a, **k: "id")
+    monkeypatch.setattr(q, "get_sgc_ma_run", lambda *a, **k: {
+        "id": "run-xyz", "phenotype": "PH", "ancestry": "EUR",
+        "dataset_file_ids": ["a", "b"], "maf_min": 0.005, "info_min": 0.3})
     monkeypatch.setattr(q, "update_sgc_ma_result", lambda *a, **k: updates.append(k))
 
     class _DummyDB:
         def get_engine(self):
             return object()
     monkeypatch.setattr(db, "DataRegistryReadWriteDB", _DummyDB)
-    monkeypatch.setattr(rm.sel, "select_cohorts", lambda *a, **k: [])
+    monkeypatch.setattr(rm.sel, "select_cohorts_by_file_ids", lambda *a, **k: [])
     monkeypatch.setattr(rm.sel, "ignored_cohorts", lambda *a, **k: [])
     monkeypatch.setattr(rm, "meta_analyze",
                         lambda *a, **k: {"meta_lambda_gc": None, "n_meta_variants": 0,
@@ -222,8 +226,8 @@ def test_main_local_run_leaves_batch_job_id_none(tmp_path, monkeypatch):
     monkeypatch.setattr(rm.boto3, "client", lambda *a, **k: FakeS3())
     monkeypatch.delenv("AWS_BATCH_JOB_ID", raising=False)
 
-    res = CliRunner().invoke(rm.main, ["--phenotype", "PH", "--ancestry", "EUR",
-                                       "--bucket", "b", "--local-out", str(tmp_path / "out")])
+    res = CliRunner().invoke(rm.main, ["--run-id", "run-xyz", "--bucket", "b",
+                                       "--local-out", str(tmp_path / "out")])
     assert res.exit_code == 0, res.output
     running = [u for u in updates if u.get("status") == "RUNNING"]
     assert running and running[0].get("batch_job_id") is None
