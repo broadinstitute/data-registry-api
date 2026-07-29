@@ -77,13 +77,11 @@ Resources:
         Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/sgc-gwas-ma-repo'
         # Image ENTRYPOINT is ["python", "-m", "sgc_ma.run_ma"];
         # the values below are appended as CLI args by the submitter. The MA
-        # worker selects cohorts + downloads them itself, so it needs only the
-        # phenotype/ancestry/bucket (no s3-path/column-mapping like QC/LDSC).
+        # worker looks the run up by id and reads phenotype/ancestry/selection/
+        # thresholds off the run row itself, so it needs only run-id + bucket.
         Command:
-          - '--phenotype'
-          - 'Ref::phenotype'
-          - '--ancestry'
-          - 'Ref::ancestry'
+          - '--run-id'
+          - 'Ref::run-id'
           - '--bucket'
           - 'Ref::bucket'
         JobRoleArn: !GetAtt MaJobRole.Arn
