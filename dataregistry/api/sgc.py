@@ -2633,14 +2633,20 @@ async def get_qc_json(file_id: str, user: User = Depends(get_sgc_user)):
 # SGC GWAS Meta-Analysis (MA) Results (Manhattan / QQ / meta / summary / top loci)
 # ---------------------------------------------------------------------------
 
-def _ma_lookup(phenotype: str, ancestry: str) -> dict:
-    """Find the MA result row matching (phenotype, ancestry). 404 if missing."""
-    rows = [r for r in query.get_sgc_ma_results(engine)
-            if r["phenotype"] == phenotype and r["ancestry"] == ancestry]
-    if not rows:
-        raise fastapi.HTTPException(status_code=404,
-                                    detail="No meta-analysis results for that phenotype/ancestry")
-    return rows[0]
+def _ma_run_lookup(run_id: str) -> dict:
+    row = query.get_sgc_ma_run(engine, run_id)
+    if not row:
+        raise fastapi.HTTPException(status_code=404, detail="No meta-analysis run with that id")
+    return row
+
+
+@router.get("/sgc/ma/candidates/{phenotype}/{ancestry}")
+async def list_ma_candidates_endpoint(phenotype: str, ancestry: str, user: User = Depends(get_sgc_user)):
+    if not check_review_permissions(user):
+        raise fastapi.HTTPException(status_code=403,
+            detail="You need sgc-review-data permission to view meta-analysis candidates")
+    from sgc_ma import select as sel
+    return sel.list_ma_candidates(engine, phenotype, ancestry)
 
 
 @router.get("/sgc/ma/results", response_model=list[SGCMAResult])
@@ -2651,39 +2657,39 @@ async def list_sgc_ma_results(user: User = Depends(get_sgc_user)):
     return query.get_sgc_ma_results(engine)
 
 
-@router.get("/sgc/ma/results/{phenotype}/{ancestry}/manhattan")
-async def get_ma_manhattan(phenotype: str, ancestry: str, user: User = Depends(get_sgc_user)):
+@router.get("/sgc/ma/runs/{run_id}/manhattan")
+async def get_ma_manhattan(run_id: str, user: User = Depends(get_sgc_user)):
     if not check_review_permissions(user):
         raise fastapi.HTTPException(status_code=403,
             detail="You need sgc-review-data permission to view meta-analysis results")
-    row = _ma_lookup(phenotype, ancestry)
+    row = _ma_run_lookup(run_id)
     return {"url": _qc_plots_presign(row.get("manhattan_s3_key"))}
 
 
-@router.get("/sgc/ma/results/{phenotype}/{ancestry}/qq")
-async def get_ma_qq(phenotype: str, ancestry: str, user: User = Depends(get_sgc_user)):
+@router.get("/sgc/ma/runs/{run_id}/qq")
+async def get_ma_qq(run_id: str, user: User = Depends(get_sgc_user)):
     if not check_review_permissions(user):
         raise fastapi.HTTPException(status_code=403,
             detail="You need sgc-review-data permission to view meta-analysis results")
-    row = _ma_lookup(phenotype, ancestry)
+    row = _ma_run_lookup(run_id)
     return {"url": _qc_plots_presign(row.get("qq_s3_key"))}
 
 
-@router.get("/sgc/ma/results/{phenotype}/{ancestry}/meta")
-async def get_ma_meta(phenotype: str, ancestry: str, user: User = Depends(get_sgc_user)):
+@router.get("/sgc/ma/runs/{run_id}/meta")
+async def get_ma_meta(run_id: str, user: User = Depends(get_sgc_user)):
     if not check_review_permissions(user):
         raise fastapi.HTTPException(status_code=403,
             detail="You need sgc-review-data permission to view meta-analysis results")
-    row = _ma_lookup(phenotype, ancestry)
+    row = _ma_run_lookup(run_id)
     return {"url": _qc_plots_presign(row.get("meta_s3_key"))}
 
 
-@router.get("/sgc/ma/results/{phenotype}/{ancestry}/summary")
-async def get_ma_summary(phenotype: str, ancestry: str, user: User = Depends(get_sgc_user)):
+@router.get("/sgc/ma/runs/{run_id}/summary")
+async def get_ma_summary(run_id: str, user: User = Depends(get_sgc_user)):
     if not check_review_permissions(user):
         raise fastapi.HTTPException(status_code=403,
             detail="You need sgc-review-data permission to view meta-analysis results")
-    row = _ma_lookup(phenotype, ancestry)
+    row = _ma_run_lookup(run_id)
     key = row.get("summary_json_s3_key")
     if not key:
         raise fastapi.HTTPException(status_code=404, detail="Summary not yet available")
@@ -2699,12 +2705,12 @@ async def get_ma_summary(phenotype: str, ancestry: str, user: User = Depends(get
                                       media_type="application/json")
 
 
-@router.get("/sgc/ma/results/{phenotype}/{ancestry}/top-loci")
-async def get_ma_top_loci(phenotype: str, ancestry: str, user: User = Depends(get_sgc_user)):
+@router.get("/sgc/ma/runs/{run_id}/top-loci")
+async def get_ma_top_loci(run_id: str, user: User = Depends(get_sgc_user)):
     if not check_review_permissions(user):
         raise fastapi.HTTPException(status_code=403,
             detail="You need sgc-review-data permission to view meta-analysis results")
-    row = _ma_lookup(phenotype, ancestry)
+    row = _ma_run_lookup(run_id)
     key = row.get("top_loci_s3_key")
     if not key:
         raise fastapi.HTTPException(status_code=404, detail="Top loci not yet available")

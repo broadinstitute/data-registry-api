@@ -58,6 +58,12 @@ MA_ROW = {
     "error_message": None,
     "created_at": None,
     "updated_at": None,
+    "label": None,
+    "run_type": "auto",
+    "dataset_file_ids": ["a", "b"],
+    "maf_min": 0.005,
+    "info_min": 0.3,
+    "submitted_by": None,
 }
 
 
@@ -75,9 +81,9 @@ def test_list_sgc_ma_results_no_permission_403(monkeypatch):
 
 
 def test_ma_lookup_not_found_404(monkeypatch):
-    monkeypatch.setattr(query, "get_sgc_ma_results", lambda engine: [])
+    monkeypatch.setattr(query, "get_sgc_ma_run", lambda engine, run_id: None)
     with pytest.raises(HTTPException) as exc_info:
-        sgc._ma_lookup("NOPE", "EUR")
+        sgc._ma_run_lookup("nope")
     assert exc_info.value.status_code == 404
 
 
@@ -87,47 +93,47 @@ def test_ma_lookup_not_found_404(monkeypatch):
     (sgc.get_ma_meta, "meta_s3_key"),
 ])
 def test_ma_plot_routes_return_presigned_url(monkeypatch, route_fn, key):
-    monkeypatch.setattr(query, "get_sgc_ma_results", lambda engine: [MA_ROW])
+    monkeypatch.setattr(query, "get_sgc_ma_run", lambda engine, run_id: MA_ROW)
     monkeypatch.setattr(sgc, "_qc_plots_presign", lambda s3_key: f"https://presigned/{s3_key}")
-    result = run(route_fn("ATOPIC_DERM", "EUR", user=make_user()))
+    result = run(route_fn("run-abc", user=make_user()))
     assert result == {"url": f"https://presigned/{MA_ROW[key]}"}
 
 
 @pytest.mark.parametrize("route_fn", [sgc.get_ma_manhattan, sgc.get_ma_qq, sgc.get_ma_meta])
 def test_ma_plot_routes_no_permission_403(monkeypatch, route_fn):
-    monkeypatch.setattr(query, "get_sgc_ma_results", lambda engine: [MA_ROW])
+    monkeypatch.setattr(query, "get_sgc_ma_run", lambda engine, run_id: MA_ROW)
     with pytest.raises(HTTPException) as exc_info:
-        run(route_fn("ATOPIC_DERM", "EUR", user=make_user(with_review_perm=False)))
+        run(route_fn("run-abc", user=make_user(with_review_perm=False)))
     assert exc_info.value.status_code == 403
 
 
 def test_get_ma_summary_streams_json_from_s3(monkeypatch):
-    monkeypatch.setattr(query, "get_sgc_ma_results", lambda engine: [MA_ROW])
+    monkeypatch.setattr(query, "get_sgc_ma_run", lambda engine, run_id: MA_ROW)
     mock_s3 = type("S3", (), {})()
     body = b'{"n_cohorts": 3, "lead_snps": 5}'
     mock_s3.get_object = lambda Bucket, Key: {"Body": BytesIO(body)}
     monkeypatch.setattr(sgc.boto3, "client", lambda *a, **kw: mock_s3)
 
-    response = run(sgc.get_ma_summary("ATOPIC_DERM", "EUR", user=make_user()))
+    response = run(sgc.get_ma_summary("run-abc", user=make_user()))
     assert response.body == body
     assert response.media_type == "application/json"
 
 
 def test_get_ma_summary_no_permission_403(monkeypatch):
-    monkeypatch.setattr(query, "get_sgc_ma_results", lambda engine: [MA_ROW])
+    monkeypatch.setattr(query, "get_sgc_ma_run", lambda engine, run_id: MA_ROW)
     with pytest.raises(HTTPException) as exc_info:
-        run(sgc.get_ma_summary("ATOPIC_DERM", "EUR", user=make_user(with_review_perm=False)))
+        run(sgc.get_ma_summary("run-abc", user=make_user(with_review_perm=False)))
     assert exc_info.value.status_code == 403
 
 
 def test_get_ma_top_loci_parses_tsv_to_rows(monkeypatch):
-    monkeypatch.setattr(query, "get_sgc_ma_results", lambda engine: [MA_ROW])
+    monkeypatch.setattr(query, "get_sgc_ma_run", lambda engine, run_id: MA_ROW)
     tsv = "chrom\tpos\trsid\tp_value\n1\t12345\trs1\t1e-9\n2\t67890\trs2\t5e-10\n"
     mock_s3 = type("S3", (), {})()
     mock_s3.get_object = lambda Bucket, Key: {"Body": BytesIO(tsv.encode())}
     monkeypatch.setattr(sgc.boto3, "client", lambda *a, **kw: mock_s3)
 
-    result = run(sgc.get_ma_top_loci("ATOPIC_DERM", "EUR", user=make_user()))
+    result = run(sgc.get_ma_top_loci("run-abc", user=make_user()))
     assert result == [
         {"chrom": "1", "pos": "12345", "rsid": "rs1", "p_value": "1e-9"},
         {"chrom": "2", "pos": "67890", "rsid": "rs2", "p_value": "5e-10"},
@@ -135,7 +141,20 @@ def test_get_ma_top_loci_parses_tsv_to_rows(monkeypatch):
 
 
 def test_get_ma_top_loci_no_permission_403(monkeypatch):
-    monkeypatch.setattr(query, "get_sgc_ma_results", lambda engine: [MA_ROW])
+    monkeypatch.setattr(query, "get_sgc_ma_run", lambda engine, run_id: MA_ROW)
     with pytest.raises(HTTPException) as exc_info:
-        run(sgc.get_ma_top_loci("ATOPIC_DERM", "EUR", user=make_user(with_review_perm=False)))
+        run(sgc.get_ma_top_loci("run-abc", user=make_user(with_review_perm=False)))
     assert exc_info.value.status_code == 403
+
+
+def test_list_ma_candidates_endpoint_returns_rows(monkeypatch):
+    import sgc_ma.select as sel
+    monkeypatch.setattr(sel, "list_ma_candidates", lambda engine, p, a: [{"file_id": "1", "cohort": "C"}])
+    result = run(sgc.list_ma_candidates_endpoint("PH", "EUR", user=make_user()))
+    assert result == [{"file_id": "1", "cohort": "C"}]
+
+
+def test_list_ma_candidates_endpoint_no_permission_403(monkeypatch):
+    with pytest.raises(HTTPException) as e:
+        run(sgc.list_ma_candidates_endpoint("PH", "EUR", user=make_user(with_review_perm=False)))
+    assert e.value.status_code == 403
