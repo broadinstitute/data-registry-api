@@ -27,7 +27,7 @@ Resources:
       ServiceRole: !GetAtt BatchServiceRole.Arn
       ComputeResources:
         Type: Fargate
-        MaxvCpus: 32
+        MaxvCpus: 2048
         Subnets:
           - subnet-041ed74e61806c6f0
         SecurityGroupIds:
@@ -108,6 +108,7 @@ Resources:
                 Action:
                   - s3:GetObject
                   - s3:PutObject
+                  - s3:ListBucket
                 Resource:
                   - 'arn:aws:s3:::dig-data-registry'
                   - 'arn:aws:s3:::dig-data-registry/*'
