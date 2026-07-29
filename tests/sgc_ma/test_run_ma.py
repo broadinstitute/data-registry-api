@@ -229,6 +229,27 @@ def test_main_local_run_leaves_batch_job_id_none(tmp_path, monkeypatch):
     assert running and running[0].get("batch_job_id") is None
 
 
+def test_meta_analyze_records_filter_stats_per_cohort(tmp_path):
+    cohorts = [{"file_id": "a", "dataset": "A", "cases": 1, "controls": 1},
+               {"file_id": "b", "dataset": "B", "cases": 1, "controls": 1}]
+    base = dict(se=0.1, pvalue=0.01, n=1000)
+    frames = {
+        # A: shared variant kept + a rare (MAF<0.005) variant dropped; INFO present
+        "a": _norm([dict(chromosome="1", position=100, ea="G", oa="A", beta=0.2, eaf=0.3, info=0.9, **base),
+                    dict(chromosome="3", position=10, ea="A", oa="G", beta=0.2, eaf=0.001, info=0.9, **base)]),
+        # B: shared variant, no INFO column at all
+        "b": _norm([dict(chromosome="1", position=100, ea="A", oa="G", beta=-0.2, eaf=0.3, **base)]),
+    }
+    summary = meta_analyze(cohorts, lambda co: [frames[co["file_id"]]], str(tmp_path))
+    pc = {c["dataset"]: c for c in summary["per_cohort"]}
+    assert pc["A"]["n_dropped_maf"] == 1
+    assert pc["A"]["maf_filter_applicable"] is True
+    assert pc["A"]["info_filter_applicable"] is True
+    assert pc["B"]["info_filter_applicable"] is False   # B had no INFO column
+    assert pc["B"]["n_dropped_maf"] == 0
+    assert any("MAF>=0.005" in c for c in summary["caveats"])
+
+
 def test_read_meta_for_plot_keeps_chromosome_string(tmp_path):
     import gzip
     from sgc_ma.run_ma import _read_meta_for_plot

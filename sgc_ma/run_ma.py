@@ -67,7 +67,7 @@ def totals_from_per_cohort(per_cohort):
 
 
 def meta_analyze(cohorts: list[dict], chunks_fn, outdir: str, label: str = "meta-analysis",
-                 ignored: list[dict] = None) -> dict:
+                 ignored: list[dict] = None, maf_min: float = 0.005, info_min: float = 0.3) -> dict:
     os.makedirs(outdir, exist_ok=True)
     per_cohort = []
     n_cohorts_used = 0
@@ -80,7 +80,7 @@ def meta_analyze(cohorts: list[dict], chunks_fn, outdir: str, label: str = "meta
         for co in sorted(cohorts, key=lambda c: c["dataset"]):
             sorted_path = os.path.join(tmp, f"{co['file_id']}.tsv")
             try:
-                stats = extract_sorted(chunks_fn(co), sorted_path)
+                stats = extract_sorted(chunks_fn(co), sorted_path, maf_min=maf_min, info_min=info_min)
             except ValueError as e:
                 per_cohort.append({"dataset": co["dataset"], "file_id": co.get("file_id"),
                                    "cohort": co.get("cohort"),
@@ -92,7 +92,11 @@ def meta_analyze(cohorts: list[dict], chunks_fn, outdir: str, label: str = "meta
                                "cohort": co.get("cohort"),
                                "cases": co.get("cases"), "controls": co.get("controls"),
                                "n_variants_in": stats["n_in"], "n_variants_used": stats["n_kept"],
-                               "sum_n": stats["sum_n"]})
+                               "sum_n": stats["sum_n"],
+                               "n_dropped_maf": stats["n_dropped_maf"],
+                               "n_dropped_info": stats["n_dropped_info"],
+                               "maf_filter_applicable": stats["maf_filter_applicable"],
+                               "info_filter_applicable": stats["info_filter_applicable"]})
 
         # Stream the k-way merge straight to meta.tsv.gz; never buffer the
         # full merge output. sorted_paths must stay alive (inside `tmp`)
@@ -134,6 +138,7 @@ def meta_analyze(cohorts: list[dict], chunks_fn, outdir: str, label: str = "meta
                    "GRCh37-only cohorts excluded (GRCh38-effective subset only)",
                    "meta.tsv.gz rows are in lexicographic key order, not genomic order (re-sort if needed)",
                    "indels whose allele strings differ across cohorts are not merged (kept as singletons, then dropped as <2 cohorts)",
+                   f"variants filtered pre-meta: MAF>={maf_min} and INFO>={info_min} where the cohort provides those columns (see per_cohort n_dropped_*)",
                ]}
     with open(os.path.join(outdir, "summary.json"), "w") as fh:
         json.dump(summary, fh, indent=2)
