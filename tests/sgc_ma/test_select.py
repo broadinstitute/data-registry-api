@@ -79,3 +79,65 @@ def test_selection_sql_prefers_per_file_build():
     # a lifted file carries its own metadata.genome_build; prefer it over the cohort's
     assert ("COALESCE(JSON_UNQUOTE(JSON_EXTRACT(f.metadata, '$.genome_build')), "
             "JSON_UNQUOTE(JSON_EXTRACT(gc.metadata, '$.genome_build'))) AS genome_build") in _SQL
+
+
+from types import SimpleNamespace
+from sgc_ma.select import list_ma_candidates, select_cohorts_by_file_ids
+
+
+class _FakeResult:
+    def __init__(self, rows): self._rows = rows
+    def __iter__(self):
+        for r in self._rows:
+            yield SimpleNamespace(_mapping=r)
+
+
+class _FakeConn:
+    def __init__(self, rows): self._rows = rows
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+    def execute(self, *a, **k): return _FakeResult(self._rows)
+
+
+class _FakeEngine:
+    def __init__(self, rows): self._rows = rows
+    def connect(self): return _FakeConn(self._rows)
+
+
+def _cand_row(**kw):
+    base = dict(file_id="1", dataset="A", s3_path="p", column_mapping="{}", cases=1, controls=1,
+                cohort_id="c1", cohort="CohortA", ignore_reason=None, sex="All", genome_build="GRCh38")
+    base.update(kw); return base
+
+
+def test_list_ma_candidates_filters_and_maps():
+    rows = [_cand_row(file_id="1"),
+            _cand_row(file_id="2", sex="Male"),                       # excluded: sex subset
+            _cand_row(file_id="3", dataset="meta_analysis_x")]        # excluded: MA product
+    out = list_ma_candidates(_FakeEngine(rows), "PH", "EUR")
+    assert [c["file_id"] for c in out] == ["1"]
+    assert out[0]["cohort"] == "CohortA" and out[0]["ignored"] is False
+
+
+def test_list_ma_candidates_flags_ignored_but_keeps_it():
+    rows = [_cand_row(file_id="1", ignore_reason="high lambda")]
+    out = list_ma_candidates(_FakeEngine(rows), "PH", "EUR")
+    assert len(out) == 1 and out[0]["ignored"] is True               # shown, flagged, not dropped
+
+
+def test_select_cohorts_by_file_ids_coerces_and_normalizes():
+    rows = [_cand_row(file_id="1", column_mapping='{"col_chromosome": "CHR"}',
+                      genome_build="GRCh37 liftover to GRCh38")]
+    out = select_cohorts_by_file_ids(_FakeEngine(rows), ["1"])
+    assert out[0]["column_mapping"] == {"col_chromosome": "CHR"}     # JSON -> dict
+    assert out[0]["genome_build"] == "GRCh38"                        # normalized
+
+
+def test_select_cohorts_by_file_ids_empty_shortcircuits():
+    assert select_cohorts_by_file_ids(_FakeEngine([]), []) == []
+
+
+def test_sql_by_ids_targets_id_in():
+    from sgc_ma.select import _SQL_BY_IDS
+    assert "WHERE f.id IN :file_ids" in _SQL_BY_IDS
+    assert "f.phenotype = :phenotype" not in _SQL_BY_IDS

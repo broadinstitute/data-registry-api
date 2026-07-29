@@ -2,7 +2,7 @@
 import json
 from typing import Optional
 
-from sqlalchemy import text
+from sqlalchemy import text, bindparam
 
 
 def normalize_build(raw: Optional[str]) -> Optional[str]:
@@ -97,6 +97,46 @@ def select_cohorts(engine, phenotype: str, ancestry: str) -> list[dict]:
         r["genome_build"] = normalize_build(r["genome_build"])
         out.append(r)
     return out
+
+
+_SQL_BY_IDS = _SQL.replace(
+    "WHERE f.phenotype = :phenotype AND f.ancestry = :ancestry",
+    "WHERE f.id IN :file_ids")
+
+
+def list_ma_candidates(engine, phenotype: str, ancestry: str) -> list[dict]:
+    """Eligible GWAS files for a manual MA launch: the include_file() predicate
+    (sex=All, GRCh38-effective, not a meta-analysis product) with a SUCCEEDED QC
+    plot. Ignore-list status is surfaced as a flag, not a hard exclusion."""
+    with engine.connect() as c:
+        rows = [dict(r._mapping) for r in c.execute(
+            text(_SQL), {"phenotype": phenotype, "ancestry": ancestry})]
+    out = []
+    for r in rows:
+        if not include_file(r):
+            continue
+        out.append({
+            "file_id": r["file_id"], "cohort": r["cohort"], "dataset": r["dataset"],
+            "cases": r["cases"], "controls": r["controls"],
+            "genome_build": normalize_build(r["genome_build"]),
+            "ignored": r.get("ignore_reason") is not None,
+        })
+    return out
+
+
+def select_cohorts_by_file_ids(engine, file_ids) -> list[dict]:
+    """Per-cohort MA input rows for an explicit set of file_ids (the recorded
+    selection). No include_file/ignore filtering -- the selection is authoritative."""
+    ids = list(file_ids or [])
+    if not ids:
+        return []
+    q = text(_SQL_BY_IDS).bindparams(bindparam("file_ids", expanding=True))
+    with engine.connect() as c:
+        rows = [dict(r._mapping) for r in c.execute(q, {"file_ids": ids})]
+    for r in rows:
+        r["column_mapping"] = _coerce_map(r["column_mapping"])
+        r["genome_build"] = normalize_build(r["genome_build"])
+    return rows
 
 
 _IGNORED_SQL = """
