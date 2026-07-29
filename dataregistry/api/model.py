@@ -537,6 +537,12 @@ class SGCMAResult(BaseModel):
     error_message: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    label: Optional[str] = None
+    run_type: Optional[str] = None
+    dataset_file_ids: Optional[list[str]] = None
+    maf_min: Optional[float] = None
+    info_min: Optional[float] = None
+    submitted_by: Optional[str] = None
 
 
 class SGCLiftoverJob(BaseModel):
