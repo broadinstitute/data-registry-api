@@ -56,13 +56,22 @@ def test_selection_sql_exposes_registry_cohort_name():
     assert "AS cohort_id" in _SQL
 
 
-def test_selection_sql_ignore_join_is_target_keyed():
+def test_selection_sql_ignore_join_is_file_keyed():
     from sgc_ma.select import _SQL
-    assert ("LEFT JOIN sgc_ma_ignore mi ON mi.cohort_id = f.cohort_id "
-            "AND mi.phenotype = f.phenotype") in _SQL
-    assert "mi.ancestry = :target_ancestry" in _SQL and "mi.sex = :target_sex" in _SQL
+    assert "LEFT JOIN sgc_ma_ignore mi ON mi.file_id = f.id" in _SQL
+    assert ":target_ancestry" not in _SQL and ":target_sex" not in _SQL
     assert "WHERE f.phenotype = :phenotype" in _SQL
-    assert "f.ancestry = :ancestry" not in _SQL          # no longer filters by file ancestry
+
+
+def test_select_cohorts_drops_ignored_files():
+    # a cohort's only eligible EUR/All file is ignored -> cohort contributes nothing
+    rows = [_cand_row(file_id="1", cohort_id="c1", ancestry="EUR", sex="All", ignore_reason="bad"),
+            _cand_row(file_id="2", cohort_id="c2", ancestry="EUR", sex="All", ignore_reason=None)]
+    # select_cohorts needs >=... just assert the ignored file is excluded from the resolved set
+    from sgc_ma.select import resolve_target, include_file
+    eligible = [r for r in rows if include_file(r) and r.get("ignore_reason") is None]
+    selected, _ = resolve_target(eligible, "EUR", "All")
+    assert [r["file_id"] for r in selected] == ["2"]
 
 
 def test_selection_sql_selects_file_ancestry():

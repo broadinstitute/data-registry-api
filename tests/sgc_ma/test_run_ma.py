@@ -193,9 +193,9 @@ def test_main_records_batch_job_id_and_content_types(tmp_path, monkeypatch):
     assert ct["sgc/ma/PH/EUR/run-xyz/meta.tsv.gz"] == "application/gzip"
 
 
-def test_main_passes_run_sex_to_ignored_cohorts(tmp_path, monkeypatch):
-    """Sex-stratified runs must query the ignore-list for their own (ancestry,
-    sex) target, not silently fall back to the (..., All) default."""
+def test_main_passes_phenotype_to_ignored_cohorts(tmp_path, monkeypatch):
+    """ignored_cohorts is file-based (phenotype-keyed only) -- the ancestry/sex of
+    the run must not be threaded through to it."""
     from click.testing import CliRunner
     import sgc_ma.run_ma as rm
     import dataregistry.api.query as q
@@ -213,8 +213,8 @@ def test_main_passes_run_sex_to_ignored_cohorts(tmp_path, monkeypatch):
     monkeypatch.setattr(rm.sel, "select_cohorts_by_file_ids", lambda *a, **k: [])
 
     captured = {}
-    def fake_ignored_cohorts(engine, phenotype, ancestry, sex):
-        captured["args"] = (phenotype, ancestry, sex)
+    def fake_ignored_cohorts(engine, phenotype):
+        captured["args"] = (phenotype,)
         return []
     monkeypatch.setattr(rm.sel, "ignored_cohorts", fake_ignored_cohorts)
 
@@ -239,7 +239,7 @@ def test_main_passes_run_sex_to_ignored_cohorts(tmp_path, monkeypatch):
     res = CliRunner().invoke(rm.main, ["--run-id", "run-xyz", "--bucket", "b",
                                        "--local-out", str(tmp_path / "out")])
     assert res.exit_code == 0, res.output
-    assert captured["args"] == ("PH", "Combined", "Male")
+    assert captured["args"] == ("PH",)
 
 
 def test_main_local_run_leaves_batch_job_id_none(tmp_path, monkeypatch):
