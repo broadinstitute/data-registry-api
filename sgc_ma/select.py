@@ -50,8 +50,9 @@ def include_file(row: dict) -> bool:
 
 
 def not_ignored(row: dict) -> bool:
-    """False iff this GWAS has an active MA ignore-list entry for its
-    (cohort, phenotype, ancestry)."""
+    """False iff this row's file has an active MA ignore-list entry (the
+    ignore is file-based, surfaced here as `ignore_reason` from the
+    sgc_ma_ignore join)."""
     return row.get("ignore_reason") is None
 
 
@@ -149,11 +150,12 @@ _SQL_BY_IDS = """
 
 
 def list_ma_candidates(engine, phenotype: str, target_ancestry: str, target_sex: str = "All") -> list[dict]:
-    """The resolved per-cohort files that WOULD be included for a target, each flagged
-    `ignored` (surfaced, not dropped) for the launch UI."""
+    """The resolved per-cohort files that WOULD be included for a target for the manual-launch
+    preview UI. Ignore-listed files are dropped before resolution, same as select_cohorts, so
+    preview == auto. `ignored` is kept on each dict for shape stability but is now always False."""
     with engine.connect() as c:
         rows = [dict(r._mapping) for r in c.execute(text(_SQL), {"phenotype": phenotype})]
-    eligible = [r for r in rows if include_file(r)]
+    eligible = [r for r in rows if include_file(r) and r.get("ignore_reason") is None]
     selected, _ = resolve_target(eligible, target_ancestry, target_sex)
     return [{
         "file_id": r["file_id"], "cohort": r["cohort"], "dataset": r["dataset"],

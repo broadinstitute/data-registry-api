@@ -141,7 +141,7 @@ def test_resolve_ancestry_stratified_requires_ancestry_and_all():
 
 
 from types import SimpleNamespace
-from sgc_ma.select import list_ma_candidates, select_cohorts_by_file_ids
+from sgc_ma.select import list_ma_candidates, select_cohorts_by_file_ids, select_cohorts
 
 
 class _FakeResult:
@@ -178,10 +178,24 @@ def test_list_ma_candidates_resolves_target_and_maps():
     assert out[0]["cohort"] == "CohortA" and out[0]["ignored"] is False
 
 
-def test_list_ma_candidates_flags_ignored_but_keeps_it():
-    rows = [_cand_row(file_id="1", ignore_reason="high lambda")]
+def test_list_ma_candidates_drops_ignored_files():
+    # matches select_cohorts: ignored files are dropped before resolve, so the
+    # manual-launch preview can't diverge from what auto/battery actually submits.
+    rows = [_cand_row(file_id="1", cohort_id="c1", ignore_reason="high lambda"),
+            _cand_row(file_id="2", cohort_id="c2", ignore_reason=None)]
     out = list_ma_candidates(_FakeEngine(rows), "PH", "EUR", "All")
-    assert len(out) == 1 and out[0]["ignored"] is True
+    assert [c["file_id"] for c in out] == ["2"]
+    assert out[0]["ignored"] is False
+
+
+def test_select_cohorts_drops_ignored_file_before_resolve():
+    # direct test of select_cohorts() itself (not just resolve_target()): one
+    # cohort's only eligible file is ignored and must contribute nothing, while
+    # the other cohort's clean file is selected.
+    rows = [_cand_row(file_id="1", cohort_id="c1", ignore_reason="bad", ancestry="EUR", sex="All"),
+            _cand_row(file_id="2", cohort_id="c2", ignore_reason=None, ancestry="EUR", sex="All")]
+    out = select_cohorts(_FakeEngine(rows), "PH", "EUR", "All")
+    assert [r["file_id"] for r in out] == ["2"]
 
 
 def test_select_cohorts_by_file_ids_coerces_and_normalizes():
