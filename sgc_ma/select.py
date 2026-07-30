@@ -40,9 +40,8 @@ def classify_liftover_status(normalized_build: Optional[str],
 
 
 def include_file(row: dict) -> bool:
-    """v1 selection predicate: sex=All, GRCh38-effective, not a pre-existing MA."""
-    if str(row.get("sex", "")).lower() != "all":
-        return False
+    """MA eligibility, sex-agnostic: GRCh38-effective and not a pre-existing MA product.
+    Sex/ancestry targeting is applied by resolve_target()."""
     if normalize_build(row.get("genome_build")) != "GRCh38":
         return False
     if str(row.get("dataset", "")).startswith("meta_analysis_"):
@@ -56,10 +55,46 @@ def not_ignored(row: dict) -> bool:
     return row.get("ignore_reason") is None
 
 
+def _pick_one_per_cohort(rows, prefer_combined):
+    """One row per cohort. When prefer_combined, use the cohort's ancestry='Combined' row
+    if present; otherwise its sole remaining row. Cohorts with >1 eligible row and no
+    Combined file are ambiguous -> skipped, reported in warnings."""
+    by_cohort = {}
+    for r in rows:
+        by_cohort.setdefault(r["cohort_id"], []).append(r)
+    selected, warnings = [], []
+    for cohort_id, crows in by_cohort.items():
+        if prefer_combined:
+            combined = [r for r in crows if str(r.get("ancestry")) == "Combined"]
+            if combined:
+                selected.append(combined[0]); continue
+        if len(crows) == 1:
+            selected.append(crows[0])
+        else:
+            warnings.append({"cohort_id": cohort_id, "n_candidates": len(crows)})
+    return selected, warnings
+
+
+def resolve_target(rows, target_ancestry, target_sex):
+    """Select per-cohort input files for one of the nine MA targets.
+    - Combined family (target_ancestry == 'Combined'): sex == target_sex across all
+      ancestries, one per cohort preferring the Combined-tagged file (the combined-fallback
+      and the sex-stratified 'any ancestry' rules both fall out of this).
+    - Ancestry-stratified: ancestry == target_ancestry AND sex == 'All'.
+    Returns (selected_rows, warnings)."""
+    if target_ancestry == "Combined":
+        cand = [r for r in rows if str(r.get("sex")) == target_sex]
+        return _pick_one_per_cohort(cand, prefer_combined=True)
+    cand = [r for r in rows
+            if str(r.get("ancestry")) == target_ancestry and str(r.get("sex")) == "All"]
+    return _pick_one_per_cohort(cand, prefer_combined=False)
+
+
 _SQL = """
     SELECT CAST(f.id AS CHAR) AS file_id, f.dataset, f.s3_path, f.column_mapping,
            f.cases, f.controls,
            CAST(f.cohort_id AS CHAR) AS cohort_id, sc.name AS cohort,
+           f.ancestry AS ancestry,
            mi.reason AS ignore_reason,
            JSON_UNQUOTE(JSON_EXTRACT(f.metadata, '$.sex')) AS sex,
            COALESCE(JSON_UNQUOTE(JSON_EXTRACT(f.metadata, '$.genome_build')), JSON_UNQUOTE(JSON_EXTRACT(gc.metadata, '$.genome_build'))) AS genome_build
@@ -67,8 +102,9 @@ _SQL = """
     JOIN sgc_gwas_plot_results p ON p.file_id = f.id AND p.status = 'SUCCEEDED'
     LEFT JOIN sgc_gwas_cohorts gc ON gc.cohort_id = f.cohort_id
     LEFT JOIN sgc_cohorts sc ON sc.id = f.cohort_id
-    LEFT JOIN sgc_ma_ignore mi ON mi.cohort_id = f.cohort_id AND mi.phenotype = f.phenotype AND mi.ancestry = f.ancestry
-    WHERE f.phenotype = :phenotype AND f.ancestry = :ancestry
+    LEFT JOIN sgc_ma_ignore mi ON mi.cohort_id = f.cohort_id AND mi.phenotype = f.phenotype
+              AND mi.ancestry = :target_ancestry AND mi.sex = :target_sex
+    WHERE f.phenotype = :phenotype
     ORDER BY f.dataset
 """
 
@@ -83,15 +119,18 @@ def _coerce_map(raw) -> dict:
     return json.loads(raw)
 
 
-def select_cohorts(engine, phenotype: str, ancestry: str) -> list[dict]:
+def select_cohorts(engine, phenotype: str, target_ancestry: str, target_sex: str = "All") -> list[dict]:
+    """Resolved, ignore-filtered MA inputs for one target. Cohorts with an sgc_ma_ignore
+    row for this exact target are dropped."""
     with engine.connect() as c:
         rows = [dict(r._mapping) for r in c.execute(
-            text(_SQL), {"phenotype": phenotype, "ancestry": ancestry})]
+            text(_SQL), {"phenotype": phenotype,
+                         "target_ancestry": target_ancestry, "target_sex": target_sex})]
+    eligible = [r for r in rows if include_file(r)]
+    selected, _ = resolve_target(eligible, target_ancestry, target_sex)
     out = []
-    for r in rows:
-        if not include_file(r):
-            continue
-        if not not_ignored(r):
+    for r in selected:
+        if r.get("ignore_reason") is not None:
             continue
         r["column_mapping"] = _coerce_map(r["column_mapping"])
         r["genome_build"] = normalize_build(r["genome_build"])
@@ -99,29 +138,38 @@ def select_cohorts(engine, phenotype: str, ancestry: str) -> list[dict]:
     return out
 
 
-_SQL_BY_IDS = _SQL.replace(
-    "WHERE f.phenotype = :phenotype AND f.ancestry = :ancestry",
-    "WHERE f.id IN :file_ids")
+_SQL_BY_IDS = """
+    SELECT CAST(f.id AS CHAR) AS file_id, f.dataset, f.s3_path, f.column_mapping,
+           f.cases, f.controls,
+           CAST(f.cohort_id AS CHAR) AS cohort_id, sc.name AS cohort,
+           f.ancestry AS ancestry,
+           JSON_UNQUOTE(JSON_EXTRACT(f.metadata, '$.sex')) AS sex,
+           COALESCE(JSON_UNQUOTE(JSON_EXTRACT(f.metadata, '$.genome_build')), JSON_UNQUOTE(JSON_EXTRACT(gc.metadata, '$.genome_build'))) AS genome_build
+    FROM sgc_gwas_files f
+    JOIN sgc_gwas_plot_results p ON p.file_id = f.id AND p.status = 'SUCCEEDED'
+    LEFT JOIN sgc_gwas_cohorts gc ON gc.cohort_id = f.cohort_id
+    LEFT JOIN sgc_cohorts sc ON sc.id = f.cohort_id
+    WHERE f.id IN :file_ids
+    ORDER BY f.dataset
+"""
 
 
-def list_ma_candidates(engine, phenotype: str, ancestry: str) -> list[dict]:
-    """Eligible GWAS files for a manual MA launch: the include_file() predicate
-    (sex=All, GRCh38-effective, not a meta-analysis product) with a SUCCEEDED QC
-    plot. Ignore-list status is surfaced as a flag, not a hard exclusion."""
+def list_ma_candidates(engine, phenotype: str, target_ancestry: str, target_sex: str = "All") -> list[dict]:
+    """The resolved per-cohort files that WOULD be included for a target, each flagged
+    `ignored` (surfaced, not dropped) for the launch UI."""
     with engine.connect() as c:
         rows = [dict(r._mapping) for r in c.execute(
-            text(_SQL), {"phenotype": phenotype, "ancestry": ancestry})]
-    out = []
-    for r in rows:
-        if not include_file(r):
-            continue
-        out.append({
-            "file_id": r["file_id"], "cohort": r["cohort"], "dataset": r["dataset"],
-            "cases": r["cases"], "controls": r["controls"],
-            "genome_build": normalize_build(r["genome_build"]),
-            "ignored": r.get("ignore_reason") is not None,
-        })
-    return out
+            text(_SQL), {"phenotype": phenotype,
+                         "target_ancestry": target_ancestry, "target_sex": target_sex})]
+    eligible = [r for r in rows if include_file(r)]
+    selected, _ = resolve_target(eligible, target_ancestry, target_sex)
+    return [{
+        "file_id": r["file_id"], "cohort": r["cohort"], "dataset": r["dataset"],
+        "ancestry": r.get("ancestry"), "sex": r.get("sex"),
+        "cases": r["cases"], "controls": r["controls"],
+        "genome_build": normalize_build(r["genome_build"]),
+        "ignored": r.get("ignore_reason") is not None,
+    } for r in selected]
 
 
 def select_cohorts_by_file_ids(engine, file_ids) -> list[dict]:
@@ -143,14 +191,13 @@ _IGNORED_SQL = """
     SELECT CAST(mi.cohort_id AS CHAR) AS cohort_id, sc.name AS cohort, mi.reason AS reason
     FROM sgc_ma_ignore mi
     LEFT JOIN sgc_cohorts sc ON sc.id = mi.cohort_id
-    WHERE mi.phenotype = :phenotype AND mi.ancestry = :ancestry
+    WHERE mi.phenotype = :phenotype AND mi.ancestry = :ancestry AND mi.sex = :sex
     ORDER BY sc.name
 """
 
 
-def ignored_cohorts(engine, phenotype: str, ancestry: str) -> list[dict]:
-    """The ignore-list entries active for this (phenotype, ancestry), for
-    surfacing in the run summary. Additive: does not affect select_cohorts()."""
+def ignored_cohorts(engine, phenotype: str, ancestry: str, sex: str = "All") -> list[dict]:
+    """The ignore-list entries active for this (phenotype, ancestry, sex) target."""
     with engine.connect() as c:
         return [dict(r._mapping) for r in c.execute(
-            text(_IGNORED_SQL), {"phenotype": phenotype, "ancestry": ancestry})]
+            text(_IGNORED_SQL), {"phenotype": phenotype, "ancestry": ancestry, "sex": sex})]

@@ -37,10 +37,6 @@ def _row(**kw):
 def test_include_file_happy():
     assert include_file(_row()) is True
 
-def test_include_file_excludes_sex_subsets():
-    assert include_file(_row(sex="Male")) is False
-    assert include_file(_row(sex="Female")) is False
-
 def test_include_file_excludes_grch37():
     assert include_file(_row(genome_build="GRCh37")) is False
 
@@ -60,11 +56,18 @@ def test_selection_sql_exposes_registry_cohort_name():
     assert "AS cohort_id" in _SQL
 
 
-def test_selection_sql_left_joins_ignore_list():
+def test_selection_sql_ignore_join_is_target_keyed():
     from sgc_ma.select import _SQL
     assert ("LEFT JOIN sgc_ma_ignore mi ON mi.cohort_id = f.cohort_id "
-            "AND mi.phenotype = f.phenotype AND mi.ancestry = f.ancestry") in _SQL
-    assert "mi.reason AS ignore_reason" in _SQL
+            "AND mi.phenotype = f.phenotype") in _SQL
+    assert "mi.ancestry = :target_ancestry" in _SQL and "mi.sex = :target_sex" in _SQL
+    assert "WHERE f.phenotype = :phenotype" in _SQL
+    assert "f.ancestry = :ancestry" not in _SQL          # no longer filters by file ancestry
+
+
+def test_selection_sql_selects_file_ancestry():
+    from sgc_ma.select import _SQL
+    assert "f.ancestry AS ancestry" in _SQL
 
 
 def test_not_ignored_predicate():
@@ -79,6 +82,53 @@ def test_selection_sql_prefers_per_file_build():
     # a lifted file carries its own metadata.genome_build; prefer it over the cohort's
     assert ("COALESCE(JSON_UNQUOTE(JSON_EXTRACT(f.metadata, '$.genome_build')), "
             "JSON_UNQUOTE(JSON_EXTRACT(gc.metadata, '$.genome_build'))) AS genome_build") in _SQL
+
+
+from sgc_ma.select import resolve_target
+
+
+def _f(cohort_id, ancestry, sex, file_id="x"):
+    return dict(file_id=file_id, cohort_id=cohort_id, ancestry=ancestry, sex=sex,
+                dataset="d", cohort="C", genome_build="GRCh38")
+
+
+def test_resolve_combined_prefers_combined_else_fallback():
+    rows = [
+        _f("multi", "Combined", "All", "m-comb"),
+        _f("multi", "EUR", "All", "m-eur"),          # multi-ancestry: also has per-ancestry
+        _f("single", "EUR", "All", "s-eur"),         # single-ancestry fallback cohort
+    ]
+    selected, warnings = resolve_target(rows, "Combined", "All")
+    got = {r["cohort_id"]: r["file_id"] for r in selected}
+    assert got == {"multi": "m-comb", "single": "s-eur"} and warnings == []
+
+
+def test_resolve_combined_ambiguous_fallback_skips_and_warns():
+    rows = [_f("c", "EUR", "All", "e"), _f("c", "AFR", "All", "a")]   # no combined, two All
+    selected, warnings = resolve_target(rows, "Combined", "All")
+    assert selected == [] and warnings and warnings[0]["cohort_id"] == "c"
+
+
+def test_resolve_sex_stratified_any_ancestry_deduped_prefers_combined():
+    rows = [
+        _f("biovu", "Combined", "Female", "b-comb"),
+        _f("biovu", "SAS", "Female", "b-sas"),       # BioVU stray -> dropped
+        _f("gnh", "SAS", "Female", "g-sas"),         # single-ancestry -> kept
+        _f("x", "EUR", "All", "x-all"),              # wrong sex -> excluded
+    ]
+    selected, _ = resolve_target(rows, "Combined", "Female")
+    got = {r["cohort_id"]: r["file_id"] for r in selected}
+    assert got == {"biovu": "b-comb", "gnh": "g-sas"}
+
+
+def test_resolve_ancestry_stratified_requires_ancestry_and_all():
+    rows = [
+        _f("a", "EUR", "All", "a-eur"),
+        _f("b", "EUR", "Male", "b-eur-m"),           # wrong sex
+        _f("c", "AFR", "All", "c-afr"),              # wrong ancestry
+    ]
+    selected, _ = resolve_target(rows, "EUR", "All")
+    assert [r["file_id"] for r in selected] == ["a-eur"]
 
 
 from types import SimpleNamespace
@@ -106,23 +156,23 @@ class _FakeEngine:
 
 def _cand_row(**kw):
     base = dict(file_id="1", dataset="A", s3_path="p", column_mapping="{}", cases=1, controls=1,
-                cohort_id="c1", cohort="CohortA", ignore_reason=None, sex="All", genome_build="GRCh38")
+                cohort_id="c1", cohort="CohortA", ignore_reason=None, ancestry="EUR",
+                sex="All", genome_build="GRCh38")
     base.update(kw); return base
 
 
-def test_list_ma_candidates_filters_and_maps():
-    rows = [_cand_row(file_id="1"),
-            _cand_row(file_id="2", sex="Male"),                       # excluded: sex subset
-            _cand_row(file_id="3", dataset="meta_analysis_x")]        # excluded: MA product
-    out = list_ma_candidates(_FakeEngine(rows), "PH", "EUR")
+def test_list_ma_candidates_resolves_target_and_maps():
+    rows = [_cand_row(file_id="1", cohort_id="c1"),
+            _cand_row(file_id="2", cohort_id="c2", dataset="meta_analysis_x")]  # excluded: MA product
+    out = list_ma_candidates(_FakeEngine(rows), "PH", "EUR", "All")
     assert [c["file_id"] for c in out] == ["1"]
     assert out[0]["cohort"] == "CohortA" and out[0]["ignored"] is False
 
 
 def test_list_ma_candidates_flags_ignored_but_keeps_it():
     rows = [_cand_row(file_id="1", ignore_reason="high lambda")]
-    out = list_ma_candidates(_FakeEngine(rows), "PH", "EUR")
-    assert len(out) == 1 and out[0]["ignored"] is True               # shown, flagged, not dropped
+    out = list_ma_candidates(_FakeEngine(rows), "PH", "EUR", "All")
+    assert len(out) == 1 and out[0]["ignored"] is True
 
 
 def test_select_cohorts_by_file_ids_coerces_and_normalizes():
