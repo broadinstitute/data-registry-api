@@ -170,7 +170,7 @@ def main(run_id, bucket, local_out):
                                batch_job_id=os.environ.get("AWS_BATCH_JOB_ID"))
     try:
         cohorts = sel.select_cohorts_by_file_ids(engine, file_ids)
-        ignored = sel.ignored_cohorts(engine, phenotype, ancestry)
+        ignored = sel.ignored_cohorts(engine, phenotype, ancestry, run.get("sex", "All"))
         click.echo(f"run {run_id}: {len(cohorts)} cohorts for {phenotype}/{ancestry}")
         s3 = boto3.client("s3", region_name="us-east-1")
 

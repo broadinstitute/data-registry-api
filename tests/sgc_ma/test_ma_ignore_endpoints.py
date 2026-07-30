@@ -75,6 +75,18 @@ def test_add_ignore_unknown_cohort_400(monkeypatch):
     assert exc.value.status_code == 400
 
 
+def test_add_ignore_invalid_bucket_400():
+    # sex="Male" with a non-Combined ancestry is not one of the nine valid
+    # buckets; this must be rejected before ever touching the DB (no
+    # monkeypatch of query.insert_ma_ignore -- if the guard is missing/broken,
+    # this call would try a real DB insert and fail differently).
+    req = MAIgnoreCreateRequest(cohort_id="b" * 32, phenotype="PSOR",
+                                ancestry="AFR", sex="Male", reason="r")
+    with pytest.raises(HTTPException) as exc:
+        run(sgc.add_sgc_ma_ignore(req=req, user=make_user()))
+    assert exc.value.status_code == 400
+
+
 def test_delete_ignore_ok(monkeypatch):
     monkeypatch.setattr(query, "delete_ma_ignore", lambda engine, ignore_id: True)
     result = run(sgc.delete_sgc_ma_ignore(ignore_id="a" * 32, user=make_user()))

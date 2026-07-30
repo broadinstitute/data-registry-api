@@ -177,6 +177,17 @@ def test_launch_sgc_ma_run_no_permission_403():
     assert e.value.status_code == 403
 
 
+def test_launch_sgc_ma_run_invalid_bucket_400():
+    from dataregistry.api.model import MARunRequest
+    # sex="Male" with a non-Combined ancestry is not one of the nine valid
+    # buckets. Two file_ids so the "needs two files" guard doesn't fire
+    # first -- this test proves the bucket guard itself yields 400.
+    req = MARunRequest(phenotype="PH", ancestry="AFR", sex="Male", file_ids=["a", "b"])
+    with pytest.raises(HTTPException) as e:
+        run(sgc.launch_sgc_ma_run(req, user=make_user()))
+    assert e.value.status_code == 400
+
+
 def test_launch_sgc_ma_run_creates_manual_run(monkeypatch):
     from dataregistry.api.model import MARunRequest
     import sgc_ma.submit_ma_batch as smb

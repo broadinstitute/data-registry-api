@@ -193,6 +193,55 @@ def test_main_records_batch_job_id_and_content_types(tmp_path, monkeypatch):
     assert ct["sgc/ma/PH/EUR/run-xyz/meta.tsv.gz"] == "application/gzip"
 
 
+def test_main_passes_run_sex_to_ignored_cohorts(tmp_path, monkeypatch):
+    """Sex-stratified runs must query the ignore-list for their own (ancestry,
+    sex) target, not silently fall back to the (..., All) default."""
+    from click.testing import CliRunner
+    import sgc_ma.run_ma as rm
+    import dataregistry.api.query as q
+    import dataregistry.api.db as db
+
+    monkeypatch.setattr(q, "get_sgc_ma_run", lambda *a, **k: {
+        "id": "run-xyz", "phenotype": "PH", "ancestry": "Combined", "sex": "Male",
+        "dataset_file_ids": ["a", "b"], "maf_min": 0.005, "info_min": 0.3})
+    monkeypatch.setattr(q, "update_sgc_ma_result", lambda *a, **k: None)
+
+    class _DummyDB:
+        def get_engine(self):
+            return object()
+    monkeypatch.setattr(db, "DataRegistryReadWriteDB", _DummyDB)
+    monkeypatch.setattr(rm.sel, "select_cohorts_by_file_ids", lambda *a, **k: [])
+
+    captured = {}
+    def fake_ignored_cohorts(engine, phenotype, ancestry, sex):
+        captured["args"] = (phenotype, ancestry, sex)
+        return []
+    monkeypatch.setattr(rm.sel, "ignored_cohorts", fake_ignored_cohorts)
+
+    def fake_meta(cohorts, chunks_fn, outdir, label="", ignored=None, maf_min=0.005, info_min=0.3):
+        import os
+        os.makedirs(outdir, exist_ok=True)
+        for n in ["meta.tsv.gz", "manhattan.png", "qq.png", "summary.json", "summary.tsv", "top_loci.tsv"]:
+            with open(os.path.join(outdir, n), "wb") as fh:
+                fh.write(b"x")
+        return {"meta_lambda_gc": 1.0, "n_meta_variants": 1, "n_genome_wide_sig": 0,
+                "n_cohorts": 0, "n_cohorts_used": 0,
+                "total_cases": 15, "total_controls": 27}
+    monkeypatch.setattr(rm, "meta_analyze", fake_meta)
+
+    class FakeS3:
+        def upload_file(self, *a, **k):
+            pass
+        def download_file(self, *a, **k):
+            pass
+    monkeypatch.setattr(rm.boto3, "client", lambda *a, **k: FakeS3())
+
+    res = CliRunner().invoke(rm.main, ["--run-id", "run-xyz", "--bucket", "b",
+                                       "--local-out", str(tmp_path / "out")])
+    assert res.exit_code == 0, res.output
+    assert captured["args"] == ("PH", "Combined", "Male")
+
+
 def test_main_local_run_leaves_batch_job_id_none(tmp_path, monkeypatch):
     """With no AWS_BATCH_JOB_ID (local run), the RUNNING update passes None so
     COALESCE leaves the column untouched."""

@@ -2736,6 +2736,9 @@ async def launch_sgc_ma_run(req: MARunRequest, user: User = Depends(get_sgc_user
     if not check_review_permissions(user):
         raise fastapi.HTTPException(status_code=403,
             detail="You need sgc-review-data permission to launch a meta-analysis")
+    if not is_valid_bucket(req.ancestry, req.sex):
+        raise fastapi.HTTPException(status_code=400,
+            detail=f"Invalid meta-analysis target ({req.ancestry}, {req.sex}) — not one of the nine valid ancestry/sex buckets")
     if len(req.file_ids) < 2:
         raise fastapi.HTTPException(status_code=400,
             detail="A meta-analysis needs at least two GWAS files")
@@ -2764,6 +2767,9 @@ async def add_sgc_ma_ignore(req: MAIgnoreCreateRequest, user: User = Depends(get
     if not check_review_permissions(user):
         raise fastapi.HTTPException(status_code=403,
             detail="You need sgc-review-data permission to modify the MA ignore-list")
+    if not is_valid_bucket(req.ancestry, req.sex):
+        raise fastapi.HTTPException(status_code=400,
+            detail=f"Invalid ignore entry target ({req.ancestry}, {req.sex}) — not one of the nine valid ancestry/sex buckets")
     try:
         return query.insert_ma_ignore(engine, req.cohort_id, req.phenotype,
                                       req.ancestry, req.sex, req.reason, user.user_name)
