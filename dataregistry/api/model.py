@@ -562,20 +562,20 @@ class SGCLiftoverJob(BaseModel):
 
 class MAIgnoreEntry(BaseModel):
     id: str
-    cohort_id: str
-    phenotype: str
-    ancestry: str
-    sex: str
+    file_id: str
+    cohort_id: Optional[str] = None
+    cohort: Optional[str] = None
+    dataset: Optional[str] = None
+    phenotype: Optional[str] = None
+    ancestry: Optional[str] = None
+    sex: Optional[str] = None
     reason: str
     excluded_by: str
     created_at: Optional[datetime] = None
 
 
 class MAIgnoreCreateRequest(BaseModel):
-    cohort_id: str
-    phenotype: str
-    ancestry: str
-    sex: str = "All"
+    file_id: str
     reason: str
 
 

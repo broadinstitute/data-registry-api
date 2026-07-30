@@ -2655,39 +2655,39 @@ def set_sgc_gwas_file_build(engine, file_id: str, genome_build: str) -> None:
         conn.commit()
 
 
-def insert_ma_ignore(engine, cohort_id: str, phenotype: str, ancestry: str, sex: str,
-                     reason: str, excluded_by: str) -> dict:
-    """Upsert an MA ignore entry on the unique (cohort_id, phenotype, ancestry, sex)
-    key; updates reason/excluded_by on conflict. Returns the persisted row.
-    Raises IntegrityError if cohort_id has no sgc_cohorts row (FK)."""
+_MA_IGNORE_SELECT = """
+    SELECT CAST(mi.id AS CHAR) AS id, CAST(mi.file_id AS CHAR) AS file_id,
+           mi.reason, mi.excluded_by, mi.created_at,
+           CAST(f.cohort_id AS CHAR) AS cohort_id, sc.name AS cohort,
+           f.dataset, f.phenotype, f.ancestry,
+           JSON_UNQUOTE(JSON_EXTRACT(f.metadata, '$.sex')) AS sex
+    FROM sgc_ma_ignore mi
+    LEFT JOIN sgc_gwas_files f ON f.id = mi.file_id
+    LEFT JOIN sgc_cohorts sc ON sc.id = f.cohort_id
+"""
+
+
+def insert_ma_ignore(engine, file_id: str, reason: str, excluded_by: str) -> dict:
+    """Upsert an MA ignore entry keyed on file_id (unique). Raises IntegrityError if
+    file_id has no sgc_gwas_files row (FK). Returns the row joined to file/cohort detail."""
     ignore_id = str(uuid.uuid4()).replace('-', '')
+    fid = str(file_id).replace('-', '')
     with engine.connect() as conn:
         conn.execute(text("""
-            INSERT INTO sgc_ma_ignore (id, cohort_id, phenotype, ancestry, sex, reason, excluded_by)
-            VALUES (:id, :cohort_id, :phenotype, :ancestry, :sex, :reason, :excluded_by)
+            INSERT INTO sgc_ma_ignore (id, file_id, reason, excluded_by)
+            VALUES (:id, :file_id, :reason, :excluded_by)
             ON DUPLICATE KEY UPDATE reason = VALUES(reason), excluded_by = VALUES(excluded_by)
-        """), {'id': ignore_id, 'cohort_id': cohort_id, 'phenotype': phenotype,
-               'ancestry': ancestry, 'sex': sex, 'reason': reason, 'excluded_by': excluded_by})
+        """), {'id': ignore_id, 'file_id': fid, 'reason': reason, 'excluded_by': excluded_by})
         conn.commit()
-        row = conn.execute(text("""
-            SELECT CAST(id AS CHAR) AS id, CAST(cohort_id AS CHAR) AS cohort_id,
-                   phenotype, ancestry, sex, reason, excluded_by, created_at
-            FROM sgc_ma_ignore
-            WHERE cohort_id = :cohort_id AND phenotype = :phenotype
-              AND ancestry = :ancestry AND sex = :sex
-        """), {'cohort_id': cohort_id, 'phenotype': phenotype,
-               'ancestry': ancestry, 'sex': sex}).mappings().first()
+        row = conn.execute(text(_MA_IGNORE_SELECT + " WHERE mi.file_id = :file_id"),
+                           {'file_id': fid}).mappings().first()
     return dict(row)
 
 
 def list_ma_ignore(engine) -> list[dict]:
-    """All MA ignore entries, most recently added first."""
+    """All MA ignore entries (file-based), most recently added first, with file/cohort detail."""
     with engine.connect() as conn:
-        rows = conn.execute(text("""
-            SELECT CAST(id AS CHAR) AS id, CAST(cohort_id AS CHAR) AS cohort_id,
-                   phenotype, ancestry, sex, reason, excluded_by, created_at
-            FROM sgc_ma_ignore ORDER BY created_at DESC
-        """)).mappings().all()
+        rows = conn.execute(text(_MA_IGNORE_SELECT + " ORDER BY mi.created_at DESC")).mappings().all()
     return [dict(r) for r in rows]
 
 
