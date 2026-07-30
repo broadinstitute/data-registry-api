@@ -519,6 +519,7 @@ class SGCMAResult(BaseModel):
     id: str
     phenotype: str
     ancestry: str
+    sex: str = "All"
     status: str
     meta_lambda_gc: Optional[float] = None
     n_meta_variants: Optional[int] = None
@@ -564,6 +565,7 @@ class MAIgnoreEntry(BaseModel):
     cohort_id: str
     phenotype: str
     ancestry: str
+    sex: str
     reason: str
     excluded_by: str
     created_at: Optional[datetime] = None
@@ -573,12 +575,14 @@ class MAIgnoreCreateRequest(BaseModel):
     cohort_id: str
     phenotype: str
     ancestry: str
+    sex: str = "All"
     reason: str
 
 
 class MARunRequest(BaseModel):
     phenotype: str
     ancestry: str
+    sex: str = "All"
     file_ids: list[str]
     maf_min: float = 0.005
     info_min: float = 0.3

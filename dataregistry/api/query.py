@@ -2432,7 +2432,7 @@ def update_qc_run_status(engine, run_id, status, overall_verdict=None,
 
 _MA_SELECT_COLS = """
     SELECT
-        id, phenotype, ancestry, status,
+        id, phenotype, ancestry, sex, status,
         meta_lambda_gc, n_meta_variants, n_genome_wide_sig, n_cohorts, n_cohorts_used,
         total_cases, total_controls,
         manhattan_s3_key, qq_s3_key, meta_s3_key,
@@ -2455,7 +2455,8 @@ def _format_sgc_ma_row(d: dict) -> dict:
     return d
 
 
-def insert_sgc_ma_run(engine, phenotype: str, ancestry: str, *, run_type: str = "auto",
+def insert_sgc_ma_run(engine, phenotype: str, ancestry: str, *, sex: str = "All",
+                      run_type: str = "auto",
                       label=None, dataset_file_ids=None, maf_min=None, info_min=None,
                       submitted_by=None) -> str:
     """Create a fresh PENDING MA run row (never an upsert). Returns the hex run_id."""
@@ -2463,12 +2464,12 @@ def insert_sgc_ma_run(engine, phenotype: str, ancestry: str, *, run_type: str = 
     with engine.connect() as conn:
         conn.execute(text("""
             INSERT INTO sgc_gwas_ma_results
-                (id, phenotype, ancestry, status, run_type, label,
+                (id, phenotype, ancestry, sex, status, run_type, label,
                  dataset_file_ids, maf_min, info_min, submitted_by)
-            VALUES (:id, :phenotype, :ancestry, 'PENDING', :run_type, :label,
+            VALUES (:id, :phenotype, :ancestry, :sex, 'PENDING', :run_type, :label,
                  :dataset_file_ids, :maf_min, :info_min, :submitted_by)
         """), {
-            'id': run_id, 'phenotype': phenotype, 'ancestry': ancestry,
+            'id': run_id, 'phenotype': phenotype, 'ancestry': ancestry, 'sex': sex,
             'run_type': run_type, 'label': label,
             'dataset_file_ids': json.dumps(list(dataset_file_ids)) if dataset_file_ids is not None else None,
             'maf_min': maf_min, 'info_min': info_min, 'submitted_by': submitted_by,
@@ -2654,26 +2655,28 @@ def set_sgc_gwas_file_build(engine, file_id: str, genome_build: str) -> None:
         conn.commit()
 
 
-def insert_ma_ignore(engine, cohort_id: str, phenotype: str, ancestry: str,
+def insert_ma_ignore(engine, cohort_id: str, phenotype: str, ancestry: str, sex: str,
                      reason: str, excluded_by: str) -> dict:
-    """Upsert an MA ignore entry on the unique (cohort_id, phenotype, ancestry)
-    triple; updates reason/excluded_by on conflict. Returns the persisted row.
+    """Upsert an MA ignore entry on the unique (cohort_id, phenotype, ancestry, sex)
+    key; updates reason/excluded_by on conflict. Returns the persisted row.
     Raises IntegrityError if cohort_id has no sgc_cohorts row (FK)."""
     ignore_id = str(uuid.uuid4()).replace('-', '')
     with engine.connect() as conn:
         conn.execute(text("""
-            INSERT INTO sgc_ma_ignore (id, cohort_id, phenotype, ancestry, reason, excluded_by)
-            VALUES (:id, :cohort_id, :phenotype, :ancestry, :reason, :excluded_by)
+            INSERT INTO sgc_ma_ignore (id, cohort_id, phenotype, ancestry, sex, reason, excluded_by)
+            VALUES (:id, :cohort_id, :phenotype, :ancestry, :sex, :reason, :excluded_by)
             ON DUPLICATE KEY UPDATE reason = VALUES(reason), excluded_by = VALUES(excluded_by)
         """), {'id': ignore_id, 'cohort_id': cohort_id, 'phenotype': phenotype,
-               'ancestry': ancestry, 'reason': reason, 'excluded_by': excluded_by})
+               'ancestry': ancestry, 'sex': sex, 'reason': reason, 'excluded_by': excluded_by})
         conn.commit()
         row = conn.execute(text("""
             SELECT CAST(id AS CHAR) AS id, CAST(cohort_id AS CHAR) AS cohort_id,
-                   phenotype, ancestry, reason, excluded_by, created_at
+                   phenotype, ancestry, sex, reason, excluded_by, created_at
             FROM sgc_ma_ignore
-            WHERE cohort_id = :cohort_id AND phenotype = :phenotype AND ancestry = :ancestry
-        """), {'cohort_id': cohort_id, 'phenotype': phenotype, 'ancestry': ancestry}).mappings().first()
+            WHERE cohort_id = :cohort_id AND phenotype = :phenotype
+              AND ancestry = :ancestry AND sex = :sex
+        """), {'cohort_id': cohort_id, 'phenotype': phenotype,
+               'ancestry': ancestry, 'sex': sex}).mappings().first()
     return dict(row)
 
 
@@ -2682,7 +2685,7 @@ def list_ma_ignore(engine) -> list[dict]:
     with engine.connect() as conn:
         rows = conn.execute(text("""
             SELECT CAST(id AS CHAR) AS id, CAST(cohort_id AS CHAR) AS cohort_id,
-                   phenotype, ancestry, reason, excluded_by, created_at
+                   phenotype, ancestry, sex, reason, excluded_by, created_at
             FROM sgc_ma_ignore ORDER BY created_at DESC
         """)).mappings().all()
     return [dict(r) for r in rows]
@@ -2695,3 +2698,12 @@ def delete_ma_ignore(engine, ignore_id: str) -> bool:
                               {'id': ignore_id})
         conn.commit()
         return result.rowcount > 0
+
+
+def resolve_cohort_code(engine, code: str) -> Optional[str]:
+    """cohort_id (hex) for a cohort short-code, case-insensitive; None if unknown."""
+    with engine.connect() as conn:
+        row = conn.execute(text(
+            "SELECT CAST(cohort_id AS CHAR) AS cohort_id FROM sgc_cohort_codes "
+            "WHERE UPPER(code) = UPPER(:code)"), {"code": code}).first()
+    return row[0] if row else None

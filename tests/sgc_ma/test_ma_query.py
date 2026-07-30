@@ -37,6 +37,13 @@ def test_insert_sgc_ma_run_creates_distinct_rows(engine):
     assert got["run_type"] == "manual" and got["label"] == "first"
     assert got["dataset_file_ids"] == ["a", "b"]     # JSON round-trips to a list
     assert got["maf_min"] == 0.005 and got["info_min"] == 0.3
+    assert got["sex"] == "All"            # default when omitted
+
+
+def test_insert_sgc_ma_run_sex_round_trips(engine):
+    # nine-bucket CHECK: sex != 'All' requires ancestry = 'Combined'
+    run_id = query.insert_sgc_ma_run(engine, "PH", "Combined", sex="Male")
+    assert query.get_sgc_ma_run(engine, run_id)["sex"] == "Male"
 
 
 def test_update_sgc_ma_result_targets_run_id(engine):
