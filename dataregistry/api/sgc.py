@@ -2641,12 +2641,13 @@ def _ma_run_lookup(run_id: str) -> dict:
 
 
 @router.get("/sgc/ma/candidates/{phenotype}/{ancestry}")
-async def list_ma_candidates_endpoint(phenotype: str, ancestry: str, user: User = Depends(get_sgc_user)):
+async def list_ma_candidates_endpoint(phenotype: str, ancestry: str, sex: str = "All",
+                                      user: User = Depends(get_sgc_user)):
     if not check_review_permissions(user):
         raise fastapi.HTTPException(status_code=403,
             detail="You need sgc-review-data permission to view meta-analysis candidates")
     from sgc_ma import select as sel
-    return sel.list_ma_candidates(engine, phenotype, ancestry)
+    return sel.list_ma_candidates(engine, phenotype, ancestry, sex)
 
 
 @router.get("/sgc/ma/results", response_model=list[SGCMAResult])
@@ -2740,7 +2741,7 @@ async def launch_sgc_ma_run(req: MARunRequest, user: User = Depends(get_sgc_user
             detail="A meta-analysis needs at least two GWAS files")
     from sgc_ma import submit_ma_batch
     run_id = query.insert_sgc_ma_run(
-        engine, req.phenotype, req.ancestry, run_type="manual", label=req.label,
+        engine, req.phenotype, req.ancestry, sex=req.sex, run_type="manual", label=req.label,
         dataset_file_ids=req.file_ids, maf_min=req.maf_min, info_min=req.info_min,
         submitted_by=user.user_name)
     batch = boto3.client("batch", region_name=s3.S3_REGION)
@@ -2765,10 +2766,96 @@ async def add_sgc_ma_ignore(req: MAIgnoreCreateRequest, user: User = Depends(get
             detail="You need sgc-review-data permission to modify the MA ignore-list")
     try:
         return query.insert_ma_ignore(engine, req.cohort_id, req.phenotype,
-                                      req.ancestry, req.reason, user.user_name)
+                                      req.ancestry, req.sex, req.reason, user.user_name)
     except IntegrityError:
         raise fastapi.HTTPException(status_code=400,
             detail=f"Unknown cohort_id '{req.cohort_id}' (no matching sgc_cohorts row)")
+
+
+_VALID_ANCESTRY = {"Combined", "AFR", "AMR", "EAS", "EUR", "MID", "SAS"}
+_VALID_SEX = {"All", "Male", "Female"}
+
+
+def is_valid_bucket(ancestry: str, sex: str) -> bool:
+    """One of the nine valid MA targets: non-'All' sex requires pooled ('Combined') ancestry."""
+    return (ancestry in _VALID_ANCESTRY and sex in _VALID_SEX
+            and (sex == "All" or ancestry == "Combined"))
+
+
+def parse_bulk_ignore_rows(content: str) -> list:
+    """Parse a bulk MA-ignore file into [{code, phenotype, ancestry, sex, reason}] rows.
+
+    CSV or TSV. Header-aware: a header row naming 'code' and 'phenotype' columns is detected
+    and used; otherwise columns are positional (code, phenotype, ancestry, sex, reason). sex
+    defaults to 'All', reason to ''. Rows without a code are skipped. Validation (nine-bucket,
+    unknown code) is applied per-row at the endpoint, not here."""
+    import csv
+    import io
+    lines = [ln for ln in content.splitlines() if ln.strip()]
+    if not lines:
+        return []
+    delim = "\t" if "\t" in lines[0] else ","
+    parsed = list(csv.reader(io.StringIO("\n".join(lines)), delimiter=delim))
+    if not parsed:
+        return []
+    cols = ["code", "phenotype", "ancestry", "sex", "reason"]
+    header = [c.strip().lower() for c in parsed[0]]
+    if "code" in header and "phenotype" in header:
+        idx = {name: (header.index(name) if name in header else None) for name in cols}
+        data = parsed[1:]
+    else:
+        idx = {name: i for i, name in enumerate(cols)}
+        data = parsed
+
+    def cell(cells, name, default=""):
+        i = idx.get(name)
+        return cells[i].strip() if (i is not None and i < len(cells)) else default
+
+    rows = []
+    for cells in data:
+        code = cell(cells, "code")
+        if not code:
+            continue
+        rows.append({
+            "code": code,
+            "phenotype": cell(cells, "phenotype"),
+            "ancestry": cell(cells, "ancestry"),
+            "sex": cell(cells, "sex", "All") or "All",
+            "reason": cell(cells, "reason"),
+        })
+    return rows
+
+
+@router.post("/sgc/ma/ignore/bulk")
+async def bulk_add_sgc_ma_ignore(file: UploadFile, user: User = Depends(get_sgc_user)):
+    """Bulk-add MA ignore entries from an uploaded CSV/TSV of (code, phenotype, ancestry,
+    sex, reason) rows. Each row targets one analysis; the cohort code is resolved to a
+    cohort_id and the (ancestry, sex) validated as one of the nine buckets. Partial success:
+    valid rows applied, invalid rows returned in `skipped` with the reason."""
+    if not check_review_permissions(user):
+        raise fastapi.HTTPException(status_code=403,
+            detail="You need sgc-review-data permission to modify the MA ignore-list")
+    content = (await file.read()).decode("utf-8-sig", errors="replace")
+    rows = parse_bulk_ignore_rows(content)
+    if not rows:
+        raise fastapi.HTTPException(status_code=400, detail="No rows found in the uploaded file")
+    added, skipped = 0, []
+    for r in rows:
+        if not r["phenotype"] or not r["ancestry"]:
+            skipped.append({"code": r["code"], "reason": "missing phenotype or ancestry"}); continue
+        if not is_valid_bucket(r["ancestry"], r["sex"]):
+            skipped.append({"code": r["code"],
+                            "reason": f"invalid target ({r['ancestry']}, {r['sex']})"}); continue
+        cohort_id = query.resolve_cohort_code(engine, r["code"])
+        if not cohort_id:
+            skipped.append({"code": r["code"], "reason": "unknown cohort code"}); continue
+        try:
+            query.insert_ma_ignore(engine, cohort_id, r["phenotype"], r["ancestry"],
+                                   r["sex"], r["reason"] or "", user.user_name)
+            added += 1
+        except IntegrityError:
+            skipped.append({"code": r["code"], "reason": "cohort no longer exists"})
+    return {"added": added, "skipped_count": len(skipped), "skipped": skipped}
 
 
 @router.delete("/sgc/ma/ignore/{ignore_id}")

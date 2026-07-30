@@ -149,7 +149,8 @@ def test_get_ma_top_loci_no_permission_403(monkeypatch):
 
 def test_list_ma_candidates_endpoint_returns_rows(monkeypatch):
     import sgc_ma.select as sel
-    monkeypatch.setattr(sel, "list_ma_candidates", lambda engine, p, a: [{"file_id": "1", "cohort": "C"}])
+    monkeypatch.setattr(sel, "list_ma_candidates",
+                        lambda engine, p, a, s: [{"file_id": "1", "cohort": "C"}])
     result = run(sgc.list_ma_candidates_endpoint("PH", "EUR", user=make_user()))
     assert result == [{"file_id": "1", "cohort": "C"}]
 

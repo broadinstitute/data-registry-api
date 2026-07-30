@@ -13,7 +13,7 @@ from dataregistry.api import query
 from dataregistry.api.model import User, MAIgnoreCreateRequest
 
 IGNORE_ROW = {"id": "a" * 32, "cohort_id": "b" * 32, "phenotype": "PSOR",
-              "ancestry": "EUR", "reason": "inflated", "excluded_by": "rev1",
+              "ancestry": "EUR", "sex": "All", "reason": "inflated", "excluded_by": "rev1",
               "created_at": None}
 
 
@@ -33,7 +33,7 @@ def run(coro):
 
 def _req():
     return MAIgnoreCreateRequest(cohort_id="b" * 32, phenotype="PSOR",
-                                 ancestry="EUR", reason="inflated")
+                                 ancestry="EUR", sex="All", reason="inflated")
 
 
 def test_list_ignore_returns_rows(monkeypatch):
@@ -50,13 +50,13 @@ def test_list_ignore_no_permission_403(monkeypatch):
 
 def test_add_ignore_creates_entry(monkeypatch):
     captured = {}
-    def fake_insert(engine, cohort_id, phenotype, ancestry, reason, excluded_by):
-        captured.update(dict(cohort_id=cohort_id, excluded_by=excluded_by))
+    def fake_insert(engine, cohort_id, phenotype, ancestry, sex, reason, excluded_by):
+        captured.update(dict(cohort_id=cohort_id, sex=sex, excluded_by=excluded_by))
         return IGNORE_ROW
     monkeypatch.setattr(query, "insert_ma_ignore", fake_insert)
     result = run(sgc.add_sgc_ma_ignore(req=_req(), user=make_user()))
     assert result == IGNORE_ROW
-    assert captured["excluded_by"] == "reviewer"     # taken from the caller, not the body
+    assert captured["excluded_by"] == "reviewer" and captured["sex"] == "All"
 
 
 def test_add_ignore_no_permission_403(monkeypatch):
