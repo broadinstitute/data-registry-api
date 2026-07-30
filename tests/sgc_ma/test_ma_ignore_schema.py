@@ -2,15 +2,12 @@ from sqlalchemy import text
 from dataregistry.api.db import DataRegistryReadWriteDB
 
 
-def test_sgc_ma_ignore_table_shape(api_client):
+def test_sgc_ma_ignore_is_file_based(api_client):
     engine = DataRegistryReadWriteDB().get_engine()
     with engine.connect() as c:
-        ddl = c.execute(text("SHOW CREATE TABLE sgc_ma_ignore")).fetchone()[1]
         cols = {r[0] for r in c.execute(text("SHOW COLUMNS FROM sgc_ma_ignore"))}
-    flat = ddl.replace(" ", "")
-    assert {"id", "cohort_id", "phenotype", "ancestry", "reason",
-            "excluded_by", "created_at", "sex"} <= cols
-    # unique key on the quadruple
-    assert "UNIQUEKEY" in flat and "(`cohort_id`,`phenotype`,`ancestry`,`sex`)" in flat
-    # FK to sgc_cohorts with cascade delete
-    assert "FOREIGNKEY" in flat and "`sgc_cohorts`" in ddl and "ONDELETECASCADE" in flat
+        ddl = c.execute(text("SHOW CREATE TABLE sgc_ma_ignore")).fetchone()[1].replace(" ", "")
+    assert {"id", "file_id", "reason", "excluded_by", "created_at"} <= cols
+    assert "cohort_id" not in cols and "ancestry" not in cols and "sex" not in cols
+    assert "UNIQUEKEY" in ddl and "(`file_id`)" in ddl
+    assert "FOREIGNKEY" in ddl and "`sgc_gwas_files`" in ddl and "ONDELETECASCADE" in ddl
