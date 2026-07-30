@@ -6,15 +6,14 @@ TestClient/app, no real DB) with query.* monkeypatched and a hand-built User.
 import asyncio
 import pytest
 from fastapi import HTTPException
-from sqlalchemy.exc import IntegrityError
 
 from dataregistry.api import sgc
 from dataregistry.api import query
 from dataregistry.api.model import User, MAIgnoreCreateRequest
 
-IGNORE_ROW = {"id": "a" * 32, "cohort_id": "b" * 32, "phenotype": "PSOR",
-              "ancestry": "EUR", "sex": "All", "reason": "inflated", "excluded_by": "rev1",
-              "created_at": None}
+IGNORE_ROW = {"id": "a" * 32, "file_id": "f" * 32, "cohort_id": "b" * 32, "cohort": "C",
+              "dataset": "D", "phenotype": "PSOR", "ancestry": "EUR", "sex": "All",
+              "reason": "Phenotyping error", "excluded_by": "rev1", "created_at": None}
 
 
 def make_user(with_review_perm: bool = True) -> User:
@@ -32,8 +31,7 @@ def run(coro):
 
 
 def _req():
-    return MAIgnoreCreateRequest(cohort_id="b" * 32, phenotype="PSOR",
-                                 ancestry="EUR", sex="All", reason="inflated")
+    return MAIgnoreCreateRequest(file_id="f" * 32, reason="Phenotyping error")
 
 
 def test_list_ignore_returns_rows(monkeypatch):
@@ -49,14 +47,13 @@ def test_list_ignore_no_permission_403(monkeypatch):
 
 
 def test_add_ignore_creates_entry(monkeypatch):
+    monkeypatch.setattr(query, "get_sgc_gwas_file_by_id", lambda engine, fid: {"id": fid})
     captured = {}
-    def fake_insert(engine, cohort_id, phenotype, ancestry, sex, reason, excluded_by):
-        captured.update(dict(cohort_id=cohort_id, sex=sex, excluded_by=excluded_by))
-        return IGNORE_ROW
+    def fake_insert(engine, file_id, reason, excluded_by):
+        captured.update(file_id=file_id, excluded_by=excluded_by); return IGNORE_ROW
     monkeypatch.setattr(query, "insert_ma_ignore", fake_insert)
     result = run(sgc.add_sgc_ma_ignore(req=_req(), user=make_user()))
-    assert result == IGNORE_ROW
-    assert captured["excluded_by"] == "reviewer" and captured["sex"] == "All"
+    assert result == IGNORE_ROW and captured["excluded_by"] == "reviewer"
 
 
 def test_add_ignore_no_permission_403(monkeypatch):
@@ -66,24 +63,10 @@ def test_add_ignore_no_permission_403(monkeypatch):
     assert exc.value.status_code == 403
 
 
-def test_add_ignore_unknown_cohort_400(monkeypatch):
-    def boom(*a, **k):
-        raise IntegrityError("insert", {}, Exception("FK fails"))
-    monkeypatch.setattr(query, "insert_ma_ignore", boom)
+def test_add_ignore_unknown_file_400(monkeypatch):
+    monkeypatch.setattr(query, "get_sgc_gwas_file_by_id", lambda engine, fid: None)
     with pytest.raises(HTTPException) as exc:
         run(sgc.add_sgc_ma_ignore(req=_req(), user=make_user()))
-    assert exc.value.status_code == 400
-
-
-def test_add_ignore_invalid_bucket_400():
-    # sex="Male" with a non-Combined ancestry is not one of the nine valid
-    # buckets; this must be rejected before ever touching the DB (no
-    # monkeypatch of query.insert_ma_ignore -- if the guard is missing/broken,
-    # this call would try a real DB insert and fail differently).
-    req = MAIgnoreCreateRequest(cohort_id="b" * 32, phenotype="PSOR",
-                                ancestry="AFR", sex="Male", reason="r")
-    with pytest.raises(HTTPException) as exc:
-        run(sgc.add_sgc_ma_ignore(req=req, user=make_user()))
     assert exc.value.status_code == 400
 
 

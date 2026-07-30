@@ -2767,15 +2767,12 @@ async def add_sgc_ma_ignore(req: MAIgnoreCreateRequest, user: User = Depends(get
     if not check_review_permissions(user):
         raise fastapi.HTTPException(status_code=403,
             detail="You need sgc-review-data permission to modify the MA ignore-list")
-    if not is_valid_bucket(req.ancestry, req.sex):
-        raise fastapi.HTTPException(status_code=400,
-            detail=f"Invalid ignore entry target ({req.ancestry}, {req.sex}) — not one of the nine valid ancestry/sex buckets")
+    if not query.get_sgc_gwas_file_by_id(engine, req.file_id):
+        raise fastapi.HTTPException(status_code=400, detail=f"Unknown file_id '{req.file_id}'")
     try:
-        return query.insert_ma_ignore(engine, req.cohort_id, req.phenotype,
-                                      req.ancestry, req.sex, req.reason, user.user_name)
+        return query.insert_ma_ignore(engine, req.file_id, req.reason, user.user_name)
     except IntegrityError:
-        raise fastapi.HTTPException(status_code=400,
-            detail=f"Unknown cohort_id '{req.cohort_id}' (no matching sgc_cohorts row)")
+        raise fastapi.HTTPException(status_code=400, detail=f"Unknown file_id '{req.file_id}'")
 
 
 _VALID_ANCESTRY = {"Combined", "AFR", "AMR", "EAS", "EUR", "MID", "SAS"}
@@ -2789,78 +2786,68 @@ def is_valid_bucket(ancestry: str, sex: str) -> bool:
 
 
 def parse_bulk_ignore_rows(content: str) -> list:
-    """Parse a bulk MA-ignore file into [{code, phenotype, ancestry, sex, reason}] rows.
-
-    CSV or TSV. Header-aware: a header row naming 'code' and 'phenotype' columns is detected
-    and used; otherwise columns are positional (code, phenotype, ancestry, sex, reason). sex
-    defaults to 'All', reason to ''. Rows without a code are skipped. Validation (nine-bucket,
-    unknown code) is applied per-row at the endpoint, not here."""
+    """Parse a bulk MA-ignore file into [{file_id, reason, excluded_by}] rows. Accepts CSV,
+    TSV, or whitespace-delimited quoted values (R write.table style). Header-aware (a header
+    naming 'file_id' is detected; else positional file_id,reason,excluded_by). Rows without a
+    file_id are skipped."""
     import csv
     import io
     lines = [ln for ln in content.splitlines() if ln.strip()]
     if not lines:
         return []
-    delim = "\t" if "\t" in lines[0] else ","
-    parsed = list(csv.reader(io.StringIO("\n".join(lines)), delimiter=delim))
+    first = lines[0]
+    delim = "\t" if "\t" in first else ("," if "," in first else " ")
+    parsed = list(csv.reader(io.StringIO("\n".join(lines)),
+                             delimiter=delim, skipinitialspace=True))
+    if delim == " ":  # collapse empties from consecutive spaces
+        parsed = [[c for c in row if c != ""] for row in parsed]
+    parsed = [row for row in parsed if row]
     if not parsed:
         return []
-    cols = ["code", "phenotype", "ancestry", "sex", "reason"]
+    cols = ["file_id", "reason", "excluded_by"]
     header = [c.strip().lower() for c in parsed[0]]
-    if "code" in header and "phenotype" in header:
-        idx = {name: (header.index(name) if name in header else None) for name in cols}
+    if "file_id" in header:
+        idx = {n: (header.index(n) if n in header else None) for n in cols}
         data = parsed[1:]
     else:
-        idx = {name: i for i, name in enumerate(cols)}
+        idx = {n: i for i, n in enumerate(cols)}
         data = parsed
 
-    def cell(cells, name, default=""):
+    def cell(cells, name):
         i = idx.get(name)
-        return cells[i].strip() if (i is not None and i < len(cells)) else default
+        return cells[i].strip() if (i is not None and i < len(cells)) else ""
 
     rows = []
     for cells in data:
-        code = cell(cells, "code")
-        if not code:
-            continue
-        rows.append({
-            "code": code,
-            "phenotype": cell(cells, "phenotype"),
-            "ancestry": cell(cells, "ancestry"),
-            "sex": cell(cells, "sex", "All") or "All",
-            "reason": cell(cells, "reason"),
-        })
+        fid = cell(cells, "file_id")
+        if fid:
+            rows.append({"file_id": fid, "reason": cell(cells, "reason"),
+                         "excluded_by": cell(cells, "excluded_by")})
     return rows
 
 
 @router.post("/sgc/ma/ignore/bulk")
 async def bulk_add_sgc_ma_ignore(file: UploadFile, user: User = Depends(get_sgc_user)):
-    """Bulk-add MA ignore entries from an uploaded CSV/TSV of (code, phenotype, ancestry,
-    sex, reason) rows. Each row targets one analysis; the cohort code is resolved to a
-    cohort_id and the (ancestry, sex) validated as one of the nine buckets. Partial success:
-    valid rows applied, invalid rows returned in `skipped` with the reason."""
+    """Bulk-add MA ignore entries from an uploaded file of (file_id, reason, excluded_by)
+    rows. Each file_id is validated against sgc_gwas_files and upserted. Partial success:
+    valid rows applied, invalid rows returned in `skipped`."""
     if not check_review_permissions(user):
         raise fastapi.HTTPException(status_code=403,
             detail="You need sgc-review-data permission to modify the MA ignore-list")
     content = (await file.read()).decode("utf-8-sig", errors="replace")
     rows = parse_bulk_ignore_rows(content)
     if not rows:
-        raise fastapi.HTTPException(status_code=400, detail="No rows found in the uploaded file")
+        raise fastapi.HTTPException(status_code=400, detail="No file_id rows found in the uploaded file")
     added, skipped = 0, []
     for r in rows:
-        if not r["phenotype"] or not r["ancestry"]:
-            skipped.append({"code": r["code"], "reason": "missing phenotype or ancestry"}); continue
-        if not is_valid_bucket(r["ancestry"], r["sex"]):
-            skipped.append({"code": r["code"],
-                            "reason": f"invalid target ({r['ancestry']}, {r['sex']})"}); continue
-        cohort_id = query.resolve_cohort_code(engine, r["code"])
-        if not cohort_id:
-            skipped.append({"code": r["code"], "reason": "unknown cohort code"}); continue
+        if not query.get_sgc_gwas_file_by_id(engine, r["file_id"]):
+            skipped.append({"file_id": r["file_id"], "reason": "no GWAS file with that id"}); continue
         try:
-            query.insert_ma_ignore(engine, cohort_id, r["phenotype"], r["ancestry"],
-                                   r["sex"], r["reason"] or "", user.user_name)
+            query.insert_ma_ignore(engine, r["file_id"], r["reason"] or "",
+                                   r["excluded_by"] or user.user_name)
             added += 1
         except IntegrityError:
-            skipped.append({"code": r["code"], "reason": "cohort no longer exists"})
+            skipped.append({"file_id": r["file_id"], "reason": "file no longer exists"})
     return {"added": added, "skipped_count": len(skipped), "skipped": skipped}
 
 
