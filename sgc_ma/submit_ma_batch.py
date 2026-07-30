@@ -23,14 +23,14 @@ def submit_run(*, engine, batch, run_id, bucket, db_name):
     return resp["jobId"]
 
 
-def submit(*, engine, batch, phenotype, ancestry, bucket, db_name, dry_run):
-    cohorts = select_cohorts(engine, phenotype, ancestry)
-    click.echo(f"{phenotype}/{ancestry}: {len(cohorts)} cohorts")
+def submit(*, engine, batch, phenotype, ancestry, sex="All", bucket, db_name, dry_run):
+    cohorts = select_cohorts(engine, phenotype, ancestry, sex)
+    click.echo(f"{phenotype}/{ancestry}/{sex}: {len(cohorts)} cohorts")
     for c in cohorts:
         click.echo(f"  {c['dataset']}")
     if dry_run:
         return None
-    run_id = query.insert_sgc_ma_run(engine, phenotype, ancestry, run_type="auto",
+    run_id = query.insert_sgc_ma_run(engine, phenotype, ancestry, sex=sex, run_type="auto",
                                      dataset_file_ids=[c["file_id"] for c in cohorts],
                                      maf_min=0.005, info_min=0.3)
     return submit_run(engine=engine, batch=batch, run_id=run_id, bucket=bucket, db_name=db_name)
@@ -39,15 +39,16 @@ def submit(*, engine, batch, phenotype, ancestry, bucket, db_name, dry_run):
 @click.command()
 @click.option("--phenotype", required=True)
 @click.option("--ancestry", required=True)
+@click.option("--sex", default="All", show_default=True)
 @click.option("--bucket", required=True)
 @click.option("--db-name", required=True)
 @click.option("--dry-run", is_flag=True, default=False)
-def main(phenotype, ancestry, bucket, db_name, dry_run):
+def main(phenotype, ancestry, sex, bucket, db_name, dry_run):
     os.environ["DATA_REGISTRY_DB_NAME"] = db_name
     from dataregistry.api.db import DataRegistryReadWriteDB
     engine = DataRegistryReadWriteDB().get_engine()
     batch = boto3.client("batch", region_name=AWS_REGION)
-    job = submit(engine=engine, batch=batch, phenotype=phenotype, ancestry=ancestry,
+    job = submit(engine=engine, batch=batch, phenotype=phenotype, ancestry=ancestry, sex=sex,
                  bucket=bucket, db_name=db_name, dry_run=dry_run)
     click.echo(f"submitted {job}" if job else "(dry-run)")
 
