@@ -50,7 +50,7 @@ Resources:
       JobDefinitionName: gwas-liftover-job
       PlatformCapabilities: [FARGATE]
       Timeout:
-        AttemptDurationSeconds: 3600
+        AttemptDurationSeconds: 7200
       RetryStrategy:
         Attempts: 1
       ContainerProperties:
@@ -78,9 +78,9 @@ Resources:
         ExecutionRoleArn: !GetAtt LiftoverJobRole.Arn
         ResourceRequirements:
           - Type: VCPU
-            Value: '8'
+            Value: '16'
           - Type: MEMORY
-            Value: '32768'
+            Value: '122880'
         NetworkConfiguration:
           AssignPublicIp: ENABLED
         FargatePlatformConfiguration:
