@@ -218,3 +218,101 @@ def get_hcm_gwas_validation_jobs_by_file_id(engine, file_id: str) -> list:
             ORDER BY submitted_at DESC
         """), {'file_id': str(file_id).replace('-', '')}).mappings().all()
         return [_parse_validation_job_row(row) for row in result]
+
+
+# ---------------------------------------------------------------------------
+# MA run/result queries
+# ---------------------------------------------------------------------------
+
+_HCM_MA_COLS = """SELECT id, label, status, dataset_file_ids,
+        maf_min, info_min, meta_lambda_gc, n_meta_variants, n_genome_wide_sig,
+        n_cohorts, n_cohorts_used, total_cases, total_controls,
+        manhattan_s3_key, qq_s3_key, meta_s3_key, summary_json_s3_key,
+        summary_tsv_s3_key, top_loci_s3_key, batch_job_id, error_message,
+        submitted_by, created_at, updated_at"""
+
+
+def _format_hcm_ma_row(d: dict) -> dict:
+    # id is stored as the raw ASCII bytes of the dashless hex string in a
+    # binary(32) column (same convention as hcm_gwas_files / hcm_gwas_validation_jobs
+    # above) -- NOT via UNHEX/HEX, which would require a 64-hex-char (32 byte) value.
+    if d.get('id') is not None:
+        raw = d['id']
+        d['id'] = raw.decode('ascii') if isinstance(raw, (bytes, bytearray)) else raw
+    if isinstance(d.get("dataset_file_ids"), str):
+        d["dataset_file_ids"] = json.loads(d["dataset_file_ids"])
+    return d
+
+
+def insert_hcm_ma_run(engine, *, label=None, dataset_file_ids=None,
+                      maf_min=None, info_min=None, submitted_by=None) -> str:
+    """Create a fresh PENDING HCM MA run row. Returns the dashless hex id."""
+    run_id = str(uuid.uuid4()).replace('-', '')
+    with engine.connect() as conn:
+        conn.execute(text("""
+            INSERT INTO hcm_gwas_ma_results
+                (id, label, status, dataset_file_ids, maf_min, info_min, submitted_by)
+            VALUES (:id, :label, 'PENDING', :dfi, :maf, :info, :by)
+        """), {'id': run_id, 'label': label,
+               'dfi': json.dumps(list(dataset_file_ids)) if dataset_file_ids is not None else None,
+               'maf': maf_min, 'info': info_min, 'by': submitted_by})
+        conn.commit()
+    return run_id
+
+
+def get_hcm_ma_run(engine, run_id: str):
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(_HCM_MA_COLS + " FROM hcm_gwas_ma_results WHERE id = :id"),
+            {'id': run_id.replace('-', '')}).mappings().first()
+    return _format_hcm_ma_row(dict(row)) if row else None
+
+
+def update_hcm_ma_result(engine, run_id: str, *, status: str, batch_job_id=None,
+                         meta_lambda_gc=None, n_meta_variants=None,
+                         n_genome_wide_sig=None, n_cohorts=None, n_cohorts_used=None,
+                         total_cases=None, total_controls=None, manhattan_s3_key=None,
+                         qq_s3_key=None, meta_s3_key=None, summary_json_s3_key=None,
+                         summary_tsv_s3_key=None, top_loci_s3_key=None,
+                         error_message=None) -> None:
+    """Partial update: only non-None fields written (COALESCE). Raises ValueError
+    if no row matches run_id."""
+    with engine.connect() as conn:
+        res = conn.execute(text("""
+            UPDATE hcm_gwas_ma_results SET status = :status,
+                batch_job_id = COALESCE(:batch_job_id, batch_job_id),
+                meta_lambda_gc = COALESCE(:meta_lambda_gc, meta_lambda_gc),
+                n_meta_variants = COALESCE(:n_meta_variants, n_meta_variants),
+                n_genome_wide_sig = COALESCE(:n_genome_wide_sig, n_genome_wide_sig),
+                n_cohorts = COALESCE(:n_cohorts, n_cohorts),
+                n_cohorts_used = COALESCE(:n_cohorts_used, n_cohorts_used),
+                total_cases = COALESCE(:total_cases, total_cases),
+                total_controls = COALESCE(:total_controls, total_controls),
+                manhattan_s3_key = COALESCE(:manhattan_s3_key, manhattan_s3_key),
+                qq_s3_key = COALESCE(:qq_s3_key, qq_s3_key),
+                meta_s3_key = COALESCE(:meta_s3_key, meta_s3_key),
+                summary_json_s3_key = COALESCE(:summary_json_s3_key, summary_json_s3_key),
+                summary_tsv_s3_key = COALESCE(:summary_tsv_s3_key, summary_tsv_s3_key),
+                top_loci_s3_key = COALESCE(:top_loci_s3_key, top_loci_s3_key),
+                error_message = COALESCE(:error_message, error_message)
+            WHERE id = :run_id
+        """), {'status': status, 'batch_job_id': batch_job_id,
+               'meta_lambda_gc': meta_lambda_gc, 'n_meta_variants': n_meta_variants,
+               'n_genome_wide_sig': n_genome_wide_sig, 'n_cohorts': n_cohorts,
+               'n_cohorts_used': n_cohorts_used, 'total_cases': total_cases,
+               'total_controls': total_controls, 'manhattan_s3_key': manhattan_s3_key,
+               'qq_s3_key': qq_s3_key, 'meta_s3_key': meta_s3_key,
+               'summary_json_s3_key': summary_json_s3_key,
+               'summary_tsv_s3_key': summary_tsv_s3_key,
+               'top_loci_s3_key': top_loci_s3_key, 'error_message': error_message,
+               'run_id': run_id.replace('-', '')})
+        if res.rowcount == 0:
+            raise ValueError(f"No hcm_gwas_ma_results row found for run_id={run_id}")
+        conn.commit()
+
+
+def get_hcm_ma_results(engine) -> list:
+    with engine.connect() as conn:
+        rows = conn.execute(text(
+            _HCM_MA_COLS + " FROM hcm_gwas_ma_results ORDER BY created_at DESC")).mappings().all()
+    return [_format_hcm_ma_row(dict(r)) for r in rows]
