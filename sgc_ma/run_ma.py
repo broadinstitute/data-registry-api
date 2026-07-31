@@ -84,12 +84,14 @@ def meta_analyze(cohorts: list[dict], chunks_fn, outdir: str, label: str = "meta
             except ValueError as e:
                 per_cohort.append({"dataset": co["dataset"], "file_id": co.get("file_id"),
                                    "cohort": co.get("cohort"),
+                                   "ancestry": co.get("ancestry"), "sex": co.get("sex"),
                                    "skipped": True, "reason": str(e)})
                 continue
             n_cohorts_used += 1
             sorted_paths.append(sorted_path)
             per_cohort.append({"dataset": co["dataset"], "file_id": co["file_id"],
                                "cohort": co.get("cohort"),
+                               "ancestry": co.get("ancestry"), "sex": co.get("sex"),
                                "cases": co.get("cases"), "controls": co.get("controls"),
                                "n_variants_in": stats["n_in"], "n_variants_used": stats["n_kept"],
                                "sum_n": stats["sum_n"],
@@ -122,7 +124,8 @@ def meta_analyze(cohorts: list[dict], chunks_fn, outdir: str, label: str = "meta
         lam = None
 
     for ig in (ignored or []):
-        per_cohort.append({"cohort": ig.get("cohort"), "dataset": None,
+        per_cohort.append({"cohort": ig.get("cohort"), "dataset": ig.get("dataset"),
+                           "ancestry": ig.get("ancestry"), "sex": ig.get("sex"),
                            "skipped": True,
                            "reason": f"MA ignore-list: {ig.get('reason')}"})
 
@@ -157,7 +160,7 @@ def main(run_id, bucket, local_out):
     run = query.get_sgc_ma_run(engine, run_id)
     if not run:
         raise SystemExit(f"no MA run {run_id}")
-    phenotype, ancestry = run["phenotype"], run["ancestry"]
+    phenotype, ancestry, sex = run["phenotype"], run["ancestry"], run.get("sex", "All")
     file_ids = run.get("dataset_file_ids") or []
     maf_min = 0.005 if run.get("maf_min") is None else run["maf_min"]
     info_min = 0.3 if run.get("info_min") is None else run["info_min"]
@@ -170,7 +173,7 @@ def main(run_id, bucket, local_out):
                                batch_job_id=os.environ.get("AWS_BATCH_JOB_ID"))
     try:
         cohorts = sel.select_cohorts_by_file_ids(engine, file_ids)
-        ignored = sel.ignored_cohorts(engine, phenotype)
+        ignored = sel.ignored_cohorts(engine, phenotype, ancestry, sex)
         click.echo(f"run {run_id}: {len(cohorts)} cohorts for {phenotype}/{ancestry}")
         s3 = boto3.client("s3", region_name="us-east-1")
 
