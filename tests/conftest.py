@@ -58,6 +58,7 @@ def before_each_test():
         con.execute(text("TRUNCATE TABLE qc_step_result"))
         con.execute(text("TRUNCATE TABLE qc_run"))
         con.execute(text("TRUNCATE TABLE hcm_gwas_ma_results"))
+        con.execute(text("TRUNCATE TABLE hcm_liftover_jobs"))
         con.execute(text("TRUNCATE TABLE hcm_gwas_files"))
         con.execute(text("INSERT INTO users (id, user_name, oauth_provider, created_at) "
                          "values (1, 'testuser@broadinstitute.org', 'google', NOW())"))
@@ -66,6 +67,10 @@ def before_each_test():
         con.execute(text(
             "INSERT INTO portal_liftover_config (portal_id, target_genome_build, updated_at, updated_by) "
             "VALUES ('hermes', 'hg19', NOW(), 'system')"
+        ))
+        con.execute(text(
+            "INSERT INTO portal_liftover_config (portal_id, target_genome_build, updated_at, updated_by) "
+            "VALUES ('hcm', 'hg38', NOW(), 'system')"
         ))
         con.commit()
         con.execute(text("SET FOREIGN_KEY_CHECKS = 1"))
