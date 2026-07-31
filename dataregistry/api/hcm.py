@@ -16,7 +16,7 @@ from streaming_form_data.targets import S3Target
 
 from dataregistry.api import s3
 from dataregistry.api.db import DataRegistryReadWriteDB
-from dataregistry.api.model import User, NewUserRequest, HCMMAEligibleFile, HCMMARunRequest, HCMMAResult
+from dataregistry.api.model import User, NewUserRequest, HCMMAEligibleFile, HCMMARunRequest, HCMMAResult, HCMLiftoverJob
 from dataregistry.api.hcm_model import HCMGWASFile, HCMGWASValidationJob
 from dataregistry.api import hcm_query
 from dataregistry.api.mskkp import suggest_column_map
@@ -1064,3 +1064,133 @@ async def get_hcm_ma_top_loci(run_id: str, user: User = fastapi.Depends(get_hcm_
         return []
     header = lines[0].split("\t")
     return [dict(zip(header, ln.split("\t"))) for ln in lines[1:]]
+
+
+# ---------------------------------------------------------------------------
+# Liftover
+# ---------------------------------------------------------------------------
+
+@router.get("/hcm/liftover/{file_id}", response_model=HCMLiftoverJob)
+async def get_hcm_liftover(file_id: str, user: User = fastapi.Depends(get_hcm_user)):
+    if not check_review_permissions(user):
+        raise fastapi.HTTPException(status_code=403,
+            detail="You need hcm-review-data permission to view liftover output")
+    job = hcm_query.get_hcm_liftover_job_for_file(engine, file_id)
+    if job is None:
+        raise fastapi.HTTPException(status_code=404,
+            detail="No liftover job found for this file")
+    return job
+
+
+@router.get("/hcm/liftover/{file_id}/unmapped-url")
+async def get_hcm_liftover_unmapped_url(file_id: str, user: User = fastapi.Depends(get_hcm_user)):
+    if not check_review_permissions(user):
+        raise fastapi.HTTPException(status_code=403,
+            detail="You need hcm-review-data permission to download unmapped variants")
+    job = hcm_query.get_hcm_liftover_job_for_file(engine, file_id)
+    if job is None or not job.get("unmapped_s3_path"):
+        raise fastapi.HTTPException(status_code=404,
+            detail="No unmapped-variants file for this file's liftover")
+    # unmapped_s3_path is a full s3://<bucket>/<key>; the bucket is env-specific
+    # (dig-data-registry-qa on QA), so parse it rather than assuming s3.BASE_BUCKET.
+    uri = job["unmapped_s3_path"]
+    without_scheme = uri[len("s3://"):] if uri.startswith("s3://") else uri
+    bucket, _, key = without_scheme.partition("/")
+    return {"presigned_url": s3.get_signed_url(bucket, key)}
+
+
+HCM_LIFTOVER_WAVE_CAP = 50
+
+
+def _kick_off_hcm_liftover(background_tasks: BackgroundTasks, file_row: dict,
+                           submitted_by: str) -> str:
+    """Insert a PENDING hcm_liftover_jobs row and schedule the background
+    submit-and-await for one HCM GWAS file, reusing the operator driver's
+    helpers so the button and the CLI submit identical jobs. Returns the
+    liftover job id. Raises ValueError if the file's build isn't liftable or
+    its column_mapping is missing keys (caller skips + reports that file)."""
+    from dataregistry.api import batch
+    from sgc_ma.select import normalize_build
+    from hcm_liftover.submit_liftover_batch import (
+        to_worker_column_mapping, ucsc_source_build, make_liftover_callback,
+        _coerce_map, _HCM_ARCHIVE_PREFIX,
+    )
+
+    file_id = file_row["file_id"]
+    s3_key = file_row["s3_path"]
+    file_name = os.path.basename(s3_key)
+    src = ucsc_source_build(normalize_build(file_row["genome_build"]))
+    worker_map = to_worker_column_mapping(_coerce_map(file_row["column_mapping"]))
+
+    bucket = s3.BASE_BUCKET
+    input_s3 = f"s3://{bucket}/{s3_key}"
+    archive_s3 = f"s3://{bucket}/{_HCM_ARCHIVE_PREFIX}/{file_id}/{file_name}"
+    unmapped_s3 = f"s3://{bucket}/hcm/liftover/{file_id}/unmapped.tsv"
+    summary_s3 = f"s3://{bucket}/hcm/liftover/{file_id}/summary.json"
+
+    lid = hcm_query.insert_hcm_liftover_pending(
+        engine, file_id, src, "hg38", archive_s3, unmapped_s3, submitted_by)
+    hcm_query.update_hcm_liftover_job(engine, lid, status="RUNNING")
+
+    job_config = {
+        "jobName": f"hcm-liftover-{file_id[:16]}",
+        "jobQueue": "gwas-liftover-job-queue",
+        "jobDefinition": "gwas-liftover-job",
+        "parameters": {
+            "input-s3-path": input_s3, "output-s3-path": input_s3,  # replace-in-place
+            "archive-s3-path": archive_s3, "unmapped-s3-path": unmapped_s3,
+            "summary-s3-path": summary_s3, "source-build": src, "target-build": "hg38",
+            "column-mapping": json.dumps(worker_map), "job-id": lid,
+        },
+    }
+    background_tasks.add_task(
+        batch.submit_and_await_job, engine, job_config,
+        make_liftover_callback(file_id), lid, False)
+    return lid
+
+
+@router.post("/hcm/liftover/run-all")
+async def run_all_hcm_liftover(background_tasks: BackgroundTasks,
+                               user: User = fastapi.Depends(get_hcm_user)):
+    """Submit liftover for the next wave of HCM GWAS files that need it.
+
+    Reviewer-gated. Selects files whose effective build is GRCh37 with no
+    SUCCEEDED/in-flight liftover (reusing the operator driver's selection), caps
+    the wave at HCM_LIFTOVER_WAVE_CAP, and submits each in the background.
+    Returns how many were submitted and how many liftable files remain for the
+    next click.
+    """
+    if not check_review_permissions(user):
+        raise fastapi.HTTPException(
+            status_code=403,
+            detail="You need 'hcm-review-data' permission to run liftover")
+
+    from hcm_liftover.submit_liftover_batch import select_liftable, plan_liftover_wave
+
+    try:
+        liftable, unrecognized = select_liftable(engine, None)
+        wave, remaining = plan_liftover_wave(liftable, HCM_LIFTOVER_WAVE_CAP)
+
+        submitted, skipped = [], []
+        for file_row in wave:
+            try:
+                lid = _kick_off_hcm_liftover(background_tasks, file_row, user.user_name)
+                submitted.append({"file_id": file_row["file_id"], "liftover_job_id": lid})
+            except Exception as e:
+                # Per-file resilience for a bulk submit: a bad build/column_mapping
+                # (ValueError) or a transient DB error on one file records that file
+                # in `skipped` and lets the wave continue, so files already submitted
+                # in this call are still reported instead of being lost to a 500.
+                skipped.append({"file_id": file_row["file_id"], "reason": str(e)})
+
+        return {
+            "message": f"Submitted {len(submitted)} liftover job(s)",
+            "submitted": len(submitted),
+            "remaining": remaining + len(skipped),
+            "skipped": skipped,
+            "unrecognized": len(unrecognized),
+        }
+    except fastapi.HTTPException:
+        raise
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Error running liftover: {str(e)}")
