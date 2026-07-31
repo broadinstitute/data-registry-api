@@ -125,6 +125,7 @@ def meta_analyze(cohorts: list[dict], chunks_fn, outdir: str, label: str = "meta
 
     for ig in (ignored or []):
         per_cohort.append({"cohort": ig.get("cohort"), "dataset": ig.get("dataset"),
+                           "file_id": ig.get("file_id"),
                            "ancestry": ig.get("ancestry"), "sex": ig.get("sex"),
                            "skipped": True,
                            "reason": f"MA ignore-list: {ig.get('reason')}"})

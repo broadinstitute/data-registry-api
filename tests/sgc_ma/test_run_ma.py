@@ -149,6 +149,21 @@ def test_meta_analyze_ignored_rows_carry_dataset_identity(tmp_path):
     assert ig[0]["skipped"] is True
 
 
+def test_meta_analyze_ignored_rows_carry_file_id(tmp_path):
+    # two files can share cohort/dataset/ancestry/sex (a re-upload that superseded
+    # an earlier one); file_id is the only thing the UI can disambiguate them with.
+    cohorts = [{"file_id": "a", "dataset": "A", "cohort": "CohortA", "cases": 10, "controls": 20}]
+    base = dict(se=0.1, pvalue=0.01, eaf=0.3, n=1000)
+    frames = {"a": _norm([dict(chromosome="1", position=100, ea="G", oa="A", beta=0.2, **base)])}
+    ignored = [{"file_id": "c0c499255b", "cohort": "IgnoredCohort", "dataset": "DS.Ignored",
+               "ancestry": "SAS", "sex": "Female", "reason": "wrong bucket"}]
+    summary = meta_analyze(cohorts, lambda co: [frames[co["file_id"]]], str(tmp_path),
+                           ignored=ignored)
+    ig = [c for c in summary["per_cohort"] if c.get("cohort") == "IgnoredCohort"]
+    assert len(ig) == 1
+    assert ig[0]["file_id"] == "c0c499255b"
+
+
 def test_meta_analyze_used_rows_carry_ancestry_and_sex(tmp_path):
     # a cohort can appear as both Used (one file) and Ignored (another file of
     # the same cohort/dataset label) -- Used rows must carry ancestry/sex too,
