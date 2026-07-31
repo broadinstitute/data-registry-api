@@ -589,3 +589,50 @@ class MARunRequest(BaseModel):
     label: Optional[str] = None
 
 
+class HCMMAEligibleFile(BaseModel):
+    file_id: str
+    cohort_name: str
+    sarc: Optional[str] = None
+    ancestry: Optional[str] = None
+    sex: Optional[str] = None
+    genome_build: Optional[str] = None
+    eligible: bool
+    cases: Optional[int] = None
+    controls: Optional[int] = None
+    file_name: Optional[str] = None
+
+
+class HCMMARunRequest(BaseModel):
+    file_ids: list[str]
+    label: Optional[str] = None
+    maf_min: float = 0.005
+    info_min: float = 0.3
+
+
+class HCMMAResult(BaseModel):
+    id: str
+    label: Optional[str] = None
+    status: str
+    dataset_file_ids: Optional[list[str]] = None
+    maf_min: Optional[float] = None
+    info_min: Optional[float] = None
+    meta_lambda_gc: Optional[float] = None
+    n_meta_variants: Optional[int] = None
+    n_genome_wide_sig: Optional[int] = None
+    n_cohorts: Optional[int] = None
+    n_cohorts_used: Optional[int] = None
+    total_cases: Optional[int] = None
+    total_controls: Optional[int] = None
+    manhattan_s3_key: Optional[str] = None
+    qq_s3_key: Optional[str] = None
+    meta_s3_key: Optional[str] = None
+    summary_json_s3_key: Optional[str] = None
+    summary_tsv_s3_key: Optional[str] = None
+    top_loci_s3_key: Optional[str] = None
+    batch_job_id: Optional[str] = None
+    error_message: Optional[str] = None
+    submitted_by: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+

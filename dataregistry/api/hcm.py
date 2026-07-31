@@ -16,10 +16,12 @@ from streaming_form_data.targets import S3Target
 
 from dataregistry.api import s3
 from dataregistry.api.db import DataRegistryReadWriteDB
-from dataregistry.api.model import User, NewUserRequest
+from dataregistry.api.model import User, NewUserRequest, HCMMAEligibleFile, HCMMARunRequest, HCMMAResult
 from dataregistry.api.hcm_model import HCMGWASFile, HCMGWASValidationJob
 from dataregistry.api import hcm_query
 from dataregistry.api.mskkp import suggest_column_map
+from hcm_ma import select as hcm_ma_select
+from hcm_ma import submit_ma_batch as hcm_ma_submit
 
 router = fastapi.APIRouter()
 engine = DataRegistryReadWriteDB().get_engine()
@@ -950,3 +952,115 @@ async def get_hcm_gwas_validation_errors_url(file_id: str, user: User = fastapi.
         raise
     except Exception as e:
         raise fastapi.HTTPException(status_code=500, detail=f"Error retrieving error log: {str(e)}")
+
+
+# ---------------------------------------------------------------------------
+# Meta-analysis (HCM MA)
+# ---------------------------------------------------------------------------
+
+def _hcm_ma_run_lookup(run_id: str) -> dict:
+    row = hcm_query.get_hcm_ma_run(engine, run_id)
+    if not row:
+        raise fastapi.HTTPException(status_code=404, detail=f"MA run '{run_id}' not found")
+    return row
+
+
+def _hcm_ma_presign(s3_key):
+    return s3.get_signed_url(s3.BASE_BUCKET, s3_key) if s3_key else None
+
+
+@router.get("/hcm/ma/eligible-files", response_model=list[HCMMAEligibleFile])
+async def list_hcm_ma_eligible_files(user: User = fastapi.Depends(get_hcm_user)):
+    if not check_review_permissions(user):
+        raise fastapi.HTTPException(status_code=403,
+            detail="You need 'hcm-review-data' permission to view MA candidates")
+    return hcm_ma_select.list_eligible_files(engine)
+
+
+@router.post("/hcm/ma/run")
+async def launch_hcm_ma_run(req: HCMMARunRequest, user: User = fastapi.Depends(get_hcm_user)):
+    if not check_review_permissions(user):
+        raise fastapi.HTTPException(status_code=403,
+            detail="You need 'hcm-review-data' permission to launch a meta-analysis")
+    by_id = {f["file_id"]: f for f in hcm_ma_select.list_eligible_files(engine)}
+    chosen = []
+    for fid in req.file_ids:
+        f = by_id.get(fid)
+        if f is None:
+            raise fastapi.HTTPException(status_code=400, detail=f"Unknown file_id '{fid}'")
+        if not f["eligible"]:
+            raise fastapi.HTTPException(status_code=400,
+                detail=f"File '{fid}' is not GRCh38-eligible (needs liftover)")
+        chosen.append(f)
+    cohorts = [f["cohort_name"] for f in chosen]
+    if len(set(cohorts)) != len(cohorts):
+        raise fastapi.HTTPException(status_code=400,
+            detail="Only one file per cohort may be selected for a meta-analysis")
+    if len(set(cohorts)) < 2:
+        raise fastapi.HTTPException(status_code=400,
+            detail="A meta-analysis needs at least two distinct cohorts")
+    run_id = hcm_query.insert_hcm_ma_run(
+        engine, label=req.label, dataset_file_ids=req.file_ids,
+        maf_min=req.maf_min, info_min=req.info_min, submitted_by=user.user_name)
+    batch = boto3.client("batch", region_name=s3.S3_REGION)
+    hcm_ma_submit.submit_run(engine=engine, batch=batch, run_id=run_id,
+                             bucket=s3.BASE_BUCKET,
+                             db_name=os.environ.get("DATA_REGISTRY_DB_NAME", "dataregistry_qa"))
+    return {"run_id": run_id}
+
+
+@router.get("/hcm/ma/results", response_model=list[HCMMAResult])
+async def list_hcm_ma_results(user: User = fastapi.Depends(get_hcm_user)):
+    if not check_review_permissions(user):
+        raise fastapi.HTTPException(status_code=403,
+            detail="You need 'hcm-review-data' permission to view MA results")
+    return hcm_query.get_hcm_ma_results(engine)
+
+
+@router.get("/hcm/ma/runs/{run_id}/manhattan")
+async def get_hcm_ma_manhattan(run_id: str, user: User = fastapi.Depends(get_hcm_user)):
+    if not check_review_permissions(user):
+        raise fastapi.HTTPException(status_code=403, detail="You need 'hcm-review-data' permission")
+    return {"url": _hcm_ma_presign(_hcm_ma_run_lookup(run_id).get("manhattan_s3_key"))}
+
+
+@router.get("/hcm/ma/runs/{run_id}/qq")
+async def get_hcm_ma_qq(run_id: str, user: User = fastapi.Depends(get_hcm_user)):
+    if not check_review_permissions(user):
+        raise fastapi.HTTPException(status_code=403, detail="You need 'hcm-review-data' permission")
+    return {"url": _hcm_ma_presign(_hcm_ma_run_lookup(run_id).get("qq_s3_key"))}
+
+
+@router.get("/hcm/ma/runs/{run_id}/meta")
+async def get_hcm_ma_meta(run_id: str, user: User = fastapi.Depends(get_hcm_user)):
+    if not check_review_permissions(user):
+        raise fastapi.HTTPException(status_code=403, detail="You need 'hcm-review-data' permission")
+    return {"url": _hcm_ma_presign(_hcm_ma_run_lookup(run_id).get("meta_s3_key"))}
+
+
+@router.get("/hcm/ma/runs/{run_id}/summary")
+async def get_hcm_ma_summary(run_id: str, user: User = fastapi.Depends(get_hcm_user)):
+    if not check_review_permissions(user):
+        raise fastapi.HTTPException(status_code=403, detail="You need 'hcm-review-data' permission")
+    key = _hcm_ma_run_lookup(run_id).get("summary_json_s3_key")
+    if not key:
+        raise fastapi.HTTPException(status_code=404, detail="Summary not yet available")
+    s3_client = boto3.client("s3", region_name=s3.S3_REGION)
+    obj = s3_client.get_object(Bucket=s3.BASE_BUCKET, Key=key)
+    return fastapi.responses.Response(content=obj["Body"].read(), media_type="application/json")
+
+
+@router.get("/hcm/ma/runs/{run_id}/top-loci")
+async def get_hcm_ma_top_loci(run_id: str, user: User = fastapi.Depends(get_hcm_user)):
+    if not check_review_permissions(user):
+        raise fastapi.HTTPException(status_code=403, detail="You need 'hcm-review-data' permission")
+    key = _hcm_ma_run_lookup(run_id).get("top_loci_s3_key")
+    if not key:
+        raise fastapi.HTTPException(status_code=404, detail="Top loci not yet available")
+    s3_client = boto3.client("s3", region_name=s3.S3_REGION)
+    obj = s3_client.get_object(Bucket=s3.BASE_BUCKET, Key=key)
+    lines = [ln for ln in obj["Body"].read().decode().splitlines() if ln.strip()]
+    if not lines:
+        return []
+    header = lines[0].split("\t")
+    return [dict(zip(header, ln.split("\t"))) for ln in lines[1:]]
