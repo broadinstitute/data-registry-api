@@ -76,6 +76,16 @@ def _pick_one_per_cohort(rows, prefer_combined):
     return selected, warnings
 
 
+def matches_target(row: dict, target_ancestry: str, target_sex: str) -> bool:
+    """True iff the row is in the target's bucket, before per-cohort dedup.
+    The Combined family pools every ancestry at the target sex; ancestry-
+    stratified targets are always sex='All'."""
+    if target_ancestry == "Combined":
+        return str(row.get("sex")) == target_sex
+    return (str(row.get("ancestry")) == target_ancestry
+            and str(row.get("sex")) == "All")
+
+
 def resolve_target(rows, target_ancestry, target_sex):
     """Select per-cohort input files for one of the nine MA targets.
     - Combined family (target_ancestry == 'Combined'): sex == target_sex across all
@@ -83,12 +93,8 @@ def resolve_target(rows, target_ancestry, target_sex):
       and the sex-stratified 'any ancestry' rules both fall out of this).
     - Ancestry-stratified: ancestry == target_ancestry AND sex == 'All'.
     Returns (selected_rows, warnings)."""
-    if target_ancestry == "Combined":
-        cand = [r for r in rows if str(r.get("sex")) == target_sex]
-        return _pick_one_per_cohort(cand, prefer_combined=True)
-    cand = [r for r in rows
-            if str(r.get("ancestry")) == target_ancestry and str(r.get("sex")) == "All"]
-    return _pick_one_per_cohort(cand, prefer_combined=False)
+    cand = [r for r in rows if matches_target(r, target_ancestry, target_sex)]
+    return _pick_one_per_cohort(cand, prefer_combined=(target_ancestry == "Combined"))
 
 
 _SQL = """
@@ -152,7 +158,7 @@ _SQL_BY_IDS = """
 def list_ma_candidates(engine, phenotype: str, target_ancestry: str, target_sex: str = "All") -> list[dict]:
     """The resolved per-cohort files that WOULD be included for a target for the manual-launch
     preview UI. Ignore-listed files are dropped before resolution, same as select_cohorts, so
-    preview == auto. `ignored` is kept on each dict for shape stability but is now always False."""
+    preview == auto."""
     with engine.connect() as c:
         rows = [dict(r._mapping) for r in c.execute(text(_SQL), {"phenotype": phenotype})]
     eligible = [r for r in rows if include_file(r) and r.get("ignore_reason") is None]
@@ -162,7 +168,6 @@ def list_ma_candidates(engine, phenotype: str, target_ancestry: str, target_sex:
         "ancestry": r.get("ancestry"), "sex": r.get("sex"),
         "cases": r["cases"], "controls": r["controls"],
         "genome_build": normalize_build(r["genome_build"]),
-        "ignored": r.get("ignore_reason") is not None,
     } for r in selected]
 
 
@@ -182,16 +187,28 @@ def select_cohorts_by_file_ids(engine, file_ids) -> list[dict]:
 
 
 _IGNORED_SQL = """
-    SELECT CAST(f.id AS CHAR) AS file_id, sc.name AS cohort, f.dataset, f.ancestry, mi.reason AS reason
+    SELECT CAST(f.id AS CHAR) AS file_id, sc.name AS cohort, f.dataset, f.ancestry, mi.reason AS reason,
+           JSON_UNQUOTE(JSON_EXTRACT(f.metadata, '$.sex')) AS sex,
+           COALESCE(JSON_UNQUOTE(JSON_EXTRACT(f.metadata, '$.genome_build')), JSON_UNQUOTE(JSON_EXTRACT(gc.metadata, '$.genome_build'))) AS genome_build
     FROM sgc_ma_ignore mi
     JOIN sgc_gwas_files f ON f.id = mi.file_id
+    LEFT JOIN sgc_gwas_cohorts gc ON gc.cohort_id = f.cohort_id
     LEFT JOIN sgc_cohorts sc ON sc.id = f.cohort_id
     WHERE f.phenotype = :phenotype
     ORDER BY sc.name
 """
 
 
-def ignored_cohorts(engine, phenotype: str) -> list[dict]:
-    """Ignore-list files for a phenotype (for the run summary)."""
+def ignored_cohorts(engine, phenotype: str, target_ancestry: str, target_sex: str = "All") -> list[dict]:
+    """Ignore-list files for a phenotype's run bucket (for the run summary).
+    Filtered the same way selection is -- include_file() (build/product) and
+    matches_target() (ancestry/sex) -- so a file that was never a candidate for
+    this run's bucket (wrong sex, wrong ancestry, GRCh37, or a meta_analysis_
+    product) is never reported as "Ignored" for it. genome_build is only needed
+    for that filter and is not returned."""
     with engine.connect() as c:
-        return [dict(r._mapping) for r in c.execute(text(_IGNORED_SQL), {"phenotype": phenotype})]
+        rows = [dict(r._mapping) for r in c.execute(text(_IGNORED_SQL), {"phenotype": phenotype})]
+    return [{"file_id": r["file_id"], "cohort": r["cohort"], "dataset": r["dataset"],
+            "ancestry": r["ancestry"], "sex": r["sex"], "reason": r["reason"]}
+            for r in rows
+            if include_file(r) and matches_target(r, target_ancestry, target_sex)]

@@ -140,6 +140,27 @@ def test_resolve_ancestry_stratified_requires_ancestry_and_all():
     assert [r["file_id"] for r in selected] == ["a-eur"]
 
 
+from sgc_ma.select import matches_target
+
+
+@pytest.mark.parametrize("target_ancestry,target_sex,row,expected", [
+    # Combined/All: any ancestry accepted at sex='All', other sexes rejected
+    ("Combined", "All", dict(ancestry="EUR", sex="All"), True),
+    ("Combined", "All", dict(ancestry="SAS", sex="All"), True),
+    ("Combined", "All", dict(ancestry="SAS", sex="Female"), False),
+    # Combined/Female: any ancestry accepted at sex='Female' only
+    ("Combined", "Female", dict(ancestry="SAS", sex="Female"), True),
+    ("Combined", "Female", dict(ancestry="SAS", sex="All"), False),
+    ("Combined", "Female", dict(ancestry="SAS", sex="Male"), False),
+    # ancestry-stratified (e.g. EUR/All): exact ancestry AND sex must be 'All'
+    ("EUR", "All", dict(ancestry="EUR", sex="All"), True),
+    ("EUR", "All", dict(ancestry="EUR", sex="Female"), False),   # stratified targets are sex='All' only
+    ("EUR", "All", dict(ancestry="AFR", sex="All"), False),      # wrong ancestry
+])
+def test_matches_target(target_ancestry, target_sex, row, expected):
+    assert matches_target(row, target_ancestry, target_sex) is expected
+
+
 from types import SimpleNamespace
 from sgc_ma.select import list_ma_candidates, select_cohorts_by_file_ids, select_cohorts
 
@@ -175,7 +196,7 @@ def test_list_ma_candidates_resolves_target_and_maps():
             _cand_row(file_id="2", cohort_id="c2", dataset="meta_analysis_x")]  # excluded: MA product
     out = list_ma_candidates(_FakeEngine(rows), "PH", "EUR", "All")
     assert [c["file_id"] for c in out] == ["1"]
-    assert out[0]["cohort"] == "CohortA" and out[0]["ignored"] is False
+    assert out[0]["cohort"] == "CohortA" and "ignored" not in out[0]
 
 
 def test_list_ma_candidates_drops_ignored_files():
@@ -185,7 +206,7 @@ def test_list_ma_candidates_drops_ignored_files():
             _cand_row(file_id="2", cohort_id="c2", ignore_reason=None)]
     out = list_ma_candidates(_FakeEngine(rows), "PH", "EUR", "All")
     assert [c["file_id"] for c in out] == ["2"]
-    assert out[0]["ignored"] is False
+    assert "ignored" not in out[0]
 
 
 def test_select_cohorts_drops_ignored_file_before_resolve():
@@ -214,3 +235,56 @@ def test_sql_by_ids_targets_id_in():
     from sgc_ma.select import _SQL_BY_IDS
     assert "WHERE f.id IN :file_ids" in _SQL_BY_IDS
     assert "f.phenotype = :phenotype" not in _SQL_BY_IDS
+
+
+from sgc_ma.select import ignored_cohorts
+
+
+def _ignored_row(**kw):
+    base = dict(file_id="f1", cohort="CohortA", dataset="DS.A", ancestry="EUR",
+               reason="high lambda", sex="All", genome_build="GRCh38")
+    base.update(kw); return base
+
+
+def test_ignored_cohorts_sql_selects_bucket_fields():
+    from sgc_ma.select import _IGNORED_SQL
+    # same expressions as _SQL, so filtering here can't drift from selection
+    assert "JSON_UNQUOTE(JSON_EXTRACT(f.metadata, '$.sex')) AS sex" in _IGNORED_SQL
+    assert ("COALESCE(JSON_UNQUOTE(JSON_EXTRACT(f.metadata, '$.genome_build')), "
+            "JSON_UNQUOTE(JSON_EXTRACT(gc.metadata, '$.genome_build'))) AS genome_build") in _IGNORED_SQL
+    assert "LEFT JOIN sgc_gwas_cohorts gc ON gc.cohort_id = f.cohort_id" in _IGNORED_SQL
+    assert "WHERE f.phenotype = :phenotype" in _IGNORED_SQL
+
+
+def test_ignored_cohorts_drops_wrong_sex_for_combined_all_target():
+    # the exact prod bug (run d89831dada85428e86a8d0007362466c): a Female-stratified
+    # ignore-list file must not show up as "Ignored" on a Combined/All run, where it
+    # was never a candidate in the first place.
+    rows = [_ignored_row(file_id="f591ffbc", cohort="Born in Bradford CoreExome SAS",
+                         ancestry="SAS", sex="Female", reason="high lambda")]
+    out = ignored_cohorts(_FakeEngine(rows), "SUBSTANCE_DERM", "Combined", "All")
+    assert out == []
+
+
+def test_ignored_cohorts_drops_grch37_entry():
+    rows = [_ignored_row(genome_build="GRCh37", ancestry="Combined", sex="All")]
+    out = ignored_cohorts(_FakeEngine(rows), "PH", "Combined", "All")
+    assert out == []
+
+
+def test_ignored_cohorts_keeps_legitimate_same_bucket_entry():
+    rows = [
+        _ignored_row(file_id="keep", ancestry="EUR", sex="All", reason="lambda too high"),
+        _ignored_row(file_id="drop", ancestry="AFR", sex="All", reason="wrong ancestry bucket"),
+    ]
+    out = ignored_cohorts(_FakeEngine(rows), "PH", "EUR", "All")
+    assert [r["file_id"] for r in out] == ["keep"]
+    assert out[0]["reason"] == "lambda too high"
+    assert out[0]["cohort"] == "CohortA" and out[0]["dataset"] == "DS.A"
+    assert out[0]["ancestry"] == "EUR" and out[0]["sex"] == "All"
+
+
+def test_ignored_cohorts_drops_preexisting_ma_product():
+    rows = [_ignored_row(dataset="meta_analysis_ph_full", ancestry="Combined", sex="All")]
+    out = ignored_cohorts(_FakeEngine(rows), "PH", "Combined", "All")
+    assert out == []

@@ -130,6 +130,50 @@ def test_meta_analyze_injects_ignored_without_inflating_counts(tmp_path):
     assert ig[0]["reason"] == "MA ignore-list: lambda 1.5"
 
 
+def test_meta_analyze_ignored_rows_carry_dataset_identity(tmp_path):
+    # a blank Dataset column on Ignored rows is what makes an ignored row look
+    # like it contradicts a Used row of the same cohort in the UI -- the ignored
+    # row must carry the same dataset/ancestry/sex identity the query returns.
+    cohorts = [{"file_id": "a", "dataset": "A", "cohort": "CohortA", "cases": 10, "controls": 20}]
+    base = dict(se=0.1, pvalue=0.01, eaf=0.3, n=1000)
+    frames = {"a": _norm([dict(chromosome="1", position=100, ea="G", oa="A", beta=0.2, **base)])}
+    ignored = [{"cohort": "IgnoredCohort", "dataset": "DS.Ignored", "ancestry": "SAS",
+               "sex": "Female", "reason": "wrong bucket"}]
+    summary = meta_analyze(cohorts, lambda co: [frames[co["file_id"]]], str(tmp_path),
+                           ignored=ignored)
+    ig = [c for c in summary["per_cohort"] if c.get("cohort") == "IgnoredCohort"]
+    assert len(ig) == 1
+    assert ig[0]["dataset"] == "DS.Ignored"
+    assert ig[0]["ancestry"] == "SAS"
+    assert ig[0]["sex"] == "Female"
+    assert ig[0]["skipped"] is True
+
+
+def test_meta_analyze_used_rows_carry_ancestry_and_sex(tmp_path):
+    # a cohort can appear as both Used (one file) and Ignored (another file of
+    # the same cohort/dataset label) -- Used rows must carry ancestry/sex too,
+    # or the two rows are indistinguishable in the UI.
+    cohorts = [{"file_id": "a", "dataset": "A", "cohort": "CohortA", "cases": 10, "controls": 20,
+               "ancestry": "Combined", "sex": "All"},
+               {"file_id": "bad", "dataset": "BAD", "cohort": "CohortBad", "cases": 1, "controls": 1,
+               "ancestry": "EUR", "sex": "Female"}]
+    base = dict(se=0.1, pvalue=0.01, eaf=0.3, n=1000)
+    good = _norm([dict(chromosome="1", position=100, ea="G", oa="A", beta=0.2, **base)])
+
+    def chunks_fn(co):
+        if co["file_id"] == "bad":
+            raise ValueError("boom")
+        return [good.copy()]
+
+    summary = meta_analyze(cohorts, chunks_fn, str(tmp_path))
+    used = [c for c in summary["per_cohort"] if c.get("cohort") == "CohortA"][0]
+    assert used["ancestry"] == "Combined" and used["sex"] == "All"
+    # the extract-failure skip row must carry them too
+    skipped = [c for c in summary["per_cohort"] if c.get("cohort") == "CohortBad"][0]
+    assert skipped["skipped"] is True
+    assert skipped["ancestry"] == "EUR" and skipped["sex"] == "Female"
+
+
 def test_main_records_batch_job_id_and_content_types(tmp_path, monkeypatch):
     """main() should (a) stamp the row with its AWS_BATCH_JOB_ID on the RUNNING
     update, and (b) upload every artifact with an explicit ContentType. Fully
@@ -193,9 +237,11 @@ def test_main_records_batch_job_id_and_content_types(tmp_path, monkeypatch):
     assert ct["sgc/ma/PH/EUR/run-xyz/meta.tsv.gz"] == "application/gzip"
 
 
-def test_main_passes_phenotype_to_ignored_cohorts(tmp_path, monkeypatch):
-    """ignored_cohorts is file-based (phenotype-keyed only) -- the ancestry/sex of
-    the run must not be threaded through to it."""
+def test_main_passes_target_bucket_to_ignored_cohorts(tmp_path, monkeypatch):
+    """ignored_cohorts must be scoped to the run's own (ancestry, sex) bucket --
+    otherwise every ignore-list entry for the phenotype is reported regardless of
+    whether the file was ever a candidate for this run (the prod "both Used and
+    Ignored" bug)."""
     from click.testing import CliRunner
     import sgc_ma.run_ma as rm
     import dataregistry.api.query as q
@@ -213,8 +259,8 @@ def test_main_passes_phenotype_to_ignored_cohorts(tmp_path, monkeypatch):
     monkeypatch.setattr(rm.sel, "select_cohorts_by_file_ids", lambda *a, **k: [])
 
     captured = {}
-    def fake_ignored_cohorts(engine, phenotype):
-        captured["args"] = (phenotype,)
+    def fake_ignored_cohorts(engine, phenotype, target_ancestry, target_sex="All"):
+        captured["args"] = (phenotype, target_ancestry, target_sex)
         return []
     monkeypatch.setattr(rm.sel, "ignored_cohorts", fake_ignored_cohorts)
 
@@ -239,7 +285,7 @@ def test_main_passes_phenotype_to_ignored_cohorts(tmp_path, monkeypatch):
     res = CliRunner().invoke(rm.main, ["--run-id", "run-xyz", "--bucket", "b",
                                        "--local-out", str(tmp_path / "out")])
     assert res.exit_code == 0, res.output
-    assert captured["args"] == ("PH",)
+    assert captured["args"] == ("PH", "Combined", "Male")
 
 
 def test_main_local_run_leaves_batch_job_id_none(tmp_path, monkeypatch):
