@@ -636,3 +636,17 @@ class HCMMAResult(BaseModel):
     updated_at: Optional[datetime] = None
 
 
+class HCMLiftoverJob(BaseModel):
+    id: str
+    file_id: str
+    source_genome_build: str
+    target_genome_build: str
+    status: str
+    batch_job_id: Optional[str] = None
+    submitted_by: str
+    submitted_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    unmapped_s3_path: Optional[str] = None
+    summary: Optional[dict] = None
+
+

@@ -316,3 +316,99 @@ def get_hcm_ma_results(engine) -> list:
         rows = conn.execute(text(
             _HCM_MA_COLS + " FROM hcm_gwas_ma_results ORDER BY created_at DESC")).mappings().all()
     return [_format_hcm_ma_row(dict(r)) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Liftover job queries
+# ---------------------------------------------------------------------------
+
+def _format_hcm_liftover_row(d: dict) -> dict:
+    # id/file_id are stored as the raw ASCII bytes of the dashless hex string in
+    # binary(32) columns (same convention as hcm_gwas_files / hcm_gwas_ma_results
+    # above) -- NOT via UNHEX/HEX.
+    for key in ('id', 'file_id'):
+        raw = d.get(key)
+        if raw is not None:
+            d[key] = raw.decode('ascii') if isinstance(raw, (bytes, bytearray)) else raw
+    if isinstance(d.get('summary'), (str, bytes, bytearray)):
+        d['summary'] = json.loads(d['summary'])
+    return d
+
+
+def insert_hcm_liftover_pending(engine, file_id: str, source_build: str, target_build: str,
+                                original_s3_path: str, unmapped_s3_path: str,
+                                submitted_by: str) -> str:
+    """Create a PENDING hcm_liftover_jobs row; return its dashless hex id."""
+    lid = str(uuid.uuid4()).replace('-', '')
+    with engine.connect() as conn:
+        conn.execute(text("""
+            INSERT INTO hcm_liftover_jobs
+                (id, file_id, source_genome_build, target_genome_build, status,
+                 submitted_by, original_s3_path, unmapped_s3_path)
+            VALUES (:id, :file_id, :src, :tgt, 'PENDING', :by, :orig, :unmapped)
+        """), {'id': lid, 'file_id': str(file_id).replace('-', ''),
+               'src': source_build, 'tgt': target_build,
+               'by': submitted_by, 'orig': original_s3_path, 'unmapped': unmapped_s3_path})
+        conn.commit()
+    return lid
+
+
+def update_hcm_liftover_job(engine, liftover_id: str, *, status: str,
+                            batch_job_id=None, log=None, summary=None,
+                            completed: bool = False) -> None:
+    """Partial update of a hcm_liftover_jobs row. None fields are left untouched
+    (COALESCE); completed=True stamps completed_at=NOW()."""
+    completed_clause = ", completed_at = NOW()" if completed else ""
+    with engine.connect() as conn:
+        conn.execute(text(f"""
+            UPDATE hcm_liftover_jobs
+            SET status = :status,
+                batch_job_id = COALESCE(:batch_job_id, batch_job_id),
+                log = COALESCE(:log, log),
+                summary = COALESCE(:summary, summary)
+                {completed_clause}
+            WHERE id = :id
+        """), {'id': liftover_id.replace('-', ''), 'status': status,
+               'batch_job_id': batch_job_id, 'log': log,
+               'summary': json.dumps(summary) if summary is not None else None})
+        conn.commit()
+
+
+def get_hcm_liftover_jobs(engine) -> list[dict]:
+    """All HCM liftover jobs, most recent first."""
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT id, file_id, source_genome_build, target_genome_build, batch_job_id,
+                   status, submitted_at, completed_at, submitted_by,
+                   original_s3_path, unmapped_s3_path, summary, log
+            FROM hcm_liftover_jobs ORDER BY submitted_at DESC
+        """)).mappings().all()
+    return [_format_hcm_liftover_row(dict(r)) for r in rows]
+
+
+def get_hcm_liftover_job_for_file(engine, file_id: str) -> dict | None:
+    """The most recent liftover job for one HCM GWAS file (summary decoded), or None."""
+    with engine.connect() as conn:
+        row = conn.execute(text("""
+            SELECT id, file_id, source_genome_build, target_genome_build, batch_job_id,
+                   status, submitted_at, completed_at, submitted_by,
+                   original_s3_path, unmapped_s3_path, summary, log
+            FROM hcm_liftover_jobs
+            WHERE file_id = :file_id
+            ORDER BY submitted_at DESC
+            LIMIT 1
+        """), {"file_id": str(file_id).replace('-', '')}).mappings().first()
+    if row is None:
+        return None
+    return _format_hcm_liftover_row(dict(row))
+
+
+def set_hcm_gwas_file_build(engine, file_id: str, genome_build: str) -> None:
+    """Set the genome build column on a hcm_gwas_files row (plain column, not JSON)."""
+    with engine.connect() as conn:
+        conn.execute(text("""
+            UPDATE hcm_gwas_files
+            SET genome_build = :build
+            WHERE id = :id
+        """), {'id': str(file_id).replace('-', ''), 'build': genome_build})
+        conn.commit()
