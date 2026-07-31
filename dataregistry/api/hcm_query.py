@@ -5,6 +5,7 @@ from typing import Optional
 from sqlalchemy import text
 
 from dataregistry.api.hcm_model import HCMGWASFile, HCMGWASValidationJob
+from sgc_ma.select import normalize_build, classify_liftover_status
 
 
 def _format_uuid(raw) -> str:
@@ -87,18 +88,34 @@ def get_hcm_gwas_file_by_s3_path(engine, s3_path: str) -> Optional[dict]:
         return _parse_hcm_gwas_row(result) if result else None
 
 
-def get_all_hcm_gwas_files(engine) -> list:
-    """Get all HCM GWAS files ordered by cohort, ancestry, upload date."""
-    with engine.connect() as conn:
-        result = conn.execute(text("""
-            SELECT id, cohort_name, sarc, ancestry, sex, genome_build, software, analyst,
-                   file_name, file_size, s3_path, uploaded_at, uploaded_by,
-                   column_mapping, cases, controls, metadata
-            FROM hcm_gwas_files
-            ORDER BY cohort_name ASC, ancestry ASC, uploaded_at DESC
-        """)).mappings().all()
+_ALL_HCM_GWAS_FILES_SQL = """
+    SELECT f.id, f.cohort_name, f.sarc, f.ancestry, f.sex, f.genome_build, f.software, f.analyst,
+           f.file_name, f.file_size, f.s3_path, f.uploaded_at, f.uploaded_by,
+           f.column_mapping, f.cases, f.controls, f.metadata,
+           (SELECT lj.status FROM hcm_liftover_jobs lj
+              WHERE lj.file_id = f.id
+              ORDER BY lj.submitted_at DESC
+              LIMIT 1) AS latest_liftover_status
+    FROM hcm_gwas_files f
+    ORDER BY f.cohort_name ASC, f.ancestry ASC, f.uploaded_at DESC
+"""
 
-        return [_parse_hcm_gwas_row(row) for row in result]
+
+def get_all_hcm_gwas_files(engine) -> list:
+    """Get all HCM GWAS files ordered by cohort, ancestry, upload date, each
+    annotated with a liftover_status column value for the reviewer summary."""
+    with engine.connect() as conn:
+        result = conn.execute(text(_ALL_HCM_GWAS_FILES_SQL)).mappings().all()
+
+        parsed_results = []
+        for row in result:
+            row_dict = _parse_hcm_gwas_row(row)
+            latest_status = row_dict.pop('latest_liftover_status', None)
+            row_dict['liftover_status'] = classify_liftover_status(
+                normalize_build(row_dict.get('genome_build')), latest_status)
+            parsed_results.append(row_dict)
+
+        return parsed_results
 
 
 def get_hcm_gwas_files_by_cohort(engine, cohort_name: str) -> list:
