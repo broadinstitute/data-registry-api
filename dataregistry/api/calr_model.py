@@ -71,6 +71,9 @@ class AncovaTableRequest(BaseModel):
     # Optional override of session.hour_range (frontend slider).
     min_hour: Optional[float] = None
     max_hour: Optional[float] = None
+    # Legacy CalR defaults 3/4-group Analysis to ordered trend mode unless the
+    # user selects unordered pairwise comparisons.
+    ordered_groups: Optional[bool] = None
 
 
 class QualityControlRequest(BaseModel):

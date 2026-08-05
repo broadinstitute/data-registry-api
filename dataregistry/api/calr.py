@@ -1412,13 +1412,21 @@ async def run_ancova(
         raise fastapi.HTTPException(status_code=422, detail="No data remaining after exclusions")
 
     try:
+        group_names = [g.get('name') for g in session.get('groups', []) if g.get('name')]
+        ordered_groups = (
+            bool(request.ordered_groups)
+            if request.ordered_groups is not None
+            else len(group_names) > 2
+        )
         result = ancova_table(
             df,
             mass_variable=request.mass_variable,
             light_cycle_start=session['light_cycle_start'],
             dark_cycle_start=session['dark_cycle_start'],
-            group_order=[g.get('name') for g in session.get('groups', []) if g.get('name')],
+            group_order=group_names,
             reference_group=request.reference_group,
+            selected_hour_count=end_hour - start_hour,
+            ordered_groups=ordered_groups,
         )
     except Exception as e:
         raise fastapi.HTTPException(status_code=500, detail=f"ANCOVA table calculation failed: {str(e)}")
