@@ -253,6 +253,42 @@ def quality_control(
     }
 
 
+def _aggregate_power_subjects(df: pd.DataFrame, var_col: str, mass_col: str) -> pd.DataFrame:
+    """Subject-level Power tab summaries, mirroring CalR's overallData output."""
+    if df.empty:
+        return pd.DataFrame(columns=['group', 'subject.id', 'mass', 'var'])
+
+    bin_factor = 60.0 / _modal_interval_minutes(df)
+    rows = []
+
+    for (group, subject_id), sdf in df.groupby(['group', 'subject.id']):
+        mass = pd.to_numeric(sdf[mass_col], errors='coerce').mean()
+        values = pd.to_numeric(sdf[var_col], errors='coerce')
+
+        if var_col in ('ee',):
+            value = values.sum(skipna=True) / bin_factor if bin_factor else values.sum(skipna=True)
+        elif var_col in ('feed', 'drink'):
+            value = values.sum(skipna=True)
+        elif var_col in ('feed.acc', 'drink.acc', 'ee.acc', 'eb.acc', 'wheel.acc', 'pedmeter', 'allmeter'):
+            sort_col = next((c for c in ('exp.minute', 'Date.Time', 'exp.hour') if c in sdf.columns), None)
+            sorted_sdf = sdf.sort_values(sort_col, kind='stable') if sort_col else sdf
+            acc_values = pd.to_numeric(sorted_sdf[var_col], errors='coerce').dropna()
+            value = acc_values.iloc[-1] - acc_values.iloc[0] if len(acc_values) else np.nan
+            if var_col == 'ee.acc' and bin_factor:
+                value = value / bin_factor
+        else:
+            value = values.mean(skipna=True)
+
+        rows.append({
+            'group': group,
+            'subject.id': subject_id,
+            'mass': mass,
+            'var': value,
+        })
+
+    return pd.DataFrame(rows).dropna(subset=['mass', 'var'])
+
+
 # Variables that use ANCOVA (mass as covariate) rather than ANOVA for power calc.
 # Mirrors R's ancovaList: c("Energy.Expenditure", "Total.Food")
 ANCOVA_VARIABLES = {'ee', 'feed', 'feed.acc'}
@@ -371,11 +407,7 @@ def power_calc(
 
     method = 'ancova' if variable in ANCOVA_VARIABLES else 'anova'
 
-    # Aggregate to per-subject means before fitting (mirrors R's PowerCalc, which
-    # operates on subject-level summaries). Without this we'd be fitting OLS on
-    # ~thousands of rows per subject, inflating degrees of freedom and producing
-    # nonsensical power curves.
-    subj = _aggregate_subjects(df, variable, mass_variable)
+    subj = _aggregate_power_subjects(df, variable, mass_variable)
 
     k = subj['group'].nunique()
     overall_sd = float(subj['var'].std())
@@ -383,10 +415,18 @@ def power_calc(
     # Per-group stats
     group_stats = {}
     for group, gdf in subj.groupby('group'):
+        values = pd.to_numeric(gdf['var'], errors='coerce').dropna()
+        mean_value = float(values.mean())
+        variance_value = float(values.var())
         group_stats[group] = {
+            'sample.size': len(gdf['subject.id'].unique()),
+            'pop.size': len(subj['subject.id'].unique()),
+            'sums': round(float(values.sum()), 6),
+            'means': round(mean_value, 6),
+            'variance': round(variance_value, 6),
+            'ss.dev': round(float(((values - mean_value) ** 2).sum()), 6),
             'n': len(gdf['subject.id'].unique()),
-            'mean': round(float(gdf['var'].mean()), 6),
-            'variance': round(float(gdf['var'].var()), 6),
+            'mean': round(mean_value, 6),
         }
 
     group_means = [group_stats[g]['mean'] for g in sorted(group_stats)]
@@ -404,6 +444,9 @@ def power_calc(
         ss_total = float(anova_table['sum_sq'].sum())
         eta2 = ss_group / ss_total if ss_total > 0 else 0.0
         effect_size = {'eta_squared': round(eta2, 6)}
+
+    first_group_size = next(iter(group_stats.values()))['sample.size'] if group_stats else None
+    sample_sizes = sorted({int(n) for n in sample_sizes if int(n) > 0} | ({int(first_group_size)} if first_group_size else set()))
 
     # Power curve
     power_curve = []

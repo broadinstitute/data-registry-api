@@ -25,7 +25,7 @@ from calr.loaders import detect_format, load_cal_file
 from calr.oxymax_loader import load_oxymax_file, convert_oxymax
 from calr.sable_loader import load_sable_file, convert_sable
 from calr.tse_loader import load_tse_file, convert_tse
-from calr.analysis import ancova_table, filter_by_time_of_day, power_calc, quality_control
+from calr.analysis import ancova_table, apply_legacy_analysis_outliers, filter_by_time_of_day, power_calc, quality_control
 
 router = fastapi.APIRouter()
 engine = DataRegistryReadWriteDB().get_engine()
@@ -1492,17 +1492,20 @@ async def run_power_calc(
         session['dark_cycle_start'],
     )
 
+    if session.get('remove_outliers'):
+        df = apply_legacy_analysis_outliers(df)
+
     if df.empty:
         raise fastapi.HTTPException(status_code=422, detail="No data remaining after filters")
 
     try:
+        # _enrich_df already converts feed/feed.acc to kcal from diet metadata.
         result = power_calc(
             df,
             request.variable,
             request.mass_variable,
             request.sample_sizes,
             request.alpha,
-            group_diet_kcal=_session_group_diet_kcal(session),
         )
     except Exception as e:
         raise fastapi.HTTPException(status_code=500, detail=f"Power calculation failed: {str(e)}")
