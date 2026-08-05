@@ -1049,7 +1049,11 @@ def _session_food_cutoff(session: dict):
         return None
 
 
-def _enrich_df(df: 'pd.DataFrame', session: dict) -> 'pd.DataFrame':
+def _enrich_df(
+    df: 'pd.DataFrame',
+    session: dict,
+    apply_food_cutoff: bool = True,
+) -> 'pd.DataFrame':
     """
     Add derived columns to the standard DataFrame using session metadata.
 
@@ -1071,8 +1075,9 @@ def _enrich_df(df: 'pd.DataFrame', session: dict) -> 'pd.DataFrame':
 
     Notes:
       - Uploaded CalR-standard files carry feed as mass per sample. Legacy CalR
-        converts it to kcal using the group's dietCal, applies feedCutoff as
-        kcal/hour, repairs removed samples, and rebuilds feed.acc.
+        converts it to kcal using the group's dietCal. Some plot paths apply
+        feedCutoff as kcal/hour, repair removed samples, and rebuild feed.acc;
+        legacy Analysis does not pass that cutoff into revperAve.
       - Loader outputs store ee.acc as plain cumsum(ee). Legacy CalR divides
         cumulative EE by the intervals-per-hour bin before cumulative EB math.
       - Does NOT zero-base accumulators — that is QC-specific and stays in
@@ -1226,7 +1231,7 @@ def _enrich_df(df: 'pd.DataFrame', session: dict) -> 'pd.DataFrame':
         diet_kcal = df['group'].map(_session_group_diet_kcal(session))
         df['feed'] = np.where(diet_kcal.notna(), feed * diet_kcal, feed)
 
-        cutoff = _session_food_cutoff(session)
+        cutoff = _session_food_cutoff(session) if apply_food_cutoff else None
         if cutoff is not None and bin_factor:
             cutoff_per_sample = cutoff / bin_factor
             df['feed'] = pd.to_numeric(df['feed'], errors='coerce').where(
@@ -1379,7 +1384,9 @@ async def run_ancova(
     """
     session, df = _load_session_and_standard_df(request.session_id, user.user_name if user else None)
 
-    df = _enrich_df(df, session)
+    # Legacy CalR's Analysis table converts feed by diet kcal, but does not
+    # pass feedCutoff into revperAve(). Keep cutoff repair for other endpoints.
+    df = _enrich_df(df, session, apply_food_cutoff=False)
 
     # Validate mass_variable AFTER enrichment so derived columns (e.g.
     # `total_mass` from session) are accepted.
@@ -1427,6 +1434,7 @@ async def run_ancova(
             reference_group=request.reference_group,
             selected_hour_count=end_hour - start_hour,
             ordered_groups=ordered_groups,
+            remove_outliers=bool(session.get('remove_outliers')),
         )
     except Exception as e:
         raise fastapi.HTTPException(status_code=500, detail=f"ANCOVA table calculation failed: {str(e)}")

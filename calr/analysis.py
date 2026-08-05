@@ -562,6 +562,52 @@ def _zero_base_accumulators(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def apply_legacy_analysis_outliers(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Apply CalR's default rmOutliers pass used by Analysis when requested.
+
+    The legacy R path removes values outside abs(mean) +/- 3 SD for VO2, VCO2,
+    EE, RER, and body temperature. If any respiratory channel is removed for a
+    row, CalR removes the whole VO2/VCO2/EE/RER set for that row, then rebuilds
+    cumulative columns from the remaining source values.
+    """
+    if df.empty:
+        return df.copy()
+
+    out = df.copy()
+    rm_cols = [c for c in ['vo2', 'vco2', 'ee', 'rer', 'body.temp'] if c in out.columns]
+    for col in rm_cols:
+        values = pd.to_numeric(out[col], errors='coerce')
+        mean = abs(values.mean(skipna=True))
+        sd = values.std(skipna=True, ddof=1)
+        if pd.isna(mean) or pd.isna(sd):
+            continue
+        out.loc[(values > mean + 3 * sd) | (values < mean - 3 * sd), col] = np.nan
+
+    respiratory_cols = [c for c in ['vo2', 'vco2', 'ee', 'rer'] if c in out.columns]
+    if respiratory_cols:
+        removed = out[respiratory_cols].isna().any(axis=1)
+        out.loc[removed, respiratory_cols] = np.nan
+
+    sort_cols = [c for c in ['subject.id', 'exp.minute', 'Date.Time', 'exp.hour'] if c in out.columns]
+    if sort_cols:
+        out = out.sort_values(sort_cols, kind='stable')
+
+    for _, idx in out.groupby('subject.id', sort=False).groups.items():
+        for acc_col, source_col in [
+            ('feed.acc', 'feed'),
+            ('ee.acc', 'ee'),
+            ('drink.acc', 'drink'),
+            ('wheel.acc', 'wheel'),
+        ]:
+            if acc_col not in out.columns or source_col not in out.columns:
+                continue
+            source = pd.to_numeric(out.loc[idx, source_col], errors='coerce').fillna(0)
+            out.loc[idx, acc_col] = source.cumsum().values
+
+    return out
+
+
 def prepare_analysis_hourly_rows(
     df: pd.DataFrame,
     light_cycle_start: int = 6,
@@ -870,6 +916,7 @@ def ancova_table(
     reference_group: Optional[str] = None,
     selected_hour_count: Optional[float] = None,
     ordered_groups: bool = False,
+    remove_outliers: bool = False,
 ) -> dict:
     """
     Compute the summary ANCOVA/ANOVA table, mirroring anovaTab() from calR.
@@ -920,8 +967,11 @@ def ancova_table(
     }
     """
     # `df` is expected to be enriched before analysis, including CalR-style
-    # feed kcal conversion/cutoff repair. Build the legacy per-subject hourly
-    # table locally so Analysis parity does not affect other plot endpoints.
+    # feed kcal conversion. Build the legacy per-subject hourly table locally
+    # so Analysis parity does not affect other plot endpoints.
+    if remove_outliers:
+        df = apply_legacy_analysis_outliers(df)
+
     df = prepare_analysis_hourly_rows(
         df,
         light_cycle_start=light_cycle_start,

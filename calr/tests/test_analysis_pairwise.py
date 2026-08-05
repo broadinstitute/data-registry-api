@@ -1,6 +1,10 @@
 import pandas as pd
 
-from calr.analysis import ancova_table, prepare_analysis_hourly_rows
+from calr.analysis import (
+    ancova_table,
+    apply_legacy_analysis_outliers,
+    prepare_analysis_hourly_rows,
+)
 
 
 def _group_df(group_names=None):
@@ -114,6 +118,49 @@ def test_prepare_analysis_hourly_rows_matches_calr_hourly_sums_and_means():
     assert row['feed.acc'] == 1.5
     assert row['ee.acc'] == 2.5
     assert row['eb'] == -1.5
+
+
+def test_apply_legacy_analysis_outliers_removes_coupled_respiration_values_and_rebuilds_accumulators():
+    rows = []
+    for minute in range(30):
+        rows.append({
+            'subject.id': 'S1',
+            'exp.minute': minute,
+            'feed': 1.0,
+            'feed.acc': minute + 1.0,
+            'drink': 2.0,
+            'drink.acc': (minute + 1.0) * 2,
+            'ee': 5.0,
+            'ee.acc': (minute + 1.0) * 5,
+            'vo2': 10.0,
+            'vco2': 9.0,
+            'rer': 0.9,
+            'body.temp': 37.0,
+        })
+    rows.append({
+        'subject.id': 'S1',
+        'exp.minute': 30,
+        'feed': 1.0,
+        'feed.acc': 31.0,
+        'drink': 2.0,
+        'drink.acc': 62.0,
+        'ee': 500.0,
+        'ee.acc': 650.0,
+        'vo2': 10.0,
+        'vco2': 9.0,
+        'rer': 0.9,
+        'body.temp': 37.0,
+    })
+
+    result = apply_legacy_analysis_outliers(pd.DataFrame(rows)).sort_values('exp.minute')
+
+    outlier_row = result.loc[result['exp.minute'] == 30].iloc[0]
+    assert pd.isna(outlier_row['ee'])
+    assert pd.isna(outlier_row['vo2'])
+    assert pd.isna(outlier_row['vco2'])
+    assert pd.isna(outlier_row['rer'])
+    assert outlier_row['ee.acc'] == 150
+    assert outlier_row['feed.acc'] == 31
 
 
 def test_ancova_table_short_window_reports_full_day_only():
