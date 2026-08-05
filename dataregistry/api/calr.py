@@ -1462,7 +1462,10 @@ async def run_power_calc(
     if request.variable not in df.columns:
         raise fastapi.HTTPException(status_code=422, detail=f"Variable '{request.variable}' not found in standard file")
 
-    df = _enrich_df(df, session)
+    # Legacy CalR's Power tab uses overallData(), which converts feed by diet
+    # kcal but does not pass feedCutoff into revfullAve(). Keep cutoff repair
+    # for exploratory plot endpoints, but not this analysis path.
+    df = _enrich_df(df, session, apply_food_cutoff=False)
 
     # Validate mass_variable AFTER enrichment so derived columns (e.g.
     # `total_mass` from session) are accepted.
@@ -1475,7 +1478,8 @@ async def run_power_calc(
     session_start, session_end = session['hour_range']
     start_hour = request.min_hour if request.min_hour is not None else session_start
     end_hour = request.max_hour if request.max_hour is not None else session_end
-    df = df[(df['exp.hour'] >= start_hour) & (df['exp.hour'] < end_hour)]
+    # CalR's powrcalcdataFrame keeps the selected upper hour inclusive.
+    df = df[(df['exp.hour'] >= start_hour) & (df['exp.hour'] <= end_hour)]
 
     # Subject exclusions
     for s in session['subjects']:
