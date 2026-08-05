@@ -1569,10 +1569,11 @@ async def run_quality_control(
             )
 
     try:
+        # _enrich_df already converts feed/feed.acc to kcal from diet metadata.
+        # Passing diet kcal again double-scales cumulative food and inflates QC EB.
         result = quality_control(
             df,
             request.n_mass_measurements,
-            group_diet_kcal=_session_group_diet_kcal(session),
         )
     except Exception as e:
         raise fastapi.HTTPException(status_code=500, detail=f"QC analysis failed: {str(e)}")
