@@ -1,8 +1,10 @@
 import pandas as pd
+from scipy import stats
 
 from calr.analysis import (
     ancova_table,
     apply_legacy_analysis_outliers,
+    power_calc,
     prepare_analysis_hourly_rows,
 )
 
@@ -180,3 +182,38 @@ def test_ancova_table_short_window_reports_full_day_only():
     assert 'full_day' in result['anova'][0]
     assert 'light' not in result['anova'][0]
     assert 'dark' not in result['anova'][0]
+
+
+def test_power_calc_anova_uses_legacy_eta_squared_as_pwr_f():
+    df = pd.DataFrame([
+        {'group': 'GFP', 'subject.id': 'G1', 'total_mass': 20, 'rer': 0.80},
+        {'group': 'GFP', 'subject.id': 'G2', 'total_mass': 21, 'rer': 0.82},
+        {'group': 'GFP', 'subject.id': 'G3', 'total_mass': 22, 'rer': 0.84},
+        {'group': 'GFP', 'subject.id': 'G4', 'total_mass': 23, 'rer': 0.86},
+        {'group': 'GFP', 'subject.id': 'G5', 'total_mass': 24, 'rer': 0.88},
+        {'group': 'Irisin', 'subject.id': 'I1', 'total_mass': 20, 'rer': 0.805},
+        {'group': 'Irisin', 'subject.id': 'I2', 'total_mass': 21, 'rer': 0.825},
+        {'group': 'Irisin', 'subject.id': 'I3', 'total_mass': 22, 'rer': 0.845},
+        {'group': 'Irisin', 'subject.id': 'I4', 'total_mass': 23, 'rer': 0.865},
+        {'group': 'Irisin', 'subject.id': 'I5', 'total_mass': 24, 'rer': 0.885},
+    ])
+
+    result = power_calc(df, 'rer', 'total_mass', [24], alpha=0.05)
+    eta2 = result['effect_size']['eta_squared']
+    k = len(result['group_stats'])
+    n = 24
+    df1 = k - 1
+    df2 = n * k - k
+    f_crit = stats.f.ppf(1 - 0.05, df1, df2)
+    legacy_expected = stats.ncf.sf(f_crit, df1, df2, nc=n * k * abs(eta2) ** 2)
+    cohen_f_expected = stats.ncf.sf(
+        f_crit,
+        df1,
+        df2,
+        nc=n * k * (eta2 / (1 - eta2)),
+    )
+
+    assert result['method'] == 'anova'
+    assert eta2 > 0
+    assert result['power_curve'][-1]['power'] == round(float(legacy_expected), 4)
+    assert result['power_curve'][-1]['power'] < round(float(cohen_f_expected), 4)

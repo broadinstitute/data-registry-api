@@ -463,15 +463,16 @@ def power_calc(
             except Exception:
                 power = None
         else:
-            # Closed-form Cohen's f² → non-central F approach for ANOVA.
+            # Legacy CalR passes eta_squared directly as `f` to pwr.anova.test().
+            # Preserve that behavior for parity, even though Cohen's f would
+            # normally be sqrt(eta² / (1 - eta²)).
             N = n * k
             df1 = k - 1
             df2 = N - k
             if df2 <= 0:
                 power_curve.append({'n_per_group': n, 'power': None})
                 continue
-            f2 = eta2 / (1 - eta2) if 0 < eta2 < 1 else (1.0 if eta2 >= 1 else 0.0)
-            lambda_ = N * f2
+            lambda_ = N * (abs(eta2) ** 2)
             f_crit = stats.f.ppf(1 - alpha, df1, df2)
             power = float(stats.ncf.sf(f_crit, df1, df2, nc=lambda_))
         if power is None:
