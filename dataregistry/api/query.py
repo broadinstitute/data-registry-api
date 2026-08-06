@@ -2684,6 +2684,37 @@ def insert_ma_ignore(engine, file_id: str, reason: str, excluded_by: str) -> dic
     return dict(row)
 
 
+def _delete_all_ma_ignore(conn) -> int:
+    """Clear the MA ignore-list on an open connection. Rows removed."""
+    return conn.execute(text("DELETE FROM sgc_ma_ignore")).rowcount
+
+
+def delete_all_ma_ignore(engine) -> int:
+    """Delete every MA ignore entry. Returns the number of rows removed (0 if already empty)."""
+    with engine.begin() as conn:
+        return _delete_all_ma_ignore(conn)
+
+
+def replace_ma_ignore(engine, rows: list[dict]) -> dict:
+    """Replace the whole MA ignore-list with `rows` ([{file_id, reason, excluded_by}]) in a
+    single transaction: either the old entries are gone and every new row is in, or nothing
+    changed. Rows repeating a file_id collapse to the last one (the unique key). Raises
+    IntegrityError if a file_id has no sgc_gwas_files row (FK), leaving the list untouched.
+    Returns {'removed': <rows deleted>, 'added': <rows inserted>}."""
+    deduped = {}
+    for r in rows:
+        deduped[str(r['file_id']).replace('-', '')] = r
+    with engine.begin() as conn:
+        removed = _delete_all_ma_ignore(conn)
+        for fid, r in deduped.items():
+            conn.execute(text("""
+                INSERT INTO sgc_ma_ignore (id, file_id, reason, excluded_by)
+                VALUES (:id, :file_id, :reason, :excluded_by)
+            """), {'id': str(uuid.uuid4()).replace('-', ''), 'file_id': fid,
+                   'reason': r.get('reason') or '', 'excluded_by': r.get('excluded_by') or ''})
+    return {'removed': removed, 'added': len(deduped)}
+
+
 def list_ma_ignore(engine) -> list[dict]:
     """All MA ignore entries (file-based), most recently added first, with file/cohort detail."""
     with engine.connect() as conn:

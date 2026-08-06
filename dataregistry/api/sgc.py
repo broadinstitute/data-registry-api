@@ -2828,9 +2828,10 @@ def parse_bulk_ignore_rows(content: str) -> list:
 
 @router.post("/sgc/ma/ignore/bulk")
 async def bulk_add_sgc_ma_ignore(file: UploadFile, user: User = Depends(get_sgc_user)):
-    """Bulk-add MA ignore entries from an uploaded file of (file_id, reason, excluded_by)
-    rows. Each file_id is validated against sgc_gwas_files and upserted. Partial success:
-    valid rows applied, invalid rows returned in `skipped`."""
+    """Replace the MA ignore-list with the (file_id, reason, excluded_by) rows of an uploaded
+    file. Every file_id is validated against sgc_gwas_files before anything is deleted, and the
+    swap itself is one transaction. Partial success: valid rows become the new list, invalid
+    rows are returned in `skipped`. A file with no valid rows is a 400 and changes nothing."""
     if not check_review_permissions(user):
         raise fastapi.HTTPException(status_code=403,
             detail="You need sgc-review-data permission to modify the MA ignore-list")
@@ -2838,17 +2839,31 @@ async def bulk_add_sgc_ma_ignore(file: UploadFile, user: User = Depends(get_sgc_
     rows = parse_bulk_ignore_rows(content)
     if not rows:
         raise fastapi.HTTPException(status_code=400, detail="No file_id rows found in the uploaded file")
-    added, skipped = 0, []
+    valid, skipped = [], []
     for r in rows:
         if not query.get_sgc_gwas_file_by_id(engine, r["file_id"]):
             skipped.append({"file_id": r["file_id"], "reason": "no GWAS file with that id"}); continue
-        try:
-            query.insert_ma_ignore(engine, r["file_id"], r["reason"] or "",
-                                   r["excluded_by"] or user.user_name)
-            added += 1
-        except IntegrityError:
-            skipped.append({"file_id": r["file_id"], "reason": "file no longer exists"})
-    return {"added": added, "skipped_count": len(skipped), "skipped": skipped}
+        valid.append({"file_id": r["file_id"], "reason": r["reason"] or "",
+                      "excluded_by": r["excluded_by"] or user.user_name})
+    if not valid:
+        raise fastapi.HTTPException(status_code=400,
+            detail="No valid file_ids in the uploaded file; the ignore-list is unchanged")
+    try:
+        counts = query.replace_ma_ignore(engine, valid)
+    except IntegrityError:
+        raise fastapi.HTTPException(status_code=400,
+            detail="One or more files no longer exist; the ignore-list is unchanged")
+    return {"added": counts["added"], "removed": counts["removed"],
+            "skipped_count": len(skipped), "skipped": skipped}
+
+
+@router.delete("/sgc/ma/ignore")
+async def delete_all_sgc_ma_ignore(user: User = Depends(get_sgc_user)):
+    """Clear the whole MA ignore-list. Returns the number of entries removed."""
+    if not check_review_permissions(user):
+        raise fastapi.HTTPException(status_code=403,
+            detail="You need sgc-review-data permission to modify the MA ignore-list")
+    return {"removed": query.delete_all_ma_ignore(engine)}
 
 
 @router.delete("/sgc/ma/ignore/{ignore_id}")
