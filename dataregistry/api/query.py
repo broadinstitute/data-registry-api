@@ -2691,6 +2691,12 @@ def list_ma_ignore(engine) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def delete_all_ma_ignore(engine) -> int:
+    """Delete every MA ignore entry. Returns the number of rows removed (0 if already empty)."""
+    with engine.begin() as conn:
+        return conn.execute(text("DELETE FROM sgc_ma_ignore")).rowcount
+
+
 def delete_ma_ignore(engine, ignore_id: str) -> bool:
     """Delete one MA ignore entry by id. True iff a row was removed."""
     with engine.connect() as conn:

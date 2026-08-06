@@ -50,6 +50,20 @@ def test_insert_unknown_file_id_raises(api_client):
         query.insert_ma_ignore(engine, "0" * 32, "x", "rev")
 
 
+def test_delete_all_removes_every_row(api_client):
+    engine = DataRegistryReadWriteDB().get_engine()
+    for name in ("A", "B", "C"):
+        _, file_id = _make_cohort_and_file(engine, name)
+        query.insert_ma_ignore(engine, file_id, "r", "rev1")
+    assert query.delete_all_ma_ignore(engine) == 3
+    assert query.list_ma_ignore(engine) == []
+
+
+def test_delete_all_on_empty_list_is_a_no_op(api_client):
+    engine = DataRegistryReadWriteDB().get_engine()
+    assert query.delete_all_ma_ignore(engine) == 0
+
+
 def test_models_construct():
     e = MAIgnoreEntry(id="a" * 32, file_id="b" * 32, reason="r", excluded_by="rev")
     assert e.file_id == "b" * 32 and e.cohort is None

@@ -2851,6 +2851,15 @@ async def bulk_add_sgc_ma_ignore(file: UploadFile, user: User = Depends(get_sgc_
     return {"added": added, "skipped_count": len(skipped), "skipped": skipped}
 
 
+@router.delete("/sgc/ma/ignore")
+async def delete_all_sgc_ma_ignore(user: User = Depends(get_sgc_user)):
+    """Clear the whole MA ignore-list. Returns the number of entries removed."""
+    if not check_review_permissions(user):
+        raise fastapi.HTTPException(status_code=403,
+            detail="You need sgc-review-data permission to modify the MA ignore-list")
+    return {"removed": query.delete_all_ma_ignore(engine)}
+
+
 @router.delete("/sgc/ma/ignore/{ignore_id}")
 async def delete_sgc_ma_ignore(ignore_id: str, user: User = Depends(get_sgc_user)):
     if not check_review_permissions(user):
