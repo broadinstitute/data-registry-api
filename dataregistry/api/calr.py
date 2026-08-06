@@ -25,7 +25,7 @@ from calr.loaders import detect_format, load_cal_file
 from calr.oxymax_loader import load_oxymax_file, convert_oxymax
 from calr.sable_loader import load_sable_file, convert_sable
 from calr.tse_loader import load_tse_file, convert_tse
-from calr.analysis import ancova_table, filter_by_time_of_day, power_calc, quality_control
+from calr.analysis import ancova_table, apply_legacy_analysis_outliers, filter_by_time_of_day, power_calc, quality_control
 
 router = fastapi.APIRouter()
 engine = DataRegistryReadWriteDB().get_engine()
@@ -1049,7 +1049,11 @@ def _session_food_cutoff(session: dict):
         return None
 
 
-def _enrich_df(df: 'pd.DataFrame', session: dict) -> 'pd.DataFrame':
+def _enrich_df(
+    df: 'pd.DataFrame',
+    session: dict,
+    apply_food_cutoff: bool = True,
+) -> 'pd.DataFrame':
     """
     Add derived columns to the standard DataFrame using session metadata.
 
@@ -1071,8 +1075,9 @@ def _enrich_df(df: 'pd.DataFrame', session: dict) -> 'pd.DataFrame':
 
     Notes:
       - Uploaded CalR-standard files carry feed as mass per sample. Legacy CalR
-        converts it to kcal using the group's dietCal, applies feedCutoff as
-        kcal/hour, repairs removed samples, and rebuilds feed.acc.
+        converts it to kcal using the group's dietCal. Some plot paths apply
+        feedCutoff as kcal/hour, repair removed samples, and rebuild feed.acc;
+        legacy Analysis does not pass that cutoff into revperAve.
       - Loader outputs store ee.acc as plain cumsum(ee). Legacy CalR divides
         cumulative EE by the intervals-per-hour bin before cumulative EB math.
       - Does NOT zero-base accumulators — that is QC-specific and stays in
@@ -1226,7 +1231,7 @@ def _enrich_df(df: 'pd.DataFrame', session: dict) -> 'pd.DataFrame':
         diet_kcal = df['group'].map(_session_group_diet_kcal(session))
         df['feed'] = np.where(diet_kcal.notna(), feed * diet_kcal, feed)
 
-        cutoff = _session_food_cutoff(session)
+        cutoff = _session_food_cutoff(session) if apply_food_cutoff else None
         if cutoff is not None and bin_factor:
             cutoff_per_sample = cutoff / bin_factor
             df['feed'] = pd.to_numeric(df['feed'], errors='coerce').where(
@@ -1379,7 +1384,9 @@ async def run_ancova(
     """
     session, df = _load_session_and_standard_df(request.session_id, user.user_name if user else None)
 
-    df = _enrich_df(df, session)
+    # Legacy CalR's Analysis table converts feed by diet kcal, but does not
+    # pass feedCutoff into revperAve(). Keep cutoff repair for other endpoints.
+    df = _enrich_df(df, session, apply_food_cutoff=False)
 
     # Validate mass_variable AFTER enrichment so derived columns (e.g.
     # `total_mass` from session) are accepted.
@@ -1412,13 +1419,22 @@ async def run_ancova(
         raise fastapi.HTTPException(status_code=422, detail="No data remaining after exclusions")
 
     try:
+        group_names = [g.get('name') for g in session.get('groups', []) if g.get('name')]
+        ordered_groups = (
+            bool(request.ordered_groups)
+            if request.ordered_groups is not None
+            else len(group_names) > 2
+        )
         result = ancova_table(
             df,
             mass_variable=request.mass_variable,
             light_cycle_start=session['light_cycle_start'],
             dark_cycle_start=session['dark_cycle_start'],
-            group_order=[g.get('name') for g in session.get('groups', []) if g.get('name')],
+            group_order=group_names,
             reference_group=request.reference_group,
+            selected_hour_count=end_hour - start_hour,
+            ordered_groups=ordered_groups,
+            remove_outliers=bool(session.get('remove_outliers')),
         )
     except Exception as e:
         raise fastapi.HTTPException(status_code=500, detail=f"ANCOVA table calculation failed: {str(e)}")
@@ -1446,7 +1462,10 @@ async def run_power_calc(
     if request.variable not in df.columns:
         raise fastapi.HTTPException(status_code=422, detail=f"Variable '{request.variable}' not found in standard file")
 
-    df = _enrich_df(df, session)
+    # Legacy CalR's Power tab uses overallData(), which converts feed by diet
+    # kcal but does not pass feedCutoff into revfullAve(). Keep cutoff repair
+    # for exploratory plot endpoints, but not this analysis path.
+    df = _enrich_df(df, session, apply_food_cutoff=False)
 
     # Validate mass_variable AFTER enrichment so derived columns (e.g.
     # `total_mass` from session) are accepted.
@@ -1459,7 +1478,8 @@ async def run_power_calc(
     session_start, session_end = session['hour_range']
     start_hour = request.min_hour if request.min_hour is not None else session_start
     end_hour = request.max_hour if request.max_hour is not None else session_end
-    df = df[(df['exp.hour'] >= start_hour) & (df['exp.hour'] < end_hour)]
+    # CalR's powrcalcdataFrame keeps the selected upper hour inclusive.
+    df = df[(df['exp.hour'] >= start_hour) & (df['exp.hour'] <= end_hour)]
 
     # Subject exclusions
     for s in session['subjects']:
@@ -1476,17 +1496,20 @@ async def run_power_calc(
         session['dark_cycle_start'],
     )
 
+    if session.get('remove_outliers'):
+        df = apply_legacy_analysis_outliers(df)
+
     if df.empty:
         raise fastapi.HTTPException(status_code=422, detail="No data remaining after filters")
 
     try:
+        # _enrich_df already converts feed/feed.acc to kcal from diet metadata.
         result = power_calc(
             df,
             request.variable,
             request.mass_variable,
             request.sample_sizes,
             request.alpha,
-            group_diet_kcal=_session_group_diet_kcal(session),
         )
     except Exception as e:
         raise fastapi.HTTPException(status_code=500, detail=f"Power calculation failed: {str(e)}")
@@ -1553,10 +1576,11 @@ async def run_quality_control(
             )
 
     try:
+        # _enrich_df already converts feed/feed.acc to kcal from diet metadata.
+        # Passing diet kcal again double-scales cumulative food and inflates QC EB.
         result = quality_control(
             df,
             request.n_mass_measurements,
-            group_diet_kcal=_session_group_diet_kcal(session),
         )
     except Exception as e:
         raise fastapi.HTTPException(status_code=500, detail=f"QC analysis failed: {str(e)}")

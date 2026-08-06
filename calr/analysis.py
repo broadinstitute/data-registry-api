@@ -253,6 +253,42 @@ def quality_control(
     }
 
 
+def _aggregate_power_subjects(df: pd.DataFrame, var_col: str, mass_col: str) -> pd.DataFrame:
+    """Subject-level Power tab summaries, mirroring CalR's overallData output."""
+    if df.empty:
+        return pd.DataFrame(columns=['group', 'subject.id', 'mass', 'var'])
+
+    bin_factor = 60.0 / _modal_interval_minutes(df)
+    rows = []
+
+    for (group, subject_id), sdf in df.groupby(['group', 'subject.id']):
+        mass = pd.to_numeric(sdf[mass_col], errors='coerce').mean()
+        values = pd.to_numeric(sdf[var_col], errors='coerce')
+
+        if var_col in ('ee',):
+            value = values.sum(skipna=True) / bin_factor if bin_factor else values.sum(skipna=True)
+        elif var_col in ('feed', 'drink'):
+            value = values.sum(skipna=True)
+        elif var_col in ('feed.acc', 'drink.acc', 'ee.acc', 'eb.acc', 'wheel.acc', 'pedmeter', 'allmeter'):
+            sort_col = next((c for c in ('exp.minute', 'Date.Time', 'exp.hour') if c in sdf.columns), None)
+            sorted_sdf = sdf.sort_values(sort_col, kind='stable') if sort_col else sdf
+            acc_values = pd.to_numeric(sorted_sdf[var_col], errors='coerce').dropna()
+            value = acc_values.iloc[-1] - acc_values.iloc[0] if len(acc_values) else np.nan
+            if var_col == 'ee.acc' and bin_factor:
+                value = value / bin_factor
+        else:
+            value = values.mean(skipna=True)
+
+        rows.append({
+            'group': group,
+            'subject.id': subject_id,
+            'mass': mass,
+            'var': value,
+        })
+
+    return pd.DataFrame(rows).dropna(subset=['mass', 'var'])
+
+
 # Variables that use ANCOVA (mass as covariate) rather than ANOVA for power calc.
 # Mirrors R's ancovaList: c("Energy.Expenditure", "Total.Food")
 ANCOVA_VARIABLES = {'ee', 'feed', 'feed.acc'}
@@ -371,11 +407,7 @@ def power_calc(
 
     method = 'ancova' if variable in ANCOVA_VARIABLES else 'anova'
 
-    # Aggregate to per-subject means before fitting (mirrors R's PowerCalc, which
-    # operates on subject-level summaries). Without this we'd be fitting OLS on
-    # ~thousands of rows per subject, inflating degrees of freedom and producing
-    # nonsensical power curves.
-    subj = _aggregate_subjects(df, variable, mass_variable)
+    subj = _aggregate_power_subjects(df, variable, mass_variable)
 
     k = subj['group'].nunique()
     overall_sd = float(subj['var'].std())
@@ -383,10 +415,18 @@ def power_calc(
     # Per-group stats
     group_stats = {}
     for group, gdf in subj.groupby('group'):
+        values = pd.to_numeric(gdf['var'], errors='coerce').dropna()
+        mean_value = float(values.mean())
+        variance_value = float(values.var())
         group_stats[group] = {
+            'sample.size': len(gdf['subject.id'].unique()),
+            'pop.size': len(subj['subject.id'].unique()),
+            'sums': round(float(values.sum()), 6),
+            'means': round(mean_value, 6),
+            'variance': round(variance_value, 6),
+            'ss.dev': round(float(((values - mean_value) ** 2).sum()), 6),
             'n': len(gdf['subject.id'].unique()),
-            'mean': round(float(gdf['var'].mean()), 6),
-            'variance': round(float(gdf['var'].var()), 6),
+            'mean': round(mean_value, 6),
         }
 
     group_means = [group_stats[g]['mean'] for g in sorted(group_stats)]
@@ -405,6 +445,9 @@ def power_calc(
         eta2 = ss_group / ss_total if ss_total > 0 else 0.0
         effect_size = {'eta_squared': round(eta2, 6)}
 
+    first_group_size = next(iter(group_stats.values()))['sample.size'] if group_stats else None
+    sample_sizes = sorted({int(n) for n in sample_sizes if int(n) > 0} | ({int(first_group_size)} if first_group_size else set()))
+
     # Power curve
     power_curve = []
     for n in sample_sizes:
@@ -420,15 +463,16 @@ def power_calc(
             except Exception:
                 power = None
         else:
-            # Closed-form Cohen's f² → non-central F approach for ANOVA.
+            # Legacy CalR passes eta_squared directly as `f` to pwr.anova.test().
+            # Preserve that behavior for parity, even though Cohen's f would
+            # normally be sqrt(eta² / (1 - eta²)).
             N = n * k
             df1 = k - 1
             df2 = N - k
             if df2 <= 0:
                 power_curve.append({'n_per_group': n, 'power': None})
                 continue
-            f2 = eta2 / (1 - eta2) if 0 < eta2 < 1 else (1.0 if eta2 >= 1 else 0.0)
-            lambda_ = N * f2
+            lambda_ = N * (abs(eta2) ** 2)
             f_crit = stats.f.ppf(1 - alpha, df1, df2)
             power = float(stats.ncf.sf(f_crit, df1, df2, nc=lambda_))
         if power is None:
@@ -465,9 +509,257 @@ _ANOVA_VARS = [
     ('allmeter',  'Total Distance in Cage (m)'),
     ('rer',       'Respiratory Exchange Ratio'),
     ('xytot',     'Locomotor Activity (beam breaks)'),
+    ('xyamb',     'Ambulatory Activity (beam breaks)'),
     ('body.temp', 'Body Temperature (Celsius)'),
+    ('wheel',     'Wheel Running'),
+    ('wheel.acc', 'Wheel Running Accumulated'),
     ('eb',        'Energy Balance (kcal/period)'),   # computed: feed - ee
 ]
+
+
+def _analysis_light_flag(
+    df: pd.DataFrame,
+    light_cycle_start: int,
+    dark_cycle_start: int,
+) -> pd.Series:
+    """Legacy CalR phase flag: use timestamp clock hour when available."""
+    if 'clockHour' in df.columns:
+        clock_hour = pd.to_numeric(df['clockHour'], errors='coerce')
+    elif 'hour' in df.columns:
+        hour_ts = pd.to_datetime(df['hour'], errors='coerce')
+        clock_hour = hour_ts.dt.hour + hour_ts.dt.minute / 60.0
+    elif 'Date.Time' in df.columns:
+        date_time = pd.to_datetime(df['Date.Time'], errors='coerce')
+        clock_hour = date_time.dt.hour + date_time.dt.minute / 60.0
+    else:
+        clock_hour = pd.to_numeric(df['exp.hour'], errors='coerce') % 24
+
+    if light_cycle_start < dark_cycle_start:
+        in_light = (clock_hour >= light_cycle_start) & (clock_hour < dark_cycle_start)
+    else:
+        # Matches revperAve(): wrapped light cycles are light outside dark..light.
+        in_light = ~((clock_hour < light_cycle_start) & (clock_hour >= dark_cycle_start))
+    return in_light.astype(float)
+
+
+def _modal_interval_minutes(df: pd.DataFrame) -> float:
+    """Best-effort measurement interval; mirrors the API enrichment fallback order."""
+    if 'exp.minute' in df.columns:
+        minute_df = pd.DataFrame({
+            'subject.id': df['subject.id'].astype(str),
+            'exp.minute': pd.to_numeric(df['exp.minute'], errors='coerce'),
+        }).dropna(subset=['exp.minute']).sort_values(['subject.id', 'exp.minute'])
+        diffs = minute_df.groupby('subject.id')['exp.minute'].diff().dropna()
+        nonzero = diffs[diffs > 0]
+        if not nonzero.empty:
+            return float(nonzero.mode().iloc[0])
+
+    if 'Date.Time' in df.columns:
+        time_df = pd.DataFrame({
+            'subject.id': df['subject.id'].astype(str),
+            'Date.Time': pd.to_datetime(df['Date.Time'], errors='coerce'),
+        }).dropna(subset=['Date.Time']).sort_values(['subject.id', 'Date.Time'])
+        diffs = time_df.groupby('subject.id')['Date.Time'].diff().dropna()
+        diffs_min = diffs.dt.total_seconds() / 60
+        nonzero = diffs_min[diffs_min > 0]
+        if not nonzero.empty:
+            return float(nonzero.mode().iloc[0])
+
+    if 'exp.hour' in df.columns:
+        hour_df = pd.DataFrame({
+            'subject.id': df['subject.id'].astype(str),
+            'exp.hour': pd.to_numeric(df['exp.hour'], errors='coerce'),
+        }).dropna(subset=['exp.hour']).sort_values(['subject.id', 'exp.hour'])
+        diffs = hour_df.groupby('subject.id')['exp.hour'].diff().dropna()
+        nonzero = diffs[diffs > 0]
+        if not nonzero.empty:
+            return float(nonzero.mode().iloc[0]) * 60
+
+    return 60.0
+
+
+def _zero_base_accumulators(df: pd.DataFrame) -> pd.DataFrame:
+    """Port the analysis-relevant part of fixFeed(): start cumulative cols at 0."""
+    df = df.copy()
+    accum_cols = ['feed.acc', 'drink.acc', 'wheel.acc', 'ee.acc', 'pedmeter', 'allmeter']
+    if 'xytot' in df.columns:
+        xytot = pd.to_numeric(df['xytot'], errors='coerce').dropna().drop_duplicates()
+        diffs = xytot.diff().dropna()
+        if not diffs.empty:
+            n_increasing = int((diffs > 0).sum())
+            n_non_increasing = int((diffs <= 0).sum())
+            if n_increasing and (n_non_increasing / n_increasing) <= 0.5:
+                accum_cols.append('xytot')
+
+    sort_cols = [c for c in ('subject.id', 'exp.minute', 'Date.Time', 'exp.hour') if c in df.columns]
+    if sort_cols:
+        df = df.sort_values(sort_cols, kind='stable')
+
+    for _, idx in df.groupby('subject.id', sort=False).groups.items():
+        for col in accum_cols:
+            if col not in df.columns:
+                continue
+            vals = pd.to_numeric(df.loc[idx, col], errors='coerce')
+            first = vals.dropna().iloc[0] if vals.notna().any() else np.nan
+            if pd.notna(first):
+                df.loc[idx, col] = vals - first
+    return df
+
+
+def apply_legacy_analysis_outliers(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Apply CalR's default rmOutliers pass used by Analysis when requested.
+
+    The legacy R path removes values outside abs(mean) +/- 3 SD for VO2, VCO2,
+    EE, RER, and body temperature. If any respiratory channel is removed for a
+    row, CalR removes the whole VO2/VCO2/EE/RER set for that row, then rebuilds
+    cumulative columns from the remaining source values.
+    """
+    if df.empty:
+        return df.copy()
+
+    out = df.copy()
+    rm_cols = [c for c in ['vo2', 'vco2', 'ee', 'rer', 'body.temp'] if c in out.columns]
+    for col in rm_cols:
+        values = pd.to_numeric(out[col], errors='coerce')
+        mean = abs(values.mean(skipna=True))
+        sd = values.std(skipna=True, ddof=1)
+        if pd.isna(mean) or pd.isna(sd):
+            continue
+        out.loc[(values > mean + 3 * sd) | (values < mean - 3 * sd), col] = np.nan
+
+    respiratory_cols = [c for c in ['vo2', 'vco2', 'ee', 'rer'] if c in out.columns]
+    if respiratory_cols:
+        removed = out[respiratory_cols].isna().any(axis=1)
+        out.loc[removed, respiratory_cols] = np.nan
+
+    sort_cols = [c for c in ['subject.id', 'exp.minute', 'Date.Time', 'exp.hour'] if c in out.columns]
+    if sort_cols:
+        out = out.sort_values(sort_cols, kind='stable')
+
+    for _, idx in out.groupby('subject.id', sort=False).groups.items():
+        for acc_col, source_col in [
+            ('feed.acc', 'feed'),
+            ('ee.acc', 'ee'),
+            ('drink.acc', 'drink'),
+            ('wheel.acc', 'wheel'),
+        ]:
+            if acc_col not in out.columns or source_col not in out.columns:
+                continue
+            source = pd.to_numeric(out.loc[idx, source_col], errors='coerce').fillna(0)
+            out.loc[idx, acc_col] = source.cumsum().values
+
+    return out
+
+
+def prepare_analysis_hourly_rows(
+    df: pd.DataFrame,
+    light_cycle_start: int = 6,
+    dark_cycle_start: int = 18,
+) -> pd.DataFrame:
+    """
+    Build the per-subject hourly dataframe used by legacy CalR's anovaTab().
+
+    Mirrors revmodCalDataSet(config=1, per="hour", grp=FALSE) after the API
+    has already enriched group metadata and kcal/cutoff columns. This keeps
+    Analysis parity isolated from the shared plot data path.
+    """
+    if df.empty:
+        return df.copy()
+
+    out = df.copy()
+    out['light'] = _analysis_light_flag(out, light_cycle_start, dark_cycle_start)
+
+    if 'hour' not in out.columns or out['hour'].isna().all():
+        if 'Date.Time' in out.columns:
+            out['hour'] = pd.to_datetime(out['Date.Time'], errors='coerce').dt.floor('h')
+        else:
+            out['hour'] = pd.to_numeric(out['exp.hour'], errors='coerce')
+    if 'day' not in out.columns or out['day'].isna().all():
+        if 'Date.Time' in out.columns:
+            out['day'] = pd.to_datetime(out['Date.Time'], errors='coerce').dt.floor('D')
+        elif 'exp.day' in out.columns:
+            out['day'] = pd.to_numeric(out['exp.day'], errors='coerce')
+        else:
+            out['day'] = np.floor(pd.to_numeric(out['exp.hour'], errors='coerce') / 24)
+
+    out = _zero_base_accumulators(out)
+    bin_factor = 60.0 / _modal_interval_minutes(out)
+
+    keys = ['subject.id', 'group', 'day', 'light', 'hour']
+    for key in keys:
+        if key not in out.columns:
+            out[key] = np.nan
+
+    numeric_cols = []
+    for col in out.columns:
+        if col in keys:
+            continue
+        converted = pd.to_numeric(out[col], errors='coerce')
+        if converted.notna().any():
+            out[col] = converted
+            numeric_cols.append(col)
+
+    special_cols = {'feed', 'feed.acc', 'drink', 'drink.acc', 'ee', 'ee.acc', 'pedmeter', 'allmeter'}
+    average_cols = [c for c in numeric_cols if c not in special_cols]
+    frames = []
+
+    if average_cols:
+        avg = (
+            out[keys + average_cols]
+            .assign(**{c: pd.to_numeric(out[c], errors='coerce') for c in average_cols})
+            .groupby(keys, dropna=False)
+            .mean(numeric_only=True)
+            .reset_index()
+        )
+        frames.append(avg)
+    else:
+        frames.append(out[keys].drop_duplicates())
+
+    sum_cols = [c for c in ['feed', 'drink', 'pedmeter', 'allmeter'] if c in out.columns]
+    if sum_cols:
+        sums = (
+            out[keys + sum_cols]
+            .assign(**{c: pd.to_numeric(out[c], errors='coerce') for c in sum_cols})
+            .groupby(keys, dropna=False)
+            .sum(min_count=1, numeric_only=True)
+            .reset_index()
+        )
+        frames.append(sums)
+
+    max_cols = [c for c in ['feed.acc', 'drink.acc', 'ee.acc'] if c in out.columns]
+    if max_cols:
+        maxes = (
+            out[keys + max_cols]
+            .assign(**{c: pd.to_numeric(out[c], errors='coerce') for c in max_cols})
+            .groupby(keys, dropna=False)
+            .max(numeric_only=True)
+            .reset_index()
+        )
+        frames.append(maxes)
+
+    if 'ee' in out.columns:
+        ee = (
+            out[keys + ['ee']]
+            .assign(ee=pd.to_numeric(out['ee'], errors='coerce'))
+            .groupby(keys, dropna=False)
+            .mean(numeric_only=True)
+            .reset_index()
+        )
+        frames.append(ee)
+
+    hourly = frames[0]
+    for frame in frames[1:]:
+        hourly = hourly.merge(frame, on=keys, how='outer')
+
+    if 'ee.acc' in hourly.columns and bin_factor:
+        hourly['ee.acc'] = pd.to_numeric(hourly['ee.acc'], errors='coerce') / bin_factor
+    if 'feed' in hourly.columns and 'ee' in hourly.columns:
+        hourly['eb'] = pd.to_numeric(hourly['feed'], errors='coerce') - pd.to_numeric(hourly['ee'], errors='coerce')
+    if 'feed.acc' in hourly.columns and 'ee.acc' in hourly.columns:
+        hourly['eb.acc'] = pd.to_numeric(hourly['feed.acc'], errors='coerce') - pd.to_numeric(hourly['ee.acc'], errors='coerce')
+
+    return hourly
 
 
 def _aggregate_subjects(df: pd.DataFrame, var_col: str, mass_col: str) -> pd.DataFrame:
@@ -479,6 +771,13 @@ def _aggregate_subjects(df: pd.DataFrame, var_col: str, mass_col: str) -> pd.Dat
         .dropna(subset=['mass', 'var'])
     )
     return agg
+
+
+def _has_modelable_values(df: pd.DataFrame, var_col: str) -> bool:
+    if var_col not in df.columns:
+        return False
+    values = pd.to_numeric(df[var_col], errors='coerce').dropna()
+    return not values.empty and values.nunique() > 1
 
 
 def _ordered_groups(subj_df: pd.DataFrame, group_order: Optional[list] = None) -> list:
@@ -512,6 +811,7 @@ def _fit_ancova_period(
     subj_df: pd.DataFrame,
     group_order: Optional[list] = None,
     reference_group: Optional[str] = None,
+    ordered_groups: bool = False,
 ):
     """
     Fit var ~ mass + C(group) + mass:C(group).
@@ -540,6 +840,38 @@ def _fit_ancova_period(
         return None
 
     subj_df = subj_df.copy()
+    if ordered_groups:
+        group_to_number = {group: i + 1 for i, group in enumerate(groups)}
+        subj_df['group'] = subj_df['group'].map(group_to_number)
+        trend_key = 'Group'
+        try:
+            m_full = smf.ols('var ~ mass + group + mass:group', data=subj_df).fit()
+            interaction_p = _coef_p(m_full, lambda n: n == 'mass:group')
+            if interaction_p is None:
+                return None
+            if interaction_p > 0.05:
+                m_noint = smf.ols('var ~ mass + group', data=subj_df).fit()
+                p_mass = _coef_p(m_noint, lambda n: n == 'mass')
+                p_group = _coef_p(m_noint, lambda n: n == 'group')
+                if p_mass is None or p_group is None:
+                    return None
+                return {
+                    'mass': round(p_mass, 4),
+                    'group': {trend_key: round(p_group, 4)},
+                    'interaction': {trend_key: None},
+                }
+            p_mass = _coef_p(m_full, lambda n: n == 'mass')
+            p_group = _coef_p(m_full, lambda n: n == 'group')
+            if p_mass is None or p_group is None:
+                return None
+            return {
+                'mass': round(p_mass, 4),
+                'group': {trend_key: round(p_group, 4)},
+                'interaction': {trend_key: round(interaction_p, 4)},
+            }
+        except Exception:
+            return None
+
     subj_df['group'] = pd.Categorical(subj_df['group'], categories=groups, ordered=True)
     comparisons = [_comparison_key(g, reference_group) for g in groups if g != reference_group]
 
@@ -578,6 +910,7 @@ def _fit_anova_period(
     subj_df: pd.DataFrame,
     group_order: Optional[list] = None,
     reference_group: Optional[str] = None,
+    ordered_groups: bool = False,
 ):
     """
     Fit var ~ C(group). Returns Wald T p-values for each non-reference group
@@ -595,6 +928,18 @@ def _fit_anova_period(
         return None
 
     subj_df = subj_df.copy()
+    if ordered_groups:
+        group_to_number = {group: i + 1 for i, group in enumerate(groups)}
+        subj_df['group'] = subj_df['group'].map(group_to_number)
+        try:
+            m = smf.ols('var ~ group', data=subj_df).fit()
+            p_group = m.pvalues.get('group')
+            if p_group is None:
+                return None
+            return {'Group': round(float(p_group), 4)}
+        except Exception:
+            return None
+
     subj_df['group'] = pd.Categorical(subj_df['group'], categories=groups, ordered=True)
 
     try:
@@ -613,6 +958,9 @@ def ancova_table(
     group_diet_kcal: dict = None,
     group_order: Optional[list] = None,
     reference_group: Optional[str] = None,
+    selected_hour_count: Optional[float] = None,
+    ordered_groups: bool = False,
+    remove_outliers: bool = False,
 ) -> dict:
     """
     Compute the summary ANCOVA/ANOVA table, mirroring anovaTab() from calR.
@@ -663,47 +1011,53 @@ def ancova_table(
     }
     """
     # `df` is expected to be enriched before analysis, including CalR-style
-    # feed kcal conversion/cutoff repair. Keep this function analysis-only so
-    # food is not converted twice.
+    # feed kcal conversion. Build the legacy per-subject hourly table locally
+    # so Analysis parity does not affect other plot endpoints.
+    if remove_outliers:
+        df = apply_legacy_analysis_outliers(df)
 
-    # Compute energy balance if missing.
-    if 'eb' not in df.columns and 'feed' in df.columns and 'ee' in df.columns:
-        df = df.copy()
-        df['eb'] = df['feed'] - df['ee']
+    df = prepare_analysis_hourly_rows(
+        df,
+        light_cycle_start=light_cycle_start,
+        dark_cycle_start=dark_cycle_start,
+    )
 
     groups = _ordered_groups(df, group_order)
     if reference_group in groups:
         groups = [reference_group] + [g for g in groups if g != reference_group]
     reference_group = groups[0] if groups else None
-    comparisons = [
-        {
-            'key': _comparison_key(group_name, reference_group),
-            'label': _comparison_key(group_name, reference_group),
-            'group': group_name,
+    if ordered_groups and len(groups) > 2:
+        comparisons = [{
+            'key': 'Group',
+            'label': 'Group',
+            'group': 'Group',
             'reference': reference_group,
-        }
-        for group_name in groups
-        if group_name != reference_group
-    ]
+        }]
+    else:
+        comparisons = [
+            {
+                'key': _comparison_key(group_name, reference_group),
+                'label': _comparison_key(group_name, reference_group),
+                'group': group_name,
+                'reference': reference_group,
+            }
+            for group_name in groups
+            if group_name != reference_group
+        ]
     comparison_keys = [comparison['key'] for comparison in comparisons]
 
     # Phase subsets
-    hour_of_day = df['exp.hour'] % 24
-    if light_cycle_start < dark_cycle_start:
-        in_light = (hour_of_day >= light_cycle_start) & (hour_of_day < dark_cycle_start)
-    else:
-        in_light = (hour_of_day >= light_cycle_start) | (hour_of_day < dark_cycle_start)
-
     phase_dfs = {
         'full_day': df,
-        'light':    df[in_light],
-        'dark':     df[~in_light],
     }
+    if selected_hour_count is None or selected_hour_count > 12:
+        phase_dfs['light'] = df[df['light'] == 1]
+        phase_dfs['dark'] = df[df['light'] == 0]
 
     ancova_rows = []
     ancova_pairwise_rows = {comparison: [] for comparison in comparison_keys}
     for var_col, label in _ANCOVA_VARS:
-        if var_col not in df.columns:
+        if not _has_modelable_values(df, var_col):
             continue
         row: dict = {'variable': var_col, 'label': label}
         pair_rows = {
@@ -711,8 +1065,16 @@ def ancova_table(
             for comparison in comparison_keys
         }
         for phase, phase_df in phase_dfs.items():
-            subj = _aggregate_subjects(phase_df, var_col, mass_variable)
-            result = _fit_ancova_period(subj, group_order=groups, reference_group=reference_group)
+            if not _has_modelable_values(phase_df, var_col):
+                result = None
+            else:
+                subj = _aggregate_subjects(phase_df, var_col, mass_variable)
+                result = _fit_ancova_period(
+                    subj,
+                    group_order=groups,
+                    reference_group=reference_group,
+                    ordered_groups=ordered_groups and len(groups) > 2,
+                )
             if result is None:
                 row[phase] = {'mass': None, 'group': None, 'interaction': None}
                 for comparison in comparison_keys:
@@ -737,7 +1099,7 @@ def ancova_table(
     anova_rows = []
     anova_pairwise_rows = {comparison: [] for comparison in comparison_keys}
     for var_col, label in _ANOVA_VARS:
-        if var_col not in df.columns:
+        if not _has_modelable_values(df, var_col):
             continue
         row = {'variable': var_col, 'label': label}
         pair_rows = {
@@ -745,8 +1107,16 @@ def ancova_table(
             for comparison in comparison_keys
         }
         for phase, phase_df in phase_dfs.items():
-            subj = _aggregate_subjects(phase_df, var_col, mass_variable)
-            group_p = _fit_anova_period(subj, group_order=groups, reference_group=reference_group)
+            if not _has_modelable_values(phase_df, var_col):
+                group_p = None
+            else:
+                subj = _aggregate_subjects(phase_df, var_col, mass_variable)
+                group_p = _fit_anova_period(
+                    subj,
+                    group_order=groups,
+                    reference_group=reference_group,
+                    ordered_groups=ordered_groups and len(groups) > 2,
+                )
             first_comparison = comparison_keys[0] if comparison_keys else None
             row[phase] = {'group': group_p.get(first_comparison) if group_p and first_comparison else None}
             for comparison in comparison_keys:

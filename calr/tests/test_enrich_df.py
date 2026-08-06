@@ -265,6 +265,12 @@ class TestFeedProcessing:
         assert list(a1['feed'].round(3)) == [1.4, 1.4, 1.4]
         assert list(a1['feed.acc'].round(3)) == [1.4, 2.8, 4.2]
 
+    def test_feed_cutoff_can_be_skipped_for_legacy_analysis(self):
+        result = _enrich_df(_df(), _session(food_cutoff=6.0), apply_food_cutoff=False)
+        a1 = result[result['subject.id'] == 'A1'].sort_values('exp.minute')
+        assert list(a1['feed'].round(3)) == [1.75, 2.1, 1.4]
+        assert list(a1['feed.acc'].round(3)) == [1.75, 3.85, 5.25]
+
 
 class TestAccumulatorFill:
     def test_ee_acc_preserved_when_already_present(self):
