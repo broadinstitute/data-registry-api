@@ -2,7 +2,10 @@
 
 Response contract: same array-of-flat-objects JSON the Drupal views returned,
 same field names, HTML-in-strings untouched; only asset URLs are rewritten to
-/api/kpn/files/. See docs/superpowers/specs/2026-08-07-kpn-cms-migration-design.md.
+/api/kpn/files/ (import-time rewrite — proxy-persisted rows keep original URLs
+until the next import run mirrors their assets). Content is populated by
+scripts/import_kpn_cms.py; unknown requests fall back to a feature-flagged
+proxy against the live CMS while it exists (KPN_CMS_PROXY_ON_MISS).
 """
 import os
 import re

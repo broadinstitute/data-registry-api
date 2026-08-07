@@ -51,8 +51,10 @@ Docker will use environment variables in your .env file too so you can override 
 
 The `/api/kpn/*` endpoints serve the Drupal CMS content formerly hosted on kp4cd.org
 (news feeds, portal front content, help book, dataset info, etc.) in the exact
-response shapes the portal frontends expect. Design + rationale:
-`docs/superpowers/specs/2026-08-07-kpn-cms-migration-design.md`.
+response shapes the portal frontends expect. Rationale: kp4cd.org is being retired
+but is still the only live source of these views (hugeampkpncms.org serves a
+different API generation), so this store + import + compatible API replace it.
+Full audit and runbook live in the KP4CD Re-architecture project's support folder.
 
 Populate / refresh the content snapshot (requires kp4cd.org to be reachable):
 

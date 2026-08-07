@@ -2,7 +2,8 @@
 
 Re-runnable while kp4cd.org is alive; per-view transactional replace means a
 failed run never leaves a view half-imported. Run --dry-run first to review
-the URL set. See docs/superpowers/specs/2026-08-07-kpn-cms-migration-design.md.
+the URL set. Serves the /api/kpn/* endpoints in dataregistry/api/kpn_cms.py;
+see the README's "KPN CMS content" section for the operational story.
 """
 import argparse
 import json
