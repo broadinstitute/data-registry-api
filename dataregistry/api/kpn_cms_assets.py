@@ -19,7 +19,8 @@ ASSET_PREFIX = 'kpn-cms-assets/'
 # The captured path is a sequence of (/segment) groups; segments stop at
 # whitespace, quotes, parens, angle brackets, backslashes, commas, query strings, and fragments.
 # Non-captured query/fragment groups ensure they are included in the full match for replacement.
-_ASSET_RE = re.compile(r'(?:https?:)?(?:\\?/){2}kp4cd\.org((?:\\?/[^\s"\'()<>\\,?#]+)+)(?:[?#][^\s"\'()<>]*)?')
+# Trailing query/fragment group also excludes backslash to preserve JSON escape sequences.
+_ASSET_RE = re.compile(r'(?:https?:)?(?:\\?/){2}kp4cd\.org((?:\\?/[^\s"\'()<>\\,?#]+)+)(?:[?#][^\s"\'()<>\\]*)?')
 _FILES_PREFIX = '/sites/default/files/'
 
 

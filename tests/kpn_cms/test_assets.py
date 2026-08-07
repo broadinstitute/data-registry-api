@@ -95,3 +95,42 @@ def test_mirror_assets_handles_errors():
         rows = con.execute(text("SELECT remote_url, status FROM cms_asset ORDER BY remote_url")).fetchall()
     result = [(r[0], r[1]) for r in rows]
     assert result == [(ok, 'mirrored'), (error_url, 'error')]
+
+
+def test_query_strings_with_all_forms():
+    """Regression: find_asset_urls, asset_path, rewrite_asset_urls handle ?itok= in escaped and unescaped forms.
+
+    Issue: trailing query group must exclude backslash to not consume closing \" in JSON-escaped URLs.
+    """
+    # Unescaped form with ?itok=
+    unescaped = '<img src="https://kp4cd.org/sites/default/files/styles/thumbnail/public/x.jpg?itok=Zz9">'
+    urls_unescaped = a.find_asset_urls(unescaped)
+    assert urls_unescaped == {'https://kp4cd.org/sites/default/files/styles/thumbnail/public/x.jpg?itok=Zz9'}
+    # Verify no trailing backslash
+    for url in urls_unescaped:
+        assert not url.endswith('\\'), f"URL has trailing backslash: {url}"
+    # Verify asset_path strips query
+    for url in urls_unescaped:
+        assert a.asset_path(url) == 'styles/thumbnail/public/x.jpg'
+    # Verify rewrite strips query
+    out_unescaped = a.rewrite_asset_urls(unescaped)
+    assert '/api/kpn/files/styles/thumbnail/public/x.jpg' in out_unescaped
+    assert '?itok=' not in out_unescaped
+
+    # Escaped form with ?itok= (JSON-escaped URL)
+    escaped = 'src=\\"https:\\/\\/kp4cd.org\\/sites\\/default\\/files\\/x.jpg?itok=Zz9\\"'
+    urls_escaped = a.find_asset_urls(escaped)
+    assert urls_escaped == {'https://kp4cd.org/sites/default/files/x.jpg?itok=Zz9'}
+    # Verify no trailing backslash
+    for url in urls_escaped:
+        assert not url.endswith('\\'), f"URL has trailing backslash: {url}"
+    # Verify asset_path strips query
+    for url in urls_escaped:
+        assert a.asset_path(url) == 'x.jpg'
+    # Verify rewrite preserves closing \" escape
+    out_escaped = a.rewrite_asset_urls(escaped)
+    assert 'src=\\"' in out_escaped, "Opening escaped quote should be preserved"
+    assert '\\"' in out_escaped, "Closing escaped quote should be preserved"
+    assert out_escaped.endswith('\\"'), "Should end with escaped quote"
+    assert '\\/api\\/kpn\\/files\\/x.jpg' in out_escaped, "Rewritten path should be escaped"
+    assert '?itok=' not in out_escaped, "Query string should be stripped from rewrite"
