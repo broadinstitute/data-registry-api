@@ -5,6 +5,7 @@ same field names, HTML-in-strings untouched; only asset URLs are rewritten to
 /api/kpn/files/. See docs/superpowers/specs/2026-08-07-kpn-cms-migration-design.md.
 """
 import os
+import re
 
 import boto3
 import fastapi
@@ -21,6 +22,23 @@ from dataregistry.api.kpn_cms_assets import ASSET_PREFIX, BROWSER_UA, rewrite_as
 router = fastapi.APIRouter()
 engine = DataRegistryReadWriteDB().get_engine()
 BUCKET = os.environ.get('DATA_REGISTRY_BUCKET', 'dig-data-registry')
+
+# Real Drupal view/egldata-kind machine names are [a-z0-9_]. A path segment
+# containing anything else (e.g. a decoded '?' or '#' smuggled in via
+# percent-encoding) must never reach the outbound proxy request -- it would
+# let an anonymous caller inject/override query params or a fragment on the
+# request we make to kp4cd.org. Reject up front; treat exactly like a
+# proxy-disabled miss (record + return []), never proxy.
+_NAME_RE = re.compile(r'^[A-Za-z0-9_]+$')
+
+# Column widths in cms_content_item / cms_request_miss (see migration). User-
+# controlled values are clamped to these before any DB call so an
+# oversized-but-valid-charset value degrades gracefully (miss recorded, [])
+# instead of raising a DataError under MySQL strict mode.
+_VIEW_NAME_MAXLEN = 128
+_PORTAL_MAXLEN = 64
+_NID_MAXLEN = 32
+_ITEM_KEY_MAXLEN = 255
 
 # view -> the query param the portal filters it by (audit inventory).
 # Views absent here (research_data, arbitrary ${query.page} names) key on the
@@ -41,17 +59,25 @@ def _source_host():
     return os.getenv('KPN_CMS_SOURCE_HOST', 'https://kp4cd.org')
 
 
+def _canonical_item_key(params):
+    return q.canonical_key(params)[:_ITEM_KEY_MAXLEN]
+
+
 def _lookup(view_name, params):
     filter_param = FILTER_PARAM.get(view_name)
     if filter_param is None and params:
-        return q.get_view_rows(engine, view_name, item_key=q.canonical_key(params)), 'item_key', q.canonical_key(params)
+        key = _canonical_item_key(params)
+        return q.get_view_rows(engine, view_name, item_key=key), 'item_key', key
     if filter_param is None:
         return q.get_view_rows(engine, view_name), None, None
     value = params.get(filter_param)
     if filter_param == 'portal':
+        value = value[:_PORTAL_MAXLEN] if value is not None else value
         return q.get_view_rows(engine, view_name, portal=value), 'portal', value
     if filter_param == 'nid':
+        value = value[:_NID_MAXLEN] if value is not None else value
         return q.get_view_rows(engine, view_name, nid=value), 'nid', value
+    value = value[:_ITEM_KEY_MAXLEN] if value is not None else value
     return q.get_view_rows(engine, view_name, item_key=value), 'item_key', value
 
 
@@ -96,7 +122,11 @@ def kpn_help_book_search(body: str = ''):
 
 @router.get('/kpn/rest/views/{view_name}')
 def kpn_view(view_name: str, request: Request):
+    view_name = view_name[:_VIEW_NAME_MAXLEN]
     params = dict(request.query_params)
+    if not _NAME_RE.match(view_name):
+        q.record_miss(engine, view_name, q.canonical_key(params), False, None)
+        return []
     rows, scope_col, scope_val = _lookup(view_name, params)
     if rows:
         return rows
@@ -115,11 +145,15 @@ def kpn_portal_front(request: Request):
 @router.get('/kpn/egldata/{kind}')
 def kpn_egldata(kind: str, request: Request):
     params = dict(request.query_params)
-    view_name = f'egldata_{kind}'
-    rows = q.get_view_rows(engine, view_name, item_key=q.canonical_key(params))
+    view_name = f'egldata_{kind}'[:_VIEW_NAME_MAXLEN]
+    if not _NAME_RE.match(kind):
+        q.record_miss(engine, view_name, q.canonical_key(params), False, None)
+        return []
+    key = _canonical_item_key(params)
+    rows = q.get_view_rows(engine, view_name, item_key=key)
     if rows:
         return rows
-    return _proxy_and_persist(view_name, f'/egldata/{kind}', params, 'item_key', q.canonical_key(params))
+    return _proxy_and_persist(view_name, f'/egldata/{kind}', params, 'item_key', key)
 
 
 @router.get('/kpn/files/{path:path}')

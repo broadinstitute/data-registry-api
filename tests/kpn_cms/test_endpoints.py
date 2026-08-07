@@ -131,6 +131,46 @@ def test_miss_with_proxy_on_forwards_and_persists(monkeypatch):
     assert q.get_misses(engine)[0]['proxied']
 
 
+# --- security: view_name / egldata-kind charset + length hardening ---
+
+@responses.activate
+def test_invalid_view_name_charset_blocks_proxy(monkeypatch):
+    monkeypatch.setenv('KPN_CMS_PROXY_ON_MISS', 'true')
+    monkeypatch.setenv('KPN_CMS_SOURCE_HOST', 'https://kp4cd-fixture.test')
+    _clean()
+    # %3F/%3D decode to '?'/'='; nothing is registered with `responses`, so any
+    # outbound call would raise ConnectionError -- the clean [] plus proxied=False
+    # below together prove no outbound request was ever attempted.
+    got = client.get('/api/kpn/rest/views/x%3Fevil%3D1')
+    assert got.status_code == 200
+    assert got.json() == []
+    misses = q.get_misses(engine)
+    assert misses and misses[0]['view_name'] == 'x?evil=1' and not misses[0]['proxied']
+
+
+def test_long_view_name_is_clamped_before_miss_record(monkeypatch):
+    monkeypatch.setenv('KPN_CMS_PROXY_ON_MISS', 'false')
+    _clean()
+    long_name = 'a' * 250
+    got = client.get(f'/api/kpn/rest/views/{long_name}')
+    assert got.status_code == 200
+    assert got.json() == []
+    misses = q.get_misses(engine)
+    assert misses and len(misses[0]['view_name']) <= 128
+
+
+@responses.activate
+def test_egldata_invalid_kind_charset_blocks_proxy(monkeypatch):
+    monkeypatch.setenv('KPN_CMS_PROXY_ON_MISS', 'true')
+    monkeypatch.setenv('KPN_CMS_SOURCE_HOST', 'https://kp4cd-fixture.test')
+    _clean()
+    got = client.get('/api/kpn/egldata/bogus%3Fx')
+    assert got.status_code == 200
+    assert got.json() == []
+    misses = q.get_misses(engine)
+    assert misses and not misses[0]['proxied']
+
+
 # --- egldata ---
 
 def test_egldata_empty_when_no_data(monkeypatch):
