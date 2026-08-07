@@ -47,3 +47,25 @@ Docker will use environment variables in your .env file too so you can override 
 - Pushes/PR merges to main will deploy to QA via Github actions.
 - Publishing a tag pointing to a commit in the main branch will deploy that version to production
 
+## KPN CMS content (kp4cd.org replacement)
+
+The `/api/kpn/*` endpoints serve the Drupal CMS content formerly hosted on kp4cd.org
+(news feeds, portal front content, help book, dataset info, etc.) in the exact
+response shapes the portal frontends expect. Design + rationale:
+`docs/superpowers/specs/2026-08-07-kpn-cms-migration-design.md`.
+
+Populate / refresh the content snapshot (requires kp4cd.org to be reachable):
+
+    python -m scripts.import_kpn_cms --dry-run   # review the URL set first
+    python -m scripts.import_kpn_cms             # import + mirror embedded assets to S3
+
+Config:
+- `KPN_CMS_PROXY_ON_MISS` (default `true`) — while kp4cd.org is alive, unknown
+  requests are proxied there, persisted, and logged to `cms_request_miss`.
+  Set to `false` at domain retirement.
+- `KPN_CMS_SOURCE_HOST` (default `https://kp4cd.org`)
+- Assets land in the `DATA_REGISTRY_BUCKET` bucket under `kpn-cms-assets/`.
+
+Before retiring kp4cd.org: review `GET /api/kpn/misses` (authenticated) — it lists
+every request the store could not serve locally.
+
