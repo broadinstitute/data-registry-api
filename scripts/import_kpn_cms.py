@@ -42,7 +42,14 @@ def fetch_view(source_host, path):
     if r.status_code == 404:
         return []
     r.raise_for_status()
-    body = r.json()
+    try:
+        body = r.json()
+    except ValueError as e:
+        # A 200 with a non-JSON body (e.g. an anti-bot interstitial page) is
+        # a fetch failure, not a parse-time crash -- surface it the same way
+        # a RequestException would so every caller's existing except clause
+        # (skip the view, keep prior rows) covers it without special-casing.
+        raise requests.RequestException(f'invalid JSON from {path}: {e}') from e
     return body if isinstance(body, list) else []
 
 
@@ -137,9 +144,15 @@ def run_import(engine, s3_client, bucket, source_host, bioindex_host,
         for nid in sorted(_harvest_nids(engine)):
             _import('content_by_id', f'/rest/views/content_by_id?nid={nid}', 'nid', nid)
 
-    # egldata probe — audit found these 404 (superseded by servedata); record reality
-    probe = fetch_view(source_host, '/egldata/config?dataset=&trait=')
-    report['egldata_live'] = bool(probe)
+    # egldata probe — audit found these 404 (superseded by servedata); record reality.
+    # Runs after every view import has succeeded, so a probe failure must never
+    # discard the accumulated report -- it can only mark the probe unavailable.
+    try:
+        probe = fetch_view(source_host, '/egldata/config?dataset=&trait=')
+        report['egldata_live'] = bool(probe)
+    except requests.RequestException as e:
+        report['egldata_live'] = False
+        report['skipped'].append(f'egldata probe: {e}')
 
     if not dry_run and not skip_assets:
         from sqlalchemy import text as _text

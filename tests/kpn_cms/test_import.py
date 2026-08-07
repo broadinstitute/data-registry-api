@@ -115,3 +115,41 @@ def test_failed_view_leaves_prior_snapshot_intact():
     report = run_import(engine, s3, 'kpn-cms-test', SRC, BIO, skip_assets=True)
     assert q.get_view_rows(engine, 'help_book') == before      # old rows survive
     assert any('help_book' in s for s in report['skipped'])
+
+
+@mock_aws
+@responses.activate
+def test_view_with_non_json_body_lands_in_skipped_leaves_snapshot_others_import():
+    # A 200 response with a non-JSON body (e.g. an anti-bot interstitial page --
+    # exactly the failure class the BROWSER_UA workaround exists for) must be
+    # treated as a fetch failure like any other: the view is skipped, its prior
+    # rows survive untouched, and every other view still imports normally.
+    _clean(); _register()
+    s3 = boto3.client('s3', region_name='us-east-1'); s3.create_bucket(Bucket='kpn-cms-test')
+    run_import(engine, s3, 'kpn-cms-test', SRC, BIO, skip_assets=True)
+    before = q.get_view_rows(engine, 'help_book')
+    responses.reset()
+    _register()
+    responses.replace(responses.GET, f'{SRC}/rest/views/help_book', body='<html>bot check</html>')
+    report = run_import(engine, s3, 'kpn-cms-test', SRC, BIO, skip_assets=True)
+    assert q.get_view_rows(engine, 'help_book') == before      # old rows survive
+    assert any('help_book' in s for s in report['skipped'])
+    # every other view still imported despite help_book's failure
+    assert report['views']['news2vueportal'] == len(_fixture('news2vueportal_md.json'))
+    assert q.get_view_rows(engine, 'a2f_community_kps')
+
+
+@mock_aws
+@responses.activate
+def test_egldata_probe_failure_does_not_abort_run():
+    # The probe runs after every view import has already succeeded; a failure
+    # there must only mark the probe unavailable, never discard the report.
+    _clean(); _register()
+    s3 = boto3.client('s3', region_name='us-east-1'); s3.create_bucket(Bucket='kpn-cms-test')
+    responses.replace(responses.GET, f'{SRC}/egldata/config', body='<html>not json</html>')
+    report = run_import(engine, s3, 'kpn-cms-test', SRC, BIO, skip_assets=True)
+    assert report['egldata_live'] is False
+    assert any('egldata' in s for s in report['skipped'])
+    # the rest of the run completed and is present in the returned report
+    assert report['views']['news2vueportal'] == len(_fixture('news2vueportal_md.json'))
+    assert q.get_view_rows(engine, 'help_book')
