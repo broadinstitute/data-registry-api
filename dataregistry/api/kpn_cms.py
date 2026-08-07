@@ -18,6 +18,7 @@ from dataregistry.api.api import get_current_user
 from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api import kpn_cms_query as q
 from dataregistry.api.kpn_cms_assets import ASSET_PREFIX, BROWSER_UA
+from dataregistry.api.kpn_cms_ingest import rows_for
 
 router = fastapi.APIRouter()
 engine = DataRegistryReadWriteDB().get_engine()
@@ -101,7 +102,6 @@ def _proxy_and_persist(view_name, path, params, scope_col, scope_val):
         return []
     if not isinstance(body, list):
         return []
-    from scripts.import_kpn_cms import rows_for
     rows = rows_for(view_name, body,
                     portal=scope_val if scope_col == 'portal' else None,
                     nid=scope_val if scope_col == 'nid' else None,

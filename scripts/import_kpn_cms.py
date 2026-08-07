@@ -5,7 +5,6 @@ failed run never leaves a view half-imported. Run --dry-run first to review
 the URL set. See docs/superpowers/specs/2026-08-07-kpn-cms-migration-design.md.
 """
 import argparse
-import html
 import json
 import re
 import sys
@@ -15,19 +14,12 @@ import requests
 
 from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api import kpn_cms_query as q
-from dataregistry.api.kpn_cms_assets import (
-    ASSET_PREFIX, BROWSER_UA, find_asset_urls, mirror_assets, rewrite_asset_urls)
+from dataregistry.api.kpn_cms_assets import BROWSER_UA, find_asset_urls, mirror_assets, rewrite_asset_urls
+from dataregistry.api.kpn_cms_ingest import rows_for, strip_html, _field_value
 
 PORTAL_VIEWS = ['news2vueportal', 'newfeatures', 'eglmethodsperportal', 'newresources', 'kpdatasets']
 GLOBAL_VIEWS = ['a2f_community_kps', 'help_book']
-_TAG_RE = re.compile(r'<[^>]+>')
 _NODE_RE = re.compile(r'\\?/node\\?/(\d+)')
-
-
-def strip_html(s):
-    if not s:
-        return ''
-    return re.sub(r'\s+', ' ', html.unescape(_TAG_RE.sub(' ', s))).strip()
 
 
 def get_portals(bioindex_host):
@@ -51,29 +43,6 @@ def fetch_view(source_host, path):
         # (skip the view, keep prior rows) covers it without special-casing.
         raise requests.RequestException(f'invalid JSON from {path}: {e}') from e
     return body if isinstance(body, list) else []
-
-
-def _field_value(val):
-    """Unwrap Drupal's full-entity field format (e.g. datasetinfo's
-    field_dataset_id: [{'value': 'x'}]) down to the bare scalar. Views REST
-    export rows (news2vueportal, etc.) already hand back flat scalars and
-    pass through unchanged. Evidence: tests/kpn_cms/fixtures/datasetinfo_sample.json.
-    """
-    if isinstance(val, list) and val and isinstance(val[0], dict) and 'value' in val[0]:
-        return val[0]['value']
-    return val
-
-
-def rows_for(view_name, drupal_rows, portal=None, nid=None, item_key=None):
-    rows = []
-    for i, item in enumerate(drupal_rows):
-        search = strip_html(' '.join(str(_field_value(item.get(f)) or '') for f in ('title', 'body')))
-        row_nid = nid if nid is not None else _field_value(item.get('nid'))
-        rows.append({'view_name': view_name, 'portal': portal,
-                     'nid': str(row_nid) if row_nid is not None else None,
-                     'item_key': item_key, 'payload': json.dumps(item),
-                     'search_text': search or None, 'sort_order': i})
-    return rows
 
 
 def _harvest_nids(engine):

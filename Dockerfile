@@ -2,6 +2,7 @@ FROM python:3.8-slim
 WORKDIR /usr/src/app
 COPY requirements.txt .
 COPY dataregistry ./dataregistry
+COPY scripts ./scripts
 RUN apt-get update && \
     apt-get install -y git && \
     pip install --upgrade pip && \
