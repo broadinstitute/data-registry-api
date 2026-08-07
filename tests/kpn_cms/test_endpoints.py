@@ -131,6 +131,30 @@ def test_miss_with_proxy_on_forwards_and_persists(monkeypatch):
     assert q.get_misses(engine)[0]['proxied']
 
 
+@responses.activate
+def test_proxy_persist_keeps_original_asset_urls_for_import_to_heal(monkeypatch):
+    # Proxy-on-miss must persist the UNREWRITTEN Drupal payload: rewriting to
+    # /api/kpn/files/ here without ever mirroring to S3 would permanently break
+    # the asset (mirroring must not happen synchronously inside a public
+    # request). The offline import's asset phase heals these rows on its next
+    # run by scanning ALL stored rows for bare-host kp4cd.org URLs.
+    monkeypatch.setenv('KPN_CMS_PROXY_ON_MISS', 'true')
+    monkeypatch.setenv('KPN_CMS_SOURCE_HOST', 'https://kp4cd-fixture.test')
+    _clean()
+    asset_url = 'https://kp4cd.org/sites/default/files/images/example_egl_method.png'
+    payload = [{'title': 'EGL method - example',
+               'body': f'<p><img src="{asset_url}" style="width:800px;" /></p>'}]
+    responses.get('https://kp4cd-fixture.test/rest/views/eglmethod', json=payload)
+    got = client.get('/api/kpn/rest/views/eglmethod?from=examplemethod').json()
+    assert got == payload
+    assert asset_url in got[0]['body']
+    assert '/api/kpn/files/' not in got[0]['body']
+    stored = q.get_view_rows(engine, 'eglmethod', item_key='examplemethod')
+    assert stored == payload
+    assert asset_url in stored[0]['body']
+    assert '/api/kpn/files/' not in stored[0]['body']
+
+
 # --- security: view_name / egldata-kind charset + length hardening ---
 
 @responses.activate

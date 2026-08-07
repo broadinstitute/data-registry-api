@@ -141,6 +141,36 @@ def test_view_with_non_json_body_lands_in_skipped_leaves_snapshot_others_import(
 
 @mock_aws
 @responses.activate
+def test_run_import_heals_proxy_persisted_asset_urls():
+    # Rows written by the API's proxy-on-miss path (dataregistry/api/kpn_cms.py
+    # _proxy_and_persist) persist UNREWRITTEN kp4cd.org asset URLs on purpose
+    # (mirroring to S3 must not happen synchronously inside a public request).
+    # The import's asset phase must heal them on its next run: it queries ALL
+    # cms_content_item rows (not just ones this run fetched), so a
+    # proxy-persisted row -- for a view this run never even touches -- still
+    # gets its asset mirrored to S3 and its payload rewritten.
+    _clean(); _register()
+    s3 = boto3.client('s3', region_name='us-east-1'); s3.create_bucket(Bucket='kpn-cms-test')
+    asset_url = 'https://kp4cd.org/sites/default/files/images/proxied.png'
+    responses.get(asset_url, body=b'PNGDATA', content_type='image/png')
+    proxied_row = {'view_name': 'eglmethod', 'portal': None, 'nid': None,
+                   'item_key': 'proxied-item',
+                   'payload': json.dumps({'title': 'proxied',
+                                          'body': f'<img src="{asset_url}"/>'}),
+                   'search_text': None, 'sort_order': 0}
+    q.replace_view_rows(engine, 'eglmethod', 'item_key', 'proxied-item', [proxied_row])
+    run_import(engine, s3, 'kpn-cms-test', SRC, BIO)   # assets enabled (default skip_assets=False)
+    healed = q.get_view_rows(engine, 'eglmethod', item_key='proxied-item')
+    assert '/api/kpn/files/images/proxied.png' in healed[0]['body']
+    assert asset_url not in healed[0]['body']
+    objs = s3.list_objects_v2(Bucket='kpn-cms-test', Prefix='kpn-cms-assets/images/proxied.png')
+    assert objs.get('KeyCount', 0) == 1
+    body = s3.get_object(Bucket='kpn-cms-test', Key='kpn-cms-assets/images/proxied.png')['Body'].read()
+    assert body == b'PNGDATA'
+
+
+@mock_aws
+@responses.activate
 def test_egldata_probe_failure_does_not_abort_run():
     # The probe runs after every view import has already succeeded; a failure
     # there must only mark the probe unavailable, never discard the report.

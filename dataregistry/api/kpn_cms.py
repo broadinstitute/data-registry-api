@@ -17,7 +17,7 @@ from fastapi.responses import RedirectResponse
 from dataregistry.api.api import get_current_user
 from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api import kpn_cms_query as q
-from dataregistry.api.kpn_cms_assets import ASSET_PREFIX, BROWSER_UA, rewrite_asset_urls
+from dataregistry.api.kpn_cms_assets import ASSET_PREFIX, BROWSER_UA
 
 router = fastapi.APIRouter()
 engine = DataRegistryReadWriteDB().get_engine()
@@ -106,8 +106,14 @@ def _proxy_and_persist(view_name, path, params, scope_col, scope_val):
                     portal=scope_val if scope_col == 'portal' else None,
                     nid=scope_val if scope_col == 'nid' else None,
                     item_key=scope_val if scope_col == 'item_key' else None)
-    for r in rows:
-        r['payload'] = rewrite_asset_urls(r['payload'])
+    # Persist the ORIGINAL (unrewritten) Drupal payload here, not the
+    # asset-rewritten form. Proxy-on-miss only runs while kp4cd.org is still
+    # alive, so the raw kp4cd.org asset URLs still resolve directly in
+    # browsers today. The import pipeline's asset phase (scripts/import_kpn_cms.py)
+    # scans ALL cms_content_item rows for bare-host kp4cd.org URLs and
+    # mirrors+rewrites them on its next run, so proxy-persisted rows get
+    # healed the same way as normally-imported ones -- and mirroring to S3
+    # must never happen synchronously inside a public request.
     q.replace_view_rows(engine, view_name, scope_col, scope_val, rows)
     kwargs = {}
     if scope_col:
