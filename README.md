@@ -1,5 +1,5 @@
 # data-registry-api
-![Coverage](https://img.shields.io/badge/coverage-67%25-brightgreen)
+![Coverage](https://img.shields.io/badge/coverage-69%25-brightgreen)
 
 ## Running the server
 ### Running Locally
@@ -46,4 +46,28 @@ Docker will use environment variables in your .env file too so you can override 
 ## Deploying the server
 - Pushes/PR merges to main will deploy to QA via Github actions.
 - Publishing a tag pointing to a commit in the main branch will deploy that version to production
+
+## KPN CMS content (kp4cd.org replacement)
+
+The `/api/kpn/*` endpoints serve the Drupal CMS content formerly hosted on kp4cd.org
+(news feeds, portal front content, help book, dataset info, etc.) in the exact
+response shapes the portal frontends expect. Rationale: kp4cd.org is being retired
+but is still the only live source of these views (hugeampkpncms.org serves a
+different API generation), so this store + import + compatible API replace it.
+Full audit and runbook live in the KP4CD Re-architecture project's support folder.
+
+Populate / refresh the content snapshot (requires kp4cd.org to be reachable):
+
+    python -m scripts.import_kpn_cms --dry-run   # review the URL set first
+    python -m scripts.import_kpn_cms             # import + mirror embedded assets to S3
+
+Config:
+- `KPN_CMS_PROXY_ON_MISS` (default `true`) — while kp4cd.org is alive, unknown
+  requests are proxied there, persisted, and logged to `cms_request_miss`.
+  Set to `false` at domain retirement.
+- `KPN_CMS_SOURCE_HOST` (default `https://kp4cd.org`)
+- Assets land in the `DATA_REGISTRY_BUCKET` bucket under `kpn-cms-assets/`.
+
+Before retiring kp4cd.org: review `GET /api/kpn/misses` (authenticated) — it lists
+every request the store could not serve locally.
 
