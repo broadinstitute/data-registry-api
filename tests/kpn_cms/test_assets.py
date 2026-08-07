@@ -134,3 +134,35 @@ def test_query_strings_with_all_forms():
     assert out_escaped.endswith('\\"'), "Should end with escaped quote"
     assert '\\/api\\/kpn\\/files\\/x.jpg' in out_escaped, "Rewritten path should be escaped"
     assert '?itok=' not in out_escaped, "Query string should be stripped from rewrite"
+
+    # Unescaped form with #fragment
+    unescaped_frag = '<img src="https://kp4cd.org/sites/default/files/image.png#section">'
+    urls_unescaped_frag = a.find_asset_urls(unescaped_frag)
+    assert urls_unescaped_frag == {'https://kp4cd.org/sites/default/files/image.png#section'}
+    # Verify no trailing backslash
+    for url in urls_unescaped_frag:
+        assert not url.endswith('\\'), f"URL has trailing backslash: {url}"
+    # Verify asset_path strips fragment
+    for url in urls_unescaped_frag:
+        assert a.asset_path(url) == 'image.png'
+    # Verify rewrite strips fragment
+    out_unescaped_frag = a.rewrite_asset_urls(unescaped_frag)
+    assert '/api/kpn/files/image.png' in out_unescaped_frag
+    assert '#section' not in out_unescaped_frag
+
+    # Escaped form with #fragment (JSON-escaped URL)
+    escaped_frag = 'src=\\"https:\\/\\/kp4cd.org\\/sites\\/default\\/files\\/image.png#section\\"'
+    urls_escaped_frag = a.find_asset_urls(escaped_frag)
+    assert urls_escaped_frag == {'https://kp4cd.org/sites/default/files/image.png#section'}
+    # Verify no trailing backslash
+    for url in urls_escaped_frag:
+        assert not url.endswith('\\'), f"URL has trailing backslash: {url}"
+    # Verify asset_path strips fragment
+    for url in urls_escaped_frag:
+        assert a.asset_path(url) == 'image.png'
+    # Verify rewrite preserves closing \" escape
+    out_escaped_frag = a.rewrite_asset_urls(escaped_frag)
+    assert 'src=\\"' in out_escaped_frag, "Opening escaped quote should be preserved"
+    assert out_escaped_frag.endswith('\\"'), "Should end with escaped quote"
+    assert '\\/api\\/kpn\\/files\\/image.png' in out_escaped_frag, "Rewritten path should be escaped"
+    assert '#section' not in out_escaped_frag, "Fragment should be stripped from rewrite"
