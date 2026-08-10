@@ -14,10 +14,9 @@ import boto3
 import fastapi
 import requests
 from botocore.exceptions import ClientError
-from fastapi import Depends, Request
+from fastapi import Request
 from fastapi.responses import RedirectResponse
 
-from dataregistry.api.api import get_current_user
 from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api import kpn_cms_query as q
 from dataregistry.api.kpn_cms_assets import ASSET_PREFIX, ASSETS_BUCKET, BROWSER_UA
@@ -177,6 +176,3 @@ def kpn_file(path: str):
     return RedirectResponse(url, status_code=307)
 
 
-@router.get('/kpn/misses', dependencies=[Depends(get_current_user)])
-def kpn_misses():
-    return q.get_misses(engine)

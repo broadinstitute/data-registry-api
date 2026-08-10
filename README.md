@@ -72,6 +72,9 @@ Config:
   (e.g. public-read/CDN). The bucket must exist before the first asset import;
   the API role needs read on it, the import runner needs write.
 
-Before retiring kp4cd.org: review `GET /api/kpn/misses` (authenticated) — it lists
-every request the store could not serve locally.
+Before retiring kp4cd.org, review the gap log — every request the store could not
+serve locally is recorded in the `cms_request_miss` table:
+
+    SELECT view_name, query_string, proxied, hit_count, last_seen
+    FROM cms_request_miss ORDER BY hit_count DESC;
 

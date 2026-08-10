@@ -226,5 +226,9 @@ def test_files_404_when_missing(monkeypatch):
 
 # --- misses endpoint requires auth ---
 
-def test_misses_requires_auth():
-    assert client.get('/api/kpn/misses').status_code in (401, 403)
+def test_misses_route_absent():
+    # The dedicated /api/kpn/misses endpoint was removed — gap review queries
+    # the cms_request_miss table directly. Whatever handler catches this path
+    # now, it must not expose the miss log.
+    resp = client.get('/api/kpn/misses')
+    assert 'hit_count' not in resp.text
