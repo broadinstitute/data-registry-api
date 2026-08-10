@@ -4,6 +4,7 @@ Payloads reference assets in three syntactic forms (absolute, protocol-relative,
 CSS url()) and, inside JSON strings, with escaped slashes (https:\\/\\/...).
 Matching is on the bare host — a scheme-anchored pattern misses a third of them.
 """
+import os
 import re
 import urllib.parse
 
@@ -14,6 +15,10 @@ from dataregistry.api.kpn_cms_query import upsert_asset
 BROWSER_UA = ('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
               '(KHTML, like Gecko) Chrome/126.0 Safari/537.36')
 ASSET_PREFIX = 'kpn-cms-assets/'
+# Dedicated public-content bucket, separate from the controlled-data registry
+# bucket: these objects are anonymous web assets and their bucket policy must
+# be free to diverge (e.g. public-read/CDN) from registry data.
+ASSETS_BUCKET = os.environ.get('KPN_CMS_ASSETS_BUCKET', 'dig-kpn-cms-assets')
 
 # Any kp4cd.org URL (bare-host match, tolerating JSON-escaped slashes).
 # The captured path is a sequence of (/segment) groups; segments stop at

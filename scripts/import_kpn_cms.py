@@ -15,7 +15,8 @@ import requests
 
 from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api import kpn_cms_query as q
-from dataregistry.api.kpn_cms_assets import BROWSER_UA, find_asset_urls, mirror_assets, rewrite_asset_urls
+from dataregistry.api.kpn_cms_assets import (
+    ASSETS_BUCKET, BROWSER_UA, find_asset_urls, mirror_assets, rewrite_asset_urls)
 from dataregistry.api.kpn_cms_ingest import rows_for, strip_html, _field_value
 
 PORTAL_VIEWS = ['news2vueportal', 'newfeatures', 'eglmethodsperportal', 'newresources', 'kpdatasets']
@@ -145,14 +146,13 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--source-host', default='https://kp4cd.org')
     ap.add_argument('--bioindex-host', default='https://bioindex.hugeamp.org')
-    ap.add_argument('--bucket', default=None, help='defaults to DATA_REGISTRY_BUCKET / dig-data-registry')
+    ap.add_argument('--bucket', default=None, help='defaults to KPN_CMS_ASSETS_BUCKET / dig-kpn-cms-assets')
     ap.add_argument('--dry-run', action='store_true')
     ap.add_argument('--skip-assets', action='store_true')
     args = ap.parse_args()
-    from dataregistry.api.s3 import BASE_BUCKET
     engine = DataRegistryReadWriteDB().get_engine()
     s3_client = boto3.client('s3')
-    report = run_import(engine, s3_client, args.bucket or BASE_BUCKET,
+    report = run_import(engine, s3_client, args.bucket or ASSETS_BUCKET,
                         args.source_host, args.bioindex_host,
                         dry_run=args.dry_run, skip_assets=args.skip_assets)
     json.dump(report, sys.stdout, indent=2)

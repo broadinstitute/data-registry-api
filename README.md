@@ -66,7 +66,11 @@ Config:
   requests are proxied there, persisted, and logged to `cms_request_miss`.
   Set to `false` at domain retirement.
 - `KPN_CMS_SOURCE_HOST` (default `https://kp4cd.org`)
-- Assets land in the `DATA_REGISTRY_BUCKET` bucket under `kpn-cms-assets/`.
+- Assets land in a dedicated public-content bucket, `KPN_CMS_ASSETS_BUCKET`
+  (default `dig-kpn-cms-assets`), under the `kpn-cms-assets/` prefix — separate
+  from the controlled-data registry bucket so its access policy can diverge
+  (e.g. public-read/CDN). The bucket must exist before the first asset import;
+  the API role needs read on it, the import runner needs write.
 
 Before retiring kp4cd.org: review `GET /api/kpn/misses` (authenticated) — it lists
 every request the store could not serve locally.

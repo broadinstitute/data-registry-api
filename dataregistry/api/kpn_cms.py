@@ -20,12 +20,12 @@ from fastapi.responses import RedirectResponse
 from dataregistry.api.api import get_current_user
 from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api import kpn_cms_query as q
-from dataregistry.api.kpn_cms_assets import ASSET_PREFIX, BROWSER_UA
+from dataregistry.api.kpn_cms_assets import ASSET_PREFIX, ASSETS_BUCKET, BROWSER_UA
 from dataregistry.api.kpn_cms_ingest import rows_for
 
 router = fastapi.APIRouter()
 engine = DataRegistryReadWriteDB().get_engine()
-BUCKET = os.environ.get('DATA_REGISTRY_BUCKET', 'dig-data-registry')
+BUCKET = ASSETS_BUCKET
 
 # Real Drupal view/egldata-kind machine names are [a-z0-9_]. A path segment
 # containing anything else (e.g. a decoded '?' or '#' smuggled in via
