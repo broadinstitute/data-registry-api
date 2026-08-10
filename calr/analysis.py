@@ -114,6 +114,7 @@ def quality_control(
     df: pd.DataFrame,
     n_mass_measurements: int = 5,
     group_diet_kcal: dict = None,
+    mass_change_by_subject: dict = None,
 ) -> dict:
     """
     Port of the CalR quality control analysis (revperAve / modified_df1 pipeline).
@@ -124,7 +125,8 @@ def quality_control(
       2. Compute bin = 60 / modal_measurement_interval_minutes
          (converts cumulative EE from sum-of-rates to actual kcal)
       3. For each subject:
-           - mass_delta: avg(last N mass rows) - avg(first N mass rows)
+           - mass_delta: session/uploaded mass change when provided, otherwise
+                         avg(last N mass rows) - avg(first N mass rows)
            - total_eb:   last feed.acc value - last ee.acc value / bin
              (mirrors R's l.eb.acc.x = last value of feed.acc - ee.acc/bin)
 
@@ -142,6 +144,11 @@ def quality_control(
         overall_regression  - {slope, intercept, r_squared, n}
     """
     df = df.copy()
+    mass_change_by_subject = {
+        str(subject_id): value
+        for subject_id, value in (mass_change_by_subject or {}).items()
+        if value is not None and not pd.isna(value)
+    }
 
     # Step 1: caloric density conversion (mirrors R: feed *= cal_i, feed.acc *= cal_i)
     if group_diet_kcal:
@@ -198,6 +205,8 @@ def quality_control(
         sort_col = 'exp.hour'
 
     subject_rows = []
+    subject_ids = {str(subject_id) for subject_id in df['subject.id'].dropna().unique()}
+    use_mass_change_override = bool(subject_ids) and subject_ids.issubset(mass_change_by_subject.keys())
 
     for subject_id, sdf in df.groupby('subject.id'):
         sdf = sdf.sort_values(sort_col, kind='stable')
@@ -206,7 +215,10 @@ def quality_control(
         n = min(n_mass_measurements, len(sdf))
         first_mass = float(sdf['subject.mass'].iloc[:n].mean())
         last_mass = float(sdf['subject.mass'].iloc[-n:].mean())
-        mass_delta = round(last_mass - first_mass, 4)
+        if use_mass_change_override:
+            mass_delta = round(float(mass_change_by_subject[str(subject_id)]), 4)
+        else:
+            mass_delta = round(last_mass - first_mass, 4)
 
         # eb.acc = feed.acc - ee.acc/bin  (last cumulative value)
         # Mirrors R: my.table$ee.acc <- my.table$ee.acc/bin
