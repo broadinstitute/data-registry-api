@@ -1578,9 +1578,15 @@ async def run_quality_control(
     try:
         # _enrich_df already converts feed/feed.acc to kcal from diet metadata.
         # Passing diet kcal again double-scales cumulative food and inflates QC EB.
+        mass_change_by_subject = {
+            str(s['subject']): s.get('mass_change')
+            for s in session.get('subjects', [])
+            if s.get('mass_change') is not None
+        }
         result = quality_control(
             df,
             request.n_mass_measurements,
+            mass_change_by_subject=mass_change_by_subject,
         )
     except Exception as e:
         raise fastapi.HTTPException(status_code=500, detail=f"QC analysis failed: {str(e)}")

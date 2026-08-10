@@ -6,6 +6,7 @@ from calr.analysis import (
     apply_legacy_analysis_outliers,
     power_calc,
     prepare_analysis_hourly_rows,
+    quality_control,
 )
 
 
@@ -163,6 +164,44 @@ def test_apply_legacy_analysis_outliers_removes_coupled_respiration_values_and_r
     assert pd.isna(outlier_row['rer'])
     assert outlier_row['ee.acc'] == 150
     assert outlier_row['feed.acc'] == 31
+
+
+def test_quality_control_prefers_session_mass_change_when_available():
+    df = pd.DataFrame([
+        {
+            'subject.id': 'S1',
+            'group': 'Group 1',
+            'exp.minute': minute,
+            'subject.mass': 20 + minute,
+            'feed': 1.0,
+            'feed.acc': minute + 1.0,
+            'ee': 0.5,
+            'ee.acc': (minute + 1.0) * 0.5,
+        }
+        for minute in range(4)
+    ] + [
+        {
+            'subject.id': 'S2',
+            'group': 'Group 1',
+            'exp.minute': minute,
+            'subject.mass': 30 + minute,
+            'feed': 1.0,
+            'feed.acc': minute + 1.0,
+            'ee': 0.5,
+            'ee.acc': (minute + 1.0) * 0.5,
+        }
+        for minute in range(4)
+    ])
+
+    result = quality_control(
+        df,
+        n_mass_measurements=1,
+        mass_change_by_subject={'S1': 0.25},
+    )
+    by_subject = {row['subject_id']: row for row in result['subjects']}
+
+    assert by_subject['S1']['mass_delta'] == 0.25
+    assert by_subject['S2']['mass_delta'] == 3.0
 
 
 def test_ancova_table_short_window_reports_full_day_only():
