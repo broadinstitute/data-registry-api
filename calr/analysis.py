@@ -205,6 +205,8 @@ def quality_control(
         sort_col = 'exp.hour'
 
     subject_rows = []
+    subject_ids = {str(subject_id) for subject_id in df['subject.id'].dropna().unique()}
+    use_mass_change_override = bool(subject_ids) and subject_ids.issubset(mass_change_by_subject.keys())
 
     for subject_id, sdf in df.groupby('subject.id'):
         sdf = sdf.sort_values(sort_col, kind='stable')
@@ -213,7 +215,7 @@ def quality_control(
         n = min(n_mass_measurements, len(sdf))
         first_mass = float(sdf['subject.mass'].iloc[:n].mean())
         last_mass = float(sdf['subject.mass'].iloc[-n:].mean())
-        if str(subject_id) in mass_change_by_subject:
+        if use_mass_change_override:
             mass_delta = round(float(mass_change_by_subject[str(subject_id)]), 4)
         else:
             mass_delta = round(last_mass - first_mass, 4)

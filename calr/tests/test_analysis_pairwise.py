@@ -166,7 +166,7 @@ def test_apply_legacy_analysis_outliers_removes_coupled_respiration_values_and_r
     assert outlier_row['feed.acc'] == 31
 
 
-def test_quality_control_prefers_session_mass_change_when_available():
+def test_quality_control_prefers_session_mass_change_when_all_subjects_have_values():
     df = pd.DataFrame([
         {
             'subject.id': 'S1',
@@ -196,11 +196,38 @@ def test_quality_control_prefers_session_mass_change_when_available():
     result = quality_control(
         df,
         n_mass_measurements=1,
-        mass_change_by_subject={'S1': 0.25},
+        mass_change_by_subject={'S1': 0.25, 'S2': 0.5},
     )
     by_subject = {row['subject_id']: row for row in result['subjects']}
 
     assert by_subject['S1']['mass_delta'] == 0.25
+    assert by_subject['S2']['mass_delta'] == 0.5
+
+
+def test_quality_control_ignores_partial_session_mass_change_values():
+    df = pd.DataFrame([
+        {
+            'subject.id': subject,
+            'group': 'Group 1',
+            'exp.minute': minute,
+            'subject.mass': base_mass + minute,
+            'feed': 1.0,
+            'feed.acc': minute + 1.0,
+            'ee': 0.5,
+            'ee.acc': (minute + 1.0) * 0.5,
+        }
+        for subject, base_mass in [('S1', 20), ('S2', 30)]
+        for minute in range(4)
+    ])
+
+    result = quality_control(
+        df,
+        n_mass_measurements=1,
+        mass_change_by_subject={'S1': 0.25},
+    )
+    by_subject = {row['subject_id']: row for row in result['subjects']}
+
+    assert by_subject['S1']['mass_delta'] == 3.0
     assert by_subject['S2']['mass_delta'] == 3.0
 
 
