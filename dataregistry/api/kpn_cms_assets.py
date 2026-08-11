@@ -60,14 +60,27 @@ def asset_path(url: str) -> str:
     return urllib.parse.unquote(clean_url.split(_FILES_PREFIX, 1)[1])
 
 
+def files_url_base() -> str:
+    """Base URL baked into rewritten payloads at import time.
+
+    Default is root-relative, which requires the portal origin to proxy
+    /api/kpn/* to this API. Set KPN_CMS_FILES_BASE to an absolute base
+    (e.g. https://api.kpndataregistry.org/api/kpn/files) so portal domains
+    need no proxy — content then points straight at the API host.
+    """
+    return os.environ.get('KPN_CMS_FILES_BASE', '/api/kpn/files').rstrip('/')
+
+
 def rewrite_asset_urls(text_blob: str) -> str:
+    base = files_url_base()
+
     def _sub(m):
         raw = m.group(1)
         path = _unescape(raw)
         if not path.startswith(_FILES_PREFIX):
             return m.group(0)          # non-asset kp4cd link (e.g. /contact): untouched
         clean_path = _strip_query_fragment(path)
-        new = '/api/kpn/files/' + clean_path[len(_FILES_PREFIX):]
+        new = base + '/' + clean_path[len(_FILES_PREFIX):]
         return new.replace('/', '\\/') if '\\/' in raw else new
     return _ASSET_RE.sub(_sub, text_blob)
 

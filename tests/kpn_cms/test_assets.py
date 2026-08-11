@@ -166,3 +166,15 @@ def test_query_strings_with_all_forms():
     assert out_escaped_frag.endswith('\\"'), "Should end with escaped quote"
     assert '\\/api\\/kpn\\/files\\/image.png' in out_escaped_frag, "Rewritten path should be escaped"
     assert '#section' not in out_escaped_frag, "Fragment should be stripped from rewrite"
+
+
+def test_rewrite_respects_files_base_env(monkeypatch):
+    monkeypatch.setenv('KPN_CMS_FILES_BASE', 'https://api.example.org/api/kpn/files/')
+    out = a.rewrite_asset_urls(BLOB)
+    assert 'https://api.example.org/api/kpn/files/inline-images/data_icon4.png' in out
+    assert 'url(https://api.example.org/api/kpn/files/vueportal/t2d_bg.png)' in out
+    # escaped form stays escaped, with the absolute base escaped too
+    assert 'https:\\/\\/api.example.org\\/api\\/kpn\\/files\\/news_thumbnails\\/small.svg' in out
+    assert 'kp4cd.org/sites/default/files' not in out
+    monkeypatch.delenv('KPN_CMS_FILES_BASE')
+    assert '/api/kpn/files/inline-images/data_icon4.png' in a.rewrite_asset_urls(BLOB)
