@@ -66,6 +66,12 @@ Config:
   requests are proxied there, persisted, and logged to `cms_request_miss`.
   Set to `false` at domain retirement.
 - `KPN_CMS_SOURCE_HOST` (default `https://kp4cd.org`)
+- `KPN_CMS_FILES_BASE` (default `/api/kpn/files`, root-relative) — the base URL
+  baked into content payloads for mirrored assets **at import time**. The
+  root-relative default requires portal origins to proxy `/api/kpn/*` here; set
+  an absolute base (e.g. `https://api.kpndataregistry.org/api/kpn/files`) when
+  running the import so portal domains need no proxy. Changing it later just
+  means re-running the import.
 - Assets land in a dedicated public-content bucket, `KPN_CMS_ASSETS_BUCKET`
   (default `dig-kpn-cms-assets`), under the `kpn-cms-assets/` prefix — separate
   from the controlled-data registry bucket so its access policy can diverge
