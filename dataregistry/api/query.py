@@ -2566,6 +2566,17 @@ def get_sgc_ma_results(engine) -> list[dict]:
         return [_format_sgc_ma_row(dict(r._mapping)) for r in rs]
 
 
+def delete_sgc_ma_run(engine, run_id: str) -> bool:
+    """Delete one MA run row. Returns False if no row matched.
+
+    S3 artifacts are the endpoint's problem: read the row for its keys before
+    calling this, because afterwards there is nothing left to read them from.
+    """
+    with engine.begin() as conn:
+        return conn.execute(text("DELETE FROM sgc_gwas_ma_results WHERE id = :id"),
+                            {'id': run_id}).rowcount > 0
+
+
 def insert_sgc_liftover_pending(engine, file_id: str, source_build: str, target_build: str,
                                 original_s3_path: str, unmapped_s3_path: str,
                                 submitted_by: str) -> str:

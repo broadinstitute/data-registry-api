@@ -209,3 +209,144 @@ def test_launch_sgc_ma_run_creates_manual_run(monkeypatch):
     assert captured["submitted_by"] == "reviewer"        # make_user() default user_name
     assert captured["maf_min"] == 0.01 and captured["info_min"] == 0.4
     assert captured["label"] == "core set"
+
+
+# --- DELETE /sgc/ma/runs/{run_id} ------------------------------------------------
+
+# A run written under the current layout: every artifact lives beneath a prefix ending
+# in the run id, so the whole prefix is safe to enumerate and delete.
+SCOPED_RUN_ID = "d89831dada85428e86a8d0007362466c"
+SCOPED_PREFIX = f"sgc/ma/SUBSTANCE_DERM/Combined/{SCOPED_RUN_ID}"
+SCOPED_MA_ROW = {
+    **MA_ROW,
+    "id": SCOPED_RUN_ID,
+    "manhattan_s3_key": f"{SCOPED_PREFIX}/manhattan.png",
+    "qq_s3_key": f"{SCOPED_PREFIX}/qq.png",
+    "meta_s3_key": f"{SCOPED_PREFIX}/meta.tsv.gz",
+    "summary_json_s3_key": f"{SCOPED_PREFIX}/summary.json",
+    "summary_tsv_s3_key": f"{SCOPED_PREFIX}/summary.tsv",
+    "top_loci_s3_key": f"{SCOPED_PREFIX}/top_loci.tsv",
+}
+
+
+class FakeS3:
+    def __init__(self, listing=()):
+        self.listing = list(listing)
+        self.deleted = []
+        self.listed_prefixes = []
+
+    def get_paginator(self, _name):
+        outer = self
+
+        class P:
+            def paginate(self, Bucket, Prefix):
+                outer.listed_prefixes.append(Prefix)
+                return [{"Contents": [{"Key": k} for k in outer.listing
+                                      if k.startswith(Prefix)]}]
+        return P()
+
+    def delete_objects(self, Bucket, Delete):
+        self.deleted.extend(o["Key"] for o in Delete["Objects"])
+
+
+class FakeBatch:
+    def __init__(self):
+        self.terminated = []
+
+    def terminate_job(self, jobId, reason):
+        self.terminated.append((jobId, reason))
+
+
+def patch_aws(monkeypatch, s3_client, batch_client):
+    """Route sgc.boto3.client() to the right double by service name."""
+    monkeypatch.setattr(sgc.boto3, "client",
+                        lambda service, **kw: batch_client if service == "batch" else s3_client)
+
+
+def test_delete_ma_run_removes_whole_run_prefix(monkeypatch):
+    """Sidecars no column records (e.g. summary.json.pre-backfill) go too."""
+    sidecar = f"{SCOPED_PREFIX}/summary.json.pre-backfill"
+    fake_s3 = FakeS3(listing=[SCOPED_MA_ROW["manhattan_s3_key"], sidecar])
+    fake_batch = FakeBatch()
+    patch_aws(monkeypatch, fake_s3, fake_batch)
+    monkeypatch.setattr(query, "get_sgc_ma_run", lambda engine, run_id: SCOPED_MA_ROW)
+    deleted_rows = []
+    monkeypatch.setattr(query, "delete_sgc_ma_run",
+                        lambda engine, run_id: deleted_rows.append(run_id) or True)
+
+    result = run(sgc.delete_ma_run(SCOPED_RUN_ID, user=make_user()))
+
+    assert sidecar in fake_s3.deleted
+    assert deleted_rows == [SCOPED_RUN_ID]
+    assert result["run_id"] == SCOPED_RUN_ID
+    assert result["objects_deleted"] == len(fake_s3.deleted)
+    assert fake_batch.terminated == []          # SUCCEEDED run: nothing to terminate
+
+
+def test_delete_ma_run_legacy_row_never_lists_shared_prefix(monkeypatch):
+    """Pre-multi-run rows share `.../{phenotype}/{ancestry}/` with other runs.
+
+    Deleting that prefix would take a sibling run's results with it, so only the keys
+    the row itself records may be deleted.
+    """
+    sibling = "ma/ATOPIC_DERM/EUR/other-run-id/meta.tsv.gz"
+    fake_s3 = FakeS3(listing=[sibling])
+    patch_aws(monkeypatch, fake_s3, FakeBatch())
+    monkeypatch.setattr(query, "get_sgc_ma_run", lambda engine, run_id: MA_ROW)
+    monkeypatch.setattr(query, "delete_sgc_ma_run", lambda engine, run_id: True)
+
+    run(sgc.delete_ma_run("abc123", user=make_user()))
+
+    assert fake_s3.listed_prefixes == []
+    assert sibling not in fake_s3.deleted
+    assert set(fake_s3.deleted) == {MA_ROW[c] for c in sgc.MA_ARTIFACT_KEY_COLUMNS}
+
+
+def test_delete_ma_run_terminates_an_in_flight_batch_job(monkeypatch):
+    fake_s3, fake_batch = FakeS3(), FakeBatch()
+    patch_aws(monkeypatch, fake_s3, fake_batch)
+    running = {**SCOPED_MA_ROW, "status": "RUNNING", "batch_job_id": "job-live"}
+    monkeypatch.setattr(query, "get_sgc_ma_run", lambda engine, run_id: running)
+    monkeypatch.setattr(query, "delete_sgc_ma_run", lambda engine, run_id: True)
+
+    run(sgc.delete_ma_run(SCOPED_RUN_ID, user=make_user()))
+
+    assert [j for j, _ in fake_batch.terminated] == ["job-live"]
+
+
+def test_delete_ma_run_survives_a_failed_termination(monkeypatch):
+    """A job that already exited must not block the delete."""
+    from botocore.exceptions import ClientError
+    fake_s3 = FakeS3()
+
+    class ExplodingBatch:
+        def terminate_job(self, jobId, reason):
+            raise ClientError({"Error": {"Code": "ClientException"}}, "TerminateJob")
+    patch_aws(monkeypatch, fake_s3, ExplodingBatch())
+    running = {**SCOPED_MA_ROW, "status": "RUNNING", "batch_job_id": "job-gone"}
+    monkeypatch.setattr(query, "get_sgc_ma_run", lambda engine, run_id: running)
+    deleted_rows = []
+    monkeypatch.setattr(query, "delete_sgc_ma_run",
+                        lambda engine, run_id: deleted_rows.append(run_id) or True)
+
+    run(sgc.delete_ma_run(SCOPED_RUN_ID, user=make_user()))
+
+    assert deleted_rows == [SCOPED_RUN_ID]
+
+
+def test_delete_ma_run_unknown_id_404(monkeypatch):
+    monkeypatch.setattr(query, "get_sgc_ma_run", lambda engine, run_id: None)
+    with pytest.raises(HTTPException) as exc_info:
+        run(sgc.delete_ma_run("nope", user=make_user()))
+    assert exc_info.value.status_code == 404
+
+
+def test_delete_ma_run_no_permission_403(monkeypatch):
+    """Permission is checked before anything is looked up or deleted."""
+    def explode(*a, **kw):
+        raise AssertionError("must not touch the DB without permission")
+    monkeypatch.setattr(query, "get_sgc_ma_run", explode)
+    monkeypatch.setattr(query, "delete_sgc_ma_run", explode)
+    with pytest.raises(HTTPException) as exc_info:
+        run(sgc.delete_ma_run("run-abc", user=make_user(with_review_perm=False)))
+    assert exc_info.value.status_code == 403

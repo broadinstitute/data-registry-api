@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 
 import fastapi
@@ -21,6 +22,8 @@ from dataregistry.api import file_utils, s3, query
 from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api.model import SGCPhenotype, SGCCohort, SGCCohortFile, SGCCasesControlsMetadata, SGCCoOccurrenceMetadata, SGCPhenotypeCaseTotals, SGCPhenotypeCaseCountsBySex, User, NewUserRequest, SGCGWASFile, SGCGWASCohort, SGCGWASValidationJob, SGCGWASPlotResult, SGCMAResult, MAIgnoreEntry, MAIgnoreCreateRequest, SGCLiftoverJob, MARunRequest
 from dataregistry.api.api import get_current_user
+
+logger = logging.getLogger(__name__)
 
 router = fastapi.APIRouter()
 engine = DataRegistryReadWriteDB().get_engine()
@@ -2752,6 +2755,63 @@ async def launch_sgc_ma_run(req: MARunRequest, user: User = Depends(get_sgc_user
                                bucket=s3.BASE_BUCKET,
                                db_name=os.environ.get("DATA_REGISTRY_DB_NAME", "dataregistry_qa"))
     return {"run_id": run_id}
+
+
+MA_ARTIFACT_KEY_COLUMNS = ("manhattan_s3_key", "qq_s3_key", "meta_s3_key",
+                           "summary_json_s3_key", "summary_tsv_s3_key", "top_loci_s3_key")
+MA_TERMINAL_STATUSES = ("SUCCEEDED", "FAILED")
+
+
+def _ma_run_s3_keys(row: dict) -> list[str]:
+    """Every S3 object belonging to one MA run.
+
+    The worker writes all artifacts under a single `.../{run_id}/` prefix, so listing
+    that prefix also catches sidecars no column records (e.g. summary.json.pre-backfill).
+    Rows predating the multi-run layout store flat `.../{phenotype}/{ancestry}/` keys
+    with no run_id segment; that prefix is shared with other runs, so for those we fall
+    back to exactly the keys the row records rather than deleting a sibling's results.
+    """
+    recorded = [row[c] for c in MA_ARTIFACT_KEY_COLUMNS if row.get(c)]
+    run_id = row["id"]
+    keys = set(recorded)
+    prefixes = {k.rsplit("/", 1)[0] + "/" for k in recorded
+                if k.rsplit("/", 1)[0].endswith("/" + run_id)}
+    if prefixes:
+        s3_client = boto3.client("s3", region_name=s3.S3_REGION)
+        paginator = s3_client.get_paginator("list_objects_v2")
+        for prefix in prefixes:
+            for page in paginator.paginate(Bucket=QC_PLOTS_BUCKET, Prefix=prefix):
+                keys.update(o["Key"] for o in page.get("Contents", []))
+    return sorted(keys)
+
+
+@router.delete("/sgc/ma/runs/{run_id}")
+async def delete_ma_run(run_id: str, user: User = Depends(get_sgc_user)):
+    """Delete one meta-analysis run: its Batch job, its S3 artifacts, then its row."""
+    if not check_review_permissions(user):
+        raise fastapi.HTTPException(status_code=403,
+            detail="You need sgc-review-data permission to delete a meta-analysis")
+    row = _ma_run_lookup(run_id)
+
+    # Terminate first: a live worker would otherwise keep writing artifacts after we
+    # have listed them, stranding objects under a prefix nothing references any more.
+    if row.get("status") not in MA_TERMINAL_STATUSES and row.get("batch_job_id"):
+        try:
+            boto3.client("batch", region_name=s3.S3_REGION).terminate_job(
+                jobId=row["batch_job_id"], reason=f"MA run {run_id} deleted by {user.user_name}")
+        except ClientError:
+            logger.exception("Could not terminate Batch job %s for deleted MA run %s",
+                             row["batch_job_id"], run_id)
+
+    keys = _ma_run_s3_keys(row)
+    if keys:
+        s3_client = boto3.client("s3", region_name=s3.S3_REGION)
+        for i in range(0, len(keys), 1000):  # delete_objects caps at 1000 keys per call
+            s3_client.delete_objects(Bucket=QC_PLOTS_BUCKET,
+                                     Delete={"Objects": [{"Key": k} for k in keys[i:i + 1000]]})
+
+    query.delete_sgc_ma_run(engine, run_id)
+    return {"run_id": run_id, "objects_deleted": len(keys)}
 
 
 @router.get("/sgc/ma/ignore", response_model=list[MAIgnoreEntry])

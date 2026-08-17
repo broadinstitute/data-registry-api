@@ -73,6 +73,15 @@ Resources:
       PlatformCapabilities: ['FARGATE']
       Timeout:
         AttemptDurationSeconds: 7200
+      # MA jobs run on FARGATE_SPOT (see the QC-plots queue they share), so a
+      # reclaimed job would otherwise land as FAILED with no retry and need
+      # resubmitting by hand. Retry any failure rather than filtering on the Spot
+      # status reason: a pattern that failed to match would silently disable
+      # retries altogether, and re-running a genuinely broken MA costs ~25 min
+      # and a few cents. The worker writes to a deterministic run_id prefix, so
+      # a second attempt overwrites the first attempt's artifacts.
+      RetryStrategy:
+        Attempts: 2
       ContainerProperties:
         Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/sgc-gwas-ma-repo'
         # Image ENTRYPOINT is ["python", "-m", "sgc_ma.run_ma"];
