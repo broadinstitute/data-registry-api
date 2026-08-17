@@ -20,6 +20,7 @@ from dataregistry.api.model import User, NewUserRequest, HCMMAEligibleFile, HCMM
 from dataregistry.api.hcm_model import HCMGWASFile, HCMGWASValidationJob
 from dataregistry.api import hcm_query
 from dataregistry.api.mskkp import suggest_column_map
+from dataregistry.api.user_service_auth import auth_failure_exception
 from hcm_ma import select as hcm_ma_select
 from hcm_ma import submit_ma_batch as hcm_ma_submit
 
@@ -204,7 +205,7 @@ async def get_hcm_user(authorization: Optional[str] = fastapi.Header(None)):
                     permissions=user.get('permissions', [])
                 )
             else:
-                raise fastapi.HTTPException(status_code=401, detail='Invalid token')
+                raise auth_failure_exception(response)
     except httpx.RequestError:
         raise fastapi.HTTPException(status_code=503, detail='User service unavailable')
 

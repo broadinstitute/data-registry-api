@@ -22,6 +22,7 @@ from dataregistry.api import file_utils, s3, query
 from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api.model import SGCPhenotype, SGCCohort, SGCCohortFile, SGCCasesControlsMetadata, SGCCoOccurrenceMetadata, SGCPhenotypeCaseTotals, SGCPhenotypeCaseCountsBySex, User, NewUserRequest, SGCGWASFile, SGCGWASCohort, SGCGWASValidationJob, SGCGWASPlotResult, SGCMAResult, MAIgnoreEntry, MAIgnoreCreateRequest, SGCLiftoverJob, MARunRequest
 from dataregistry.api.api import get_current_user
+from dataregistry.api.user_service_auth import auth_failure_exception
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +87,7 @@ async def get_sgc_user(authorization: Optional[str] = Header(None)):
                     permissions=user.get('permissions', [])
                 )
             else:
-                raise fastapi.HTTPException(status_code=401, detail='Invalid token')
+                raise auth_failure_exception(response)
     except httpx.RequestError:
         raise fastapi.HTTPException(status_code=503, detail='User service unavailable')
 
