@@ -94,24 +94,6 @@ def run_import(engine, s3_client, bucket, source_host, bioindex_host,
         _import(view, f'/rest/views/{view}', None, None)
 
     if not dry_run:
-        # datasetinfo keyed fetches. Id source: per-portal datasetinfo?portal=
-        # listing calls (kpdatasets is dead in production — 404 under every
-        # parameterization, incl. what the live frontend sends; the datasetinfo
-        # view called with portal= returns the dataset node listing including
-        # field_dataset_id. Evidence: tests/kpn_cms/fixtures/MANIFEST.md).
-        ds_ids = set()
-        for portal in portals:
-            try:
-                listing = fetch_view(source_host, f'/rest/views/datasetinfo?portal={portal}')
-            except requests.RequestException as e:
-                report['skipped'].append(f'datasetinfo listing {portal}: {e}')
-                continue
-            for row in listing:
-                ds_id = _field_value(row.get('field_dataset_id'))
-                if ds_id:
-                    ds_ids.add(ds_id)
-        for ds in sorted(ds_ids):
-            _import('datasetinfo', f'/rest/views/datasetinfo?datasetid={ds}', 'item_key', ds, item_key=ds)
         for nid in sorted(_harvest_nids(engine)):
             _import('content_by_id', f'/rest/views/content_by_id?nid={nid}', 'nid', nid)
 
