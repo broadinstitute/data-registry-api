@@ -3,9 +3,8 @@ Drupal DB into the registry's kp_datasets table.
 
 Reads the Drupal RDS directly (SELECT only) via the 'kp4cd-220214' secret,
 applies latest-wins dedup on field_dataset_id, upserts by drupal_nid, links
-rows to existing registry datasets by exact name, deletes the superseded
-cms_content_item datasetinfo snapshot, and mirrors/rewrites embedded kp4cd
-asset URLs. Spec: docs/superpowers/specs/2026-08-14-kp-datasets-migration-design.md
+rows to existing registry datasets by exact name, and mirrors/rewrites
+embedded kp4cd asset URLs. Spec: docs/superpowers/specs/2026-08-14-kp-datasets-migration-design.md
 
 Residual limitation: a node deleted in Drupal whose dataset_id is later
 claimed by a different node leaves a stale row holding the ID -- stale rows
@@ -106,7 +105,7 @@ def run_migration(engine, s3_client, bucket, dry_run=False, skip_assets=False):
               'published': sum(r['published'] for r in rows),
               'no_dataset_id': sum(1 for r in rows if r['dataset_id'] is None),
               'demoted_duplicates': sum(1 for r in rows if r['migration_note']),
-              'registry_links': 0, 'cms_rows_deleted': 0,
+              'registry_links': 0,
               'assets': {'mirrored': 0, 'absent': [], 'errors': []}}
     if dry_run:
         return report
@@ -118,7 +117,6 @@ def run_migration(engine, s3_client, bucket, dry_run=False, skip_assets=False):
     for r in sorted(rows, key=lambda r: r['dataset_id'] is not None):
         kq.upsert_kp_dataset(engine, r)
     report['registry_links'] = kq.backfill_registry_links(engine)
-    report['cms_rows_deleted'] = kq.delete_cms_datasetinfo_rows(engine)
     if not skip_assets:
         with engine.connect() as con:
             bodies = con.execute(text("SELECT id, body FROM kp_datasets")).fetchall()

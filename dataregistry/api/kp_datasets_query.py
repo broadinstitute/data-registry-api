@@ -64,11 +64,3 @@ def backfill_registry_links(engine) -> int:
             SET k.registry_dataset_id = d.id
         """))
     return res.rowcount
-
-
-def delete_cms_datasetinfo_rows(engine) -> int:
-    """Drop the superseded Drupal-snapshot rows; serving now uses kp_datasets."""
-    with engine.begin() as con:
-        res = con.execute(text(
-            "DELETE FROM cms_content_item WHERE view_name = 'datasetinfo'"))
-    return res.rowcount
