@@ -6,6 +6,10 @@ same field names, HTML-in-strings untouched; only asset URLs are rewritten to
 until the next import run mirrors their assets). Content is populated by
 scripts/import_kpn_cms.py; unknown requests fall back to a feature-flagged
 proxy against the live CMS while it exists (KPN_CMS_PROXY_ON_MISS).
+
+Exception: datasetinfo is served from the registry's kp_datasets table (the
+system of record, populated/refreshed by scripts/migrate_kp_datasets.py),
+not from scripts/import_kpn_cms.py, and has no proxy-on-miss fallback.
 """
 import os
 import re

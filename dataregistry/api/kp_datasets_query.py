@@ -38,18 +38,17 @@ def get_by_dataset_id(engine, dataset_id, published_only=True):
 def list_recent(engine, portal=None, limit=10):
     """Published rows, newest updated first; optional exact portal-code filter.
 
-    Portal filtering happens in Python: portals is a comma-separated string
-    ('md, t2d, a2f') and a SQL LIKE would let 'md' match 'mdep'. The table
-    tops out around a thousand rows, so fetching published rows is cheap.
+    FIND_IN_SET over the space-stripped portal list is token-exact ('md'
+    never matches 'mdep'), and the LIMIT keeps mediumtext bodies for only
+    the returned rows instead of every published row.
     """
     with engine.connect() as con:
-        rows = [dict(r) for r in con.execute(text(
+        rows = con.execute(text(
             "SELECT * FROM kp_datasets WHERE published = 1 "
-            "ORDER BY updated_at DESC, id DESC")).mappings().fetchall()]
-    if portal is not None:
-        rows = [r for r in rows
-                if portal in [p.strip() for p in r['portals'].split(',')]]
-    return rows[:limit]
+            "AND (:p IS NULL OR FIND_IN_SET(:p, REPLACE(portals, ' ', ''))) "
+            "ORDER BY updated_at DESC, id DESC LIMIT :n"
+        ), {'p': portal, 'n': limit}).mappings().fetchall()
+    return [dict(r) for r in rows]
 
 
 def backfill_registry_links(engine) -> int:

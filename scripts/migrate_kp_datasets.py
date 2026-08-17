@@ -7,6 +7,10 @@ rows to existing registry datasets by exact name, deletes the superseded
 cms_content_item datasetinfo snapshot, and mirrors/rewrites embedded kp4cd
 asset URLs. Spec: docs/superpowers/specs/2026-08-14-kp-datasets-migration-design.md
 
+Residual limitation: a node deleted in Drupal whose dataset_id is later
+claimed by a different node leaves a stale row holding the ID -- stale rows
+(drupal_nid no longer present in Drupal) are never revisited by this script.
+
     python -m scripts.migrate_kp_datasets --dry-run   # report only, no writes
     python -m scripts.migrate_kp_datasets
 """
@@ -84,7 +88,7 @@ def dedup_nodes(nodes):
 def node_to_row(node):
     def _dt(unix):
         return datetime.fromtimestamp(unix, tz=timezone.utc).replace(tzinfo=None)
-    return {'dataset_id': node['dataset_id'],
+    return {'dataset_id': node['dataset_id'] or None,
             'title': node['title'],
             'body': node['body'] or '',
             'portals': node['portals'] or '',
@@ -106,7 +110,12 @@ def run_migration(engine, s3_client, bucket, dry_run=False, skip_assets=False):
               'assets': {'mirrored': 0, 'absent': [], 'errors': []}}
     if dry_run:
         return report
-    for r in rows:
+    # NULL-dataset_id rows first: when a duplicate-ID winner flips between
+    # runs, the demoted row must release the ID (via its drupal_nid match)
+    # before the new winner claims it -- otherwise the winner's upsert
+    # matches the OLD holder through the dataset_id unique key and lands on
+    # the wrong row.
+    for r in sorted(rows, key=lambda r: r['dataset_id'] is not None):
         kq.upsert_kp_dataset(engine, r)
     report['registry_links'] = kq.backfill_registry_links(engine)
     report['cms_rows_deleted'] = kq.delete_cms_datasetinfo_rows(engine)
@@ -131,7 +140,9 @@ def main():
     ap.add_argument('--bucket', default=None,
                     help='defaults to KPN_CMS_ASSETS_BUCKET / dig-kpn-cms-assets')
     ap.add_argument('--dry-run', action='store_true')
-    ap.add_argument('--skip-assets', action='store_true')
+    ap.add_argument('--skip-assets', action='store_true',
+                    help='skip asset mirroring/rewrite (test/dev only; a '
+                         're-run with this flag leaves raw kp4cd URLs in bodies)')
     args = ap.parse_args()
     engine = DataRegistryReadWriteDB().get_engine()
     report = run_migration(engine, boto3.client('s3'), args.bucket or ASSETS_BUCKET,

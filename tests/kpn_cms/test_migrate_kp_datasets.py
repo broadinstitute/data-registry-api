@@ -118,3 +118,41 @@ def test_run_migration_mirrors_and_rewrites_body_assets(monkeypatch):
     stored = kq.get_by_dataset_id(engine, 'ASSETTEST_A')['body']
     assert '/api/kpn/files/pic.png' in stored and 'kp4cd.org' not in stored
     s3.head_object(Bucket='kpn-cms-test', Key='kpn-cms-assets/pic.png')
+
+
+@mock_aws
+def test_run_migration_winner_flip_rerun_does_not_lose_dataset(monkeypatch):
+    """Regression: when a duplicate-dataset_id winner flips between runs,
+    the new winner's upsert must not land on the old holder's row via the
+    dataset_id unique key. NULL-dataset_id rows must be upserted first so
+    the demoted row releases the id before the new winner claims it."""
+    _clean()
+    s3 = boto3.client('s3', region_name='us-east-1'); s3.create_bucket(Bucket='kpn-cms-test')
+
+    # First run: nid 1 holds FLIP_X; nid 2 has no competing dataset_id.
+    monkeypatch.setattr(mig, 'fetch_drupal_nodes',
+                        lambda: [_node(1, 'FLIP_X', changed=100), _node(2, None, changed=90)])
+    mig.run_migration(engine, s3, 'kpn-cms-test', skip_assets=True)
+    assert kq.get_by_dataset_id(engine, 'FLIP_X')['drupal_nid'] == 1
+
+    # Second run: both nodes now claim FLIP_X. nid 2's later `changed` makes
+    # it the new winner and nid 1 gets demoted to dataset_id NULL. The stub
+    # returns the winner FIRST (the pathological order) to prove the sort
+    # -- not incidental SELECT order -- is what saves the migration.
+    monkeypatch.setattr(mig, 'fetch_drupal_nodes',
+                        lambda: [_node(2, 'FLIP_X', changed=200), _node(1, 'FLIP_X', changed=100)])
+    mig.run_migration(engine, s3, 'kpn-cms-test', skip_assets=True)
+
+    winner = kq.get_by_dataset_id(engine, 'FLIP_X')
+    assert winner is not None
+    assert winner['drupal_nid'] == 2
+    assert winner['title'] == 't2'
+
+    with engine.connect() as con:
+        demoted = con.execute(text(
+            "SELECT * FROM kp_datasets WHERE drupal_nid = 1")).mappings().fetchone()
+        total = con.execute(text("SELECT COUNT(*) FROM kp_datasets")).scalar()
+    assert demoted is not None
+    assert demoted['dataset_id'] is None
+    assert demoted['migration_note'] == 'duplicate dataset_id FLIP_X; superseded by nid 2'
+    assert total == 2

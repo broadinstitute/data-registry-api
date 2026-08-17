@@ -1,7 +1,6 @@
 import uuid
 from datetime import datetime
 
-import pytest
 from sqlalchemy import text
 
 from dataregistry.api.db import DataRegistryReadWriteDB
