@@ -26,3 +26,9 @@ def test_cms_asset_table():
 def test_cms_request_miss_table():
     assert {'id', 'view_name', 'query_string', 'proxied', 'response_status',
             'hit_count', 'first_seen', 'last_seen'} <= _columns('cms_request_miss')
+
+
+def test_kp_datasets_table():
+    assert {'id', 'dataset_id', 'title', 'body', 'portals', 'published',
+            'registry_dataset_id', 'drupal_nid', 'drupal_author',
+            'migration_note', 'created_at', 'updated_at'} <= _columns('kp_datasets')

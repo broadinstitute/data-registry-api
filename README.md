@@ -56,6 +56,12 @@ but is still the only live source of these views (hugeampkpncms.org serves a
 different API generation), so this store + import + compatible API replace it.
 Full audit and runbook live in the KP4CD Re-architecture project's support folder.
 
+`datasetinfo` is the one exception: it is now served from the registry's own
+`kp_datasets` table (the system of record for dataset content), populated and
+refreshed by `python -m scripts.migrate_kp_datasets` (reads the kp4cd Drupal
+RDS directly via the `kp4cd-220214` secret). `scripts/import_kpn_cms.py` no
+longer touches `datasetinfo`.
+
 Populate / refresh the content snapshot (requires kp4cd.org to be reachable):
 
     python -m scripts.import_kpn_cms --dry-run   # review the URL set first

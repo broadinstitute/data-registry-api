@@ -41,7 +41,6 @@ def _register(portals=('md',)):
     responses.get(f'{SRC}/rest/views/kpdatasets', status=404)
     responses.get(f'{SRC}/rest/views/a2f_community_kps', json=_fixture('a2f_community_kps.json'))
     responses.get(f'{SRC}/rest/views/help_book', json=_fixture('help_book.json'))
-    responses.get(f'{SRC}/rest/views/datasetinfo', json=_fixture('datasetinfo_sample.json'))
     responses.get(f'{SRC}/rest/views/content_by_id', json=_fixture('content_by_id_sample.json'))
     responses.get(f'{SRC}/egldata/dataset', status=404)
     responses.get(f'{SRC}/egldata/config', status=404)
@@ -73,14 +72,8 @@ def test_run_import_fills_all_views_and_harvests_nids():
     news_nids = {r['nid'] for r in _fixture('news2vueportal_md.json') if r.get('nid')}
     for nid in news_nids:
         assert q.get_view_rows(engine, 'content_by_id', nid=nid)
-    # datasetinfo keyed rows harvested via the portal-listing call.
-    # field_dataset_id arrives in Drupal's full-entity field format
-    # ([{"value": "..."}]) rather than a flat scalar -- unwrap it the same
-    # way the import pipeline does before using it as a lookup key.
-    raw_ds_id = _fixture('datasetinfo_sample.json')[0].get('field_dataset_id')
-    ds_id = raw_ds_id[0]['value'] if isinstance(raw_ds_id, list) and raw_ds_id else raw_ds_id
-    if ds_id:
-        assert q.get_view_rows(engine, 'datasetinfo', item_key=ds_id)
+    # datasetinfo is no longer imported -- kp_datasets is its system of record
+    assert q.get_view_rows(engine, 'datasetinfo') == []
     # dead/empty production views import as zero rows without failing the run
     assert report['views'].get('kpdatasets', 0) == 0
     assert report['views'].get('newresources', 0) == 0

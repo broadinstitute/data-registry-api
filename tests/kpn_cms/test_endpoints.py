@@ -95,7 +95,6 @@ def test_portal_view_fidelity(monkeypatch, view, fixture):
 # dead/empty in production (404 / [] everywhere, same MANIFEST evidence).
 @pytest.mark.parametrize('view,fixture,param,key', [
     ('static_content', 'static_content_apis.json', 'field_page', 'apis'),
-    ('datasetinfo', 'datasetinfo_sample.json', 'datasetid', 'Small2025_AorticStenosis'),
     ('paperheadermenu', 'paperheadermenu_sample.json', 'paper', 'apol1_portal'),
     ('eglmethod', 'eglmethod_sample.json', 'from', 'cardiogram'),
 ])
@@ -232,3 +231,71 @@ def test_misses_route_absent():
     # now, it must not expose the miss log.
     resp = client.get('/api/kpn/misses')
     assert 'hit_count' not in resp.text
+
+
+# --- datasetinfo: served from kp_datasets, not the cms_content_item snapshot ---
+
+from datetime import datetime
+
+from dataregistry.api import kp_datasets_query as kq
+
+
+def _kp_row(nid, dataset_id, published=1, portals='md, a2f',
+            updated=datetime(2024, 6, 1)):
+    return {'dataset_id': dataset_id, 'title': f'title {nid}',
+            'body': '<h3>Experiment summary</h3><p>s</p>', 'portals': portals,
+            'published': published, 'drupal_nid': nid,
+            'drupal_author': 'a@broadinstitute.org', 'migration_note': None,
+            'created_at': datetime(2024, 1, 1), 'updated_at': updated}
+
+
+def _clean_kp():
+    with engine.connect() as con:
+        con.execute(text("TRUNCATE TABLE kp_datasets"))
+        con.commit()
+
+
+def test_datasetinfo_keyed_hit_returns_envelope():
+    _clean(); _clean_kp()
+    kq.upsert_kp_dataset(engine, _kp_row(1704, 'Satoshi2024_TGtoHDL_EU'))
+    rows = client.get('/api/kpn/rest/views/datasetinfo',
+                      params={'datasetid': 'Satoshi2024_TGtoHDL_EU'}).json()
+    assert len(rows) == 1
+    assert rows[0]['field_dataset_id'] == [{'value': 'Satoshi2024_TGtoHDL_EU'}]
+    assert rows[0]['nid'] == [{'value': 1704}]
+    assert rows[0]['body'][0]['format'] == 'full_html'
+
+
+@responses.activate
+def test_datasetinfo_miss_returns_empty_without_proxy_or_miss_record():
+    # responses.activate with nothing registered: any outbound HTTP would blow
+    # up, so a clean [] proves the proxy path was never entered.
+    _clean(); _clean_kp()
+    rows = client.get('/api/kpn/rest/views/datasetinfo',
+                      params={'datasetid': 'Nope2020_X'}).json()
+    assert rows == []
+    with engine.connect() as con:
+        n = con.execute(text("SELECT COUNT(*) FROM cms_request_miss")).fetchone()[0]
+    assert n == 0
+
+
+def test_datasetinfo_unpublished_not_served():
+    _clean(); _clean_kp()
+    kq.upsert_kp_dataset(engine, _kp_row(1, 'Hidden2020_X', published=0))
+    assert client.get('/api/kpn/rest/views/datasetinfo',
+                      params={'datasetid': 'Hidden2020_X'}).json() == []
+    listing = client.get('/api/kpn/rest/views/datasetinfo').json()
+    assert 'Hidden2020_X' not in [r['field_dataset_id'][0]['value'] for r in listing if r['field_dataset_id']]
+
+
+def test_datasetinfo_listing_caps_at_10_newest_first_with_portal_filter():
+    _clean(); _clean_kp()
+    for i in range(12):
+        kq.upsert_kp_dataset(engine, _kp_row(300 + i, f'DS{i}_X',
+                                             portals='md, a2f' if i % 2 else 'cvd',
+                                             updated=datetime(2024, 1, 1 + i)))
+    listing = client.get('/api/kpn/rest/views/datasetinfo').json()
+    assert len(listing) == 10
+    assert listing[0]['field_dataset_id'] == [{'value': 'DS11_X'}]
+    md = client.get('/api/kpn/rest/views/datasetinfo', params={'portal': 'md'}).json()
+    assert {r['field_dataset_id'][0]['value'] for r in md} == {f'DS{i}_X' for i in (1, 3, 5, 7, 9, 11)}

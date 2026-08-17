@@ -6,6 +6,10 @@ same field names, HTML-in-strings untouched; only asset URLs are rewritten to
 until the next import run mirrors their assets). Content is populated by
 scripts/import_kpn_cms.py; unknown requests fall back to a feature-flagged
 proxy against the live CMS while it exists (KPN_CMS_PROXY_ON_MISS).
+
+Exception: datasetinfo is served from the registry's kp_datasets table (the
+system of record, populated/refreshed by scripts/migrate_kp_datasets.py),
+not from scripts/import_kpn_cms.py, and has no proxy-on-miss fallback.
 """
 import os
 import re
@@ -21,6 +25,8 @@ from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api import kpn_cms_query as q
 from dataregistry.api.kpn_cms_assets import ASSET_PREFIX, ASSETS_BUCKET, BROWSER_UA
 from dataregistry.api.kpn_cms_ingest import rows_for
+from dataregistry.api import kp_datasets_query as kq
+from dataregistry.api.kp_datasets_envelope import node_envelope
 
 router = fastapi.APIRouter()
 engine = DataRegistryReadWriteDB().get_engine()
@@ -49,7 +55,7 @@ _ITEM_KEY_MAXLEN = 255
 FILTER_PARAM = {
     'news2vueportal': 'portal', 'kpdatasets': 'portal', 'newfeatures': 'portal',
     'newresources': 'portal', 'eglmethodsperportal': 'portal', 'portal_front': 'portal',
-    'content_by_id': 'nid', 'datasetinfo': 'datasetid', 'eglmethod': 'from',
+    'content_by_id': 'nid', 'eglmethod': 'from',
     'static_content': 'field_page', 'paperheadermenu': 'paper',
 }
 
@@ -128,6 +134,18 @@ def kpn_help_book_search(body: str = ''):
     return q.search_help_book(engine, body)
 
 
+def _datasetinfo(params):
+    """kp_datasets is the system of record for datasetinfo -- no snapshot
+    lookup, no proxy-on-miss, no miss recording."""
+    ds = params.get('datasetid')
+    if ds is not None:
+        row = kq.get_by_dataset_id(engine, ds[:_ITEM_KEY_MAXLEN])
+        return [node_envelope(row)] if row else []
+    portal = params.get('portal')
+    rows = kq.list_recent(engine, portal=portal[:_PORTAL_MAXLEN] if portal else None)
+    return [node_envelope(r) for r in rows]
+
+
 @router.get('/kpn/rest/views/{view_name}')
 def kpn_view(view_name: str, request: Request):
     view_name = view_name[:_VIEW_NAME_MAXLEN]
@@ -135,6 +153,8 @@ def kpn_view(view_name: str, request: Request):
     if not _NAME_RE.match(view_name):
         q.record_miss(engine, view_name, q.canonical_key(params), False, None)
         return []
+    if view_name == 'datasetinfo':
+        return _datasetinfo(params)
     rows, scope_col, scope_val = _lookup(view_name, params)
     if rows:
         return rows
