@@ -9,8 +9,7 @@ import re
 import urllib.parse
 
 import requests
-
-from dataregistry.api.kpn_cms_query import upsert_asset
+from sqlalchemy import text
 
 BROWSER_UA = ('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
               '(KHTML, like Gecko) Chrome/126.0 Safari/537.36')
@@ -70,6 +69,16 @@ def rewrite_asset_urls(text_blob: str) -> str:
         new = '/api/kpn/files/' + clean_path[len(_FILES_PREFIX):]
         return new.replace('/', '\\/') if '\\/' in raw else new
     return _ASSET_RE.sub(_sub, text_blob)
+
+
+def upsert_asset(engine, remote_url, s3_key, content_type, size, status) -> None:
+    with engine.begin() as con:
+        con.execute(text("""
+            INSERT INTO cms_asset (remote_url, s3_key, content_type, size, status)
+            VALUES (:u, :k, :c, :z, :st)
+            ON DUPLICATE KEY UPDATE s3_key = VALUES(s3_key), content_type = VALUES(content_type),
+                size = VALUES(size), status = VALUES(status)
+        """), {'u': remote_url, 'k': s3_key, 'c': content_type, 'z': size, 'st': status})
 
 
 def mirror_assets(urls, engine, s3_client, bucket) -> dict:

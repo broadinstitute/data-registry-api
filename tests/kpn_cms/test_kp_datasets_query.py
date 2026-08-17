@@ -5,7 +5,6 @@ from sqlalchemy import text
 
 from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api import kp_datasets_query as kq
-from dataregistry.api import kpn_cms_query as q
 
 engine = DataRegistryReadWriteDB().get_engine()
 
@@ -14,7 +13,6 @@ def _clean():
     with engine.begin() as con:
         con.execute(text("SET FOREIGN_KEY_CHECKS = 0"))
         con.execute(text("TRUNCATE TABLE kp_datasets"))
-        con.execute(text("TRUNCATE TABLE cms_content_item"))
         con.execute(text("DELETE FROM datasets WHERE name LIKE 'KPTEST_%'"))
         con.execute(text("SET FOREIGN_KEY_CHECKS = 1"))
 
@@ -96,18 +94,3 @@ def test_backfill_links_exact_name_matches_only():
     assert kq.get_by_dataset_id(engine, 'KPTEST_Exact')['registry_dataset_id'] == exact_id
     assert kq.get_by_dataset_id(engine, 'KPTEST_LOWER')['registry_dataset_id'] is None
     assert kq.get_by_dataset_id(engine, 'KPTEST_Missing')['registry_dataset_id'] is None
-
-
-def test_delete_cms_datasetinfo_rows_leaves_other_views():
-    _clean()
-    q.replace_view_rows(engine, 'datasetinfo', 'item_key', 'X',
-                        [{'view_name': 'datasetinfo', 'portal': None, 'nid': None,
-                          'item_key': 'X', 'payload': '{}', 'search_text': None,
-                          'sort_order': 0}])
-    q.replace_view_rows(engine, 'help_book', None, None,
-                        [{'view_name': 'help_book', 'portal': None, 'nid': None,
-                          'item_key': None, 'payload': '{}', 'search_text': None,
-                          'sort_order': 0}])
-    assert kq.delete_cms_datasetinfo_rows(engine) == 1
-    assert q.get_view_rows(engine, 'datasetinfo') == []
-    assert q.get_view_rows(engine, 'help_book') == [{}]

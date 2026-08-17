@@ -13,19 +13,14 @@ def _columns(table):
     return {r[0] for r in rows}
 
 
-def test_cms_content_item_table():
-    assert {'id', 'view_name', 'portal', 'nid', 'item_key', 'payload',
-            'search_text', 'sort_order', 'imported_at'} <= _columns('cms_content_item')
-
-
 def test_cms_asset_table():
     assert {'id', 'remote_url', 's3_key', 'content_type', 'size', 'status',
             'imported_at'} <= _columns('cms_asset')
 
 
-def test_cms_request_miss_table():
-    assert {'id', 'view_name', 'query_string', 'proxied', 'response_status',
-            'hit_count', 'first_seen', 'last_seen'} <= _columns('cms_request_miss')
+def test_kpn_cms_content_tables_dropped():
+    assert _columns('cms_content_item') == set()
+    assert _columns('cms_request_miss') == set()
 
 
 def test_kp_datasets_table():
