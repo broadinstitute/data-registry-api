@@ -3,6 +3,7 @@ KP dataset info after the kp4cd.org migration.
 
 Spec: docs/superpowers/specs/2026-08-14-kp-datasets-migration-design.md
 """
+from datetime import datetime
 from sqlalchemy import text
 
 
@@ -64,3 +65,48 @@ def backfill_registry_links(engine) -> int:
             SET k.registry_dataset_id = d.id
         """))
     return res.rowcount
+
+
+def get_by_registry_dataset_id(engine, registry_dataset_id):
+    with engine.connect() as con:
+        r = con.execute(text(
+            "SELECT * FROM kp_datasets WHERE registry_dataset_id = :r"),
+            {'r': registry_dataset_id}).mappings().fetchone()
+    return dict(r) if r else None
+
+
+def upsert_portal_info(engine, registry_dataset_id, dataset_id, title, portals, body):
+    """Create or update the portal-display row for a registry dataset.
+
+    One KP row per registry dataset, keyed on registry_dataset_id. A
+    migrated row that already holds this dataset_id but has no registry
+    link yet is adopted (linked + updated) rather than colliding with the
+    dataset_id unique key. Timestamps are naive UTC -- node_envelope's
+    _ts() depends on that.
+    """
+    now = datetime.utcnow().replace(microsecond=0)
+    with engine.begin() as con:
+        row = con.execute(text(
+            "SELECT id FROM kp_datasets WHERE registry_dataset_id = :r"),
+            {'r': registry_dataset_id}).fetchone()
+        if row is None:
+            row = con.execute(text(
+                "SELECT id FROM kp_datasets WHERE dataset_id = :d "
+                "AND registry_dataset_id IS NULL"), {'d': dataset_id}).fetchone()
+        if row:
+            con.execute(text("""
+                UPDATE kp_datasets SET dataset_id = :d, title = :t, body = :b,
+                    portals = :p, published = 1, registry_dataset_id = :r,
+                    updated_at = :now
+                WHERE id = :i
+            """), {'d': dataset_id, 't': title, 'b': body, 'p': portals,
+                   'r': registry_dataset_id, 'now': now, 'i': row[0]})
+            return row[0]
+        res = con.execute(text("""
+            INSERT INTO kp_datasets
+                (dataset_id, title, body, portals, published,
+                 registry_dataset_id, created_at, updated_at)
+            VALUES (:d, :t, :b, :p, 1, :r, :now, :now)
+        """), {'d': dataset_id, 't': title, 'b': body, 'p': portals,
+               'r': registry_dataset_id, 'now': now})
+        return res.lastrowid
