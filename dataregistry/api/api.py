@@ -22,7 +22,8 @@ from starlette.responses import StreamingResponse, Response, RedirectResponse
 from streaming_form_data import StreamingFormDataParser
 from streaming_form_data.targets import S3Target
 
-from dataregistry.api import query, s3, file_utils, ecs, bioidx, batch, liftover, portals
+from dataregistry.api import query, s3, file_utils, ecs, bioidx, batch, liftover, portals, kp_datasets_query
+from dataregistry.api.kp_datasets_body import compose_body
 from dataregistry.api.mskkp import suggest_column_map
 from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api.google_oauth import get_google_user
@@ -31,7 +32,7 @@ from dataregistry.api.jwt_utils import get_encoded_jwt_data, get_decoded_jwt_dat
 from dataregistry.api.model import DataSet, Study, SavedDatasetInfo, SavedDataset, UserCredentials, User, SavedStudy, \
     CreateBiondexRequest, CsvBioIndexRequest, BioIndexCreationStatus, SavedCsvBioIndexRequest, HermesFileStatus, \
     HermesUploadStatus, NewUserRequest, StartAggregatorRequest, MetaAnalysisRequest, QCHermesFileRequest, \
-    QCScriptOptions, HermesPhenotype, FileType, PortalConfigUpdateRequest, GenomeBuild
+    QCScriptOptions, HermesPhenotype, FileType, PortalConfigUpdateRequest, GenomeBuild, KpDatasetInfo
 from dataregistry.api.phenotypes import get_phenotypes
 from dataregistry.api.validators import HermesValidator
 
@@ -432,6 +433,45 @@ async def get_hermes_pre_signed_url(request: Request):
 @router.get('/kp-portals', response_class=fastapi.responses.ORJSONResponse)
 async def kp_portals(user: User = Depends(get_current_user)):
     return portals.get_portals()
+
+
+@router.get('/kp-dataset-info/{dataset_id}', response_class=fastapi.responses.ORJSONResponse)
+async def get_kp_dataset_info(dataset_id: UUID, user: User = Depends(get_current_user)):
+    check_perms(str(dataset_id), user, "You don't have permission to this dataset")
+    row = kp_datasets_query.get_by_registry_dataset_id(engine, dataset_id.hex.encode())
+    if not row:
+        return None
+    return {'title': row['title'], 'body': row['body'], 'dataset_id': row['dataset_id'],
+            'portals': [p.strip() for p in row['portals'].split(',') if p.strip()]}
+
+
+@router.post('/kp-dataset-info', response_class=fastapi.responses.ORJSONResponse)
+async def save_kp_dataset_info(req: KpDatasetInfo, user: User = Depends(get_current_user)):
+    check_perms(str(req.dataset_id), user, "You do not have permission to update this dataset")
+    if not req.title.strip():
+        raise fastapi.HTTPException(status_code=422, detail='title is required')
+    valid = set(portals.get_portals())
+    bad = [p for p in req.portals if p not in valid]
+    if bad or not req.portals:
+        raise fastapi.HTTPException(status_code=422,
+                                    detail=f'invalid portals: {bad or "none selected"}')
+    try:
+        ds = query.get_dataset(engine, req.dataset_id)
+    except ValueError:
+        raise fastapi.HTTPException(status_code=404, detail='dataset not found')
+    phenos = query.get_phenotypes_for_dataset(engine, req.dataset_id)
+    lookup = get_phenotypes()
+    names = [lookup.get(p.phenotype, {}).get('description', p.phenotype) for p in phenos]
+    body = compose_body(ds.publication, names, req.experiment_summary)
+    try:
+        row_id = kp_datasets_query.upsert_portal_info(
+            engine, req.dataset_id.hex.encode(), ds.name, req.title.strip(),
+            ', '.join(req.portals), body)
+    except sqlalchemy.exc.IntegrityError:
+        raise fastapi.HTTPException(
+            status_code=409,
+            detail='A KP dataset entry with this dataset ID already exists')
+    return {'id': row_id, 'dataset_id': ds.name, 'body': body}
 
 
 @router.patch("/hermes-rerun-qc/{file_id}")
