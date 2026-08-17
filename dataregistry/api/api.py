@@ -22,7 +22,7 @@ from starlette.responses import StreamingResponse, Response, RedirectResponse
 from streaming_form_data import StreamingFormDataParser
 from streaming_form_data.targets import S3Target
 
-from dataregistry.api import query, s3, file_utils, ecs, bioidx, batch, liftover
+from dataregistry.api import query, s3, file_utils, ecs, bioidx, batch, liftover, portals
 from dataregistry.api.mskkp import suggest_column_map
 from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api.google_oauth import get_google_user
@@ -427,6 +427,11 @@ async def get_hermes_pre_signed_url(request: Request):
     dataset = request.headers.get('Dataset')
     s3_path = f"hermes/{dataset}/{filename}"
     return s3.generate_presigned_url_with_path(s3_path)
+
+
+@router.get('/kp-portals', response_class=fastapi.responses.ORJSONResponse)
+async def kp_portals(user: User = Depends(get_current_user)):
+    return portals.get_portals()
 
 
 @router.patch("/hermes-rerun-qc/{file_id}")
