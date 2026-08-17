@@ -41,6 +41,28 @@ def test_dedup_latest_changed_wins():
     assert out[4]['dataset_id'] is None and out[4]['migration_note'] is None
 
 
+def test_dedup_ties_break_on_higher_nid():
+    """On equal changed timestamp, higher nid wins (deterministic tiebreak)."""
+    # Test both orderings to verify deterministic result regardless of input order
+    nodes_asc = [_node(1, 'TIE_A', changed=500), _node(3, 'TIE_A', changed=500),
+                 _node(2, 'TIE_A', changed=500)]
+    nodes_desc = [_node(3, 'TIE_A', changed=500), _node(2, 'TIE_A', changed=500),
+                  _node(1, 'TIE_A', changed=500)]
+
+    # Both orderings should produce the same result: nid 3 wins
+    for nodes in [nodes_asc, nodes_desc]:
+        out = {n['nid']: n for n in mig.dedup_nodes(nodes)}
+        assert len(out) == 3
+        # nid 3 (highest) keeps the dataset_id with no note
+        assert out[3]['dataset_id'] == 'TIE_A' and out[3]['migration_note'] is None
+        # nid 2 (middle) is demoted
+        assert out[2]['dataset_id'] is None
+        assert out[2]['migration_note'] == 'duplicate dataset_id TIE_A; superseded by nid 3'
+        # nid 1 (lowest) is also demoted
+        assert out[1]['dataset_id'] is None
+        assert out[1]['migration_note'] == 'duplicate dataset_id TIE_A; superseded by nid 3'
+
+
 def test_node_to_row_converts_types_and_defaults():
     node = dict(_node(9, 'A_B'), migration_note=None, body=None, portals=None)
     row = mig.node_to_row(node)

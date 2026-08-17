@@ -58,11 +58,14 @@ def fetch_drupal_nodes():
 
 def dedup_nodes(nodes):
     """Latest-changed node keeps a duplicated dataset_id; earlier twins are
-    kept but demoted to dataset_id NULL with an explanatory note."""
+    kept but demoted to dataset_id NULL with an explanatory note. On equal
+    changed timestamps, the higher nid wins (deterministic tiebreak)."""
     winners = {}
     for n in nodes:
         ds = n['dataset_id']
-        if ds and (ds not in winners or n['changed'] > winners[ds]['changed']):
+        if ds and (ds not in winners
+                   or n['changed'] > winners[ds]['changed']
+                   or (n['changed'] == winners[ds]['changed'] and n['nid'] > winners[ds]['nid'])):
             winners[ds] = n
     out = []
     for n in nodes:
