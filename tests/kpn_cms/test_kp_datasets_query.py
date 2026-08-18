@@ -94,3 +94,52 @@ def test_backfill_links_exact_name_matches_only():
     assert kq.get_by_dataset_id(engine, 'KPTEST_Exact')['registry_dataset_id'] == exact_id
     assert kq.get_by_dataset_id(engine, 'KPTEST_LOWER')['registry_dataset_id'] is None
     assert kq.get_by_dataset_id(engine, 'KPTEST_Missing')['registry_dataset_id'] is None
+
+
+def test_upsert_portal_info_creates_then_updates():
+    _clean()
+    rid = uuid.uuid4().hex.encode()
+    row_id = kq.upsert_portal_info(engine, rid, 'KPTEST_New', 'Title v1', 'md, a2f', '<p>b1</p>')
+    got = kq.get_by_registry_dataset_id(engine, rid)
+    assert got['id'] == row_id and got['title'] == 'Title v1' and got['published'] == 1
+    assert got['drupal_nid'] is None
+    row_id2 = kq.upsert_portal_info(engine, rid, 'KPTEST_New', 'Title v2', 'cvd', '<p>b2</p>')
+    assert row_id2 == row_id
+    got = kq.get_by_registry_dataset_id(engine, rid)
+    assert got['title'] == 'Title v2' and got['portals'] == 'cvd' and got['body'] == '<p>b2</p>'
+    with engine.connect() as con:
+        assert con.execute(text("SELECT COUNT(*) FROM kp_datasets")).scalar() == 1
+
+
+def test_upsert_portal_info_adopts_unlinked_migrated_row():
+    _clean()
+    kq.upsert_kp_dataset(engine, _row(1704, dataset_id='KPTEST_Migrated', title='old drupal'))
+    rid = uuid.uuid4().hex.encode()
+    row_id = kq.upsert_portal_info(engine, rid, 'KPTEST_Migrated', 'new title', 'md', '<p>new</p>')
+    got = kq.get_by_registry_dataset_id(engine, rid)
+    assert got['id'] == row_id and got['drupal_nid'] == 1704
+    assert got['title'] == 'new title'
+    with engine.connect() as con:
+        assert con.execute(text("SELECT COUNT(*) FROM kp_datasets")).scalar() == 1
+
+
+def test_upsert_portal_info_does_not_adopt_case_variant_row():
+    _clean()
+    kq.upsert_kp_dataset(engine, _row(1705, dataset_id='KPTEST_case', title='migrated'))
+    rid = uuid.uuid4().hex.encode()
+    import sqlalchemy
+    import pytest
+    with pytest.raises(sqlalchemy.exc.IntegrityError):
+        # case-variant name must NOT adopt the migrated row; the INSERT then
+        # collides with the case-insensitive unique key and surfaces as a conflict
+        kq.upsert_portal_info(engine, rid, 'KPTEST_CASE', 'T', 'md', '<p>b</p>')
+    got = kq.get_by_dataset_id(engine, 'KPTEST_case', published_only=False)
+    assert got['title'] == 'migrated' and got['registry_dataset_id'] is None
+
+
+def test_upsert_portal_info_timestamps_are_naive_utc():
+    _clean()
+    rid = uuid.uuid4().hex.encode()
+    kq.upsert_portal_info(engine, rid, 'KPTEST_TS', 'T', 'md', '<p>b</p>')
+    got = kq.get_by_registry_dataset_id(engine, rid)
+    assert got['created_at'].tzinfo is None and got['updated_at'].tzinfo is None

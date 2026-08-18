@@ -650,3 +650,10 @@ class HCMLiftoverJob(BaseModel):
     summary: Optional[dict] = None
 
 
+class KpDatasetInfo(BaseModel):
+    dataset_id: UUID
+    title: str = Field(max_length=500)
+    portals: List[str]
+    experiment_summary: str
+
+
