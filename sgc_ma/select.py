@@ -40,13 +40,13 @@ def classify_liftover_status(normalized_build: Optional[str],
 
 
 def include_file(row: dict) -> bool:
-    """MA eligibility, sex-agnostic: GRCh38-effective and not a pre-existing MA product.
-    Sex/ancestry targeting is applied by resolve_target()."""
-    if normalize_build(row.get("genome_build")) != "GRCh38":
-        return False
-    if str(row.get("dataset", "")).startswith("meta_analysis_"):
-        return False
-    return True
+    """MA eligibility, sex-agnostic: GRCh38-effective.
+    Sex/ancestry targeting is applied by resolve_target(). Dataset naming is
+    deliberately not consulted: portal MA products are never written to
+    sgc_gwas_files (they live under their own run-id S3 prefix and
+    sgc_gwas_ma_results), and uploads may legitimately be named anything --
+    Rotterdam's contributed GWAS are called meta_analysis_*."""
+    return normalize_build(row.get("genome_build")) == "GRCh38"
 
 
 def not_ignored(row: dict) -> bool:
@@ -201,11 +201,11 @@ _IGNORED_SQL = """
 
 def ignored_cohorts(engine, phenotype: str, target_ancestry: str, target_sex: str = "All") -> list[dict]:
     """Ignore-list files for a phenotype's run bucket (for the run summary).
-    Filtered the same way selection is -- include_file() (build/product) and
+    Filtered the same way selection is -- include_file() (build) and
     matches_target() (ancestry/sex) -- so a file that was never a candidate for
-    this run's bucket (wrong sex, wrong ancestry, GRCh37, or a meta_analysis_
-    product) is never reported as "Ignored" for it. genome_build is only needed
-    for that filter and is not returned."""
+    this run's bucket (wrong sex, wrong ancestry, GRCh37) is never reported as
+    "Ignored" for it. genome_build is only needed for that filter and is not
+    returned."""
     with engine.connect() as c:
         rows = [dict(r._mapping) for r in c.execute(text(_IGNORED_SQL), {"phenotype": phenotype})]
     return [{"file_id": r["file_id"], "cohort": r["cohort"], "dataset": r["dataset"],

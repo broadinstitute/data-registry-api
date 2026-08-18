@@ -48,8 +48,7 @@ TARGETS = [
 def _distinct_phenotypes(engine):
     with engine.connect() as c:
         return [r[0] for r in c.execute(text(
-            "SELECT DISTINCT phenotype FROM sgc_gwas_files "
-            "WHERE dataset NOT LIKE 'meta_analysis_%' ORDER BY phenotype"))]
+            "SELECT DISTINCT phenotype FROM sgc_gwas_files ORDER BY phenotype"))]
 
 
 def _existing_targets(engine):

@@ -40,8 +40,12 @@ def test_include_file_happy():
 def test_include_file_excludes_grch37():
     assert include_file(_row(genome_build="GRCh37")) is False
 
-def test_include_file_excludes_preexisting_ma():
-    assert include_file(_row(dataset="meta_analysis_atopic_dermatitis_full")) is False
+def test_include_file_allows_meta_analysis_named_uploads():
+    # Rotterdam's contributed GWAS are named meta_analysis_* (they meta-analyze
+    # RS-I/II/III internally). Portal MA products never land in sgc_gwas_files
+    # (they live under their own run-id S3 prefix + sgc_gwas_ma_results), so
+    # dataset naming must not exclude an upload.
+    assert include_file(_row(dataset="meta_analysis_atopic_dermatitis_full")) is True
 
 def test_selection_sql_requires_qc_success_and_reads_cohort_build():
     assert "p.status = 'SUCCEEDED'" in _SQL
@@ -193,9 +197,9 @@ def _cand_row(**kw):
 
 def test_list_ma_candidates_resolves_target_and_maps():
     rows = [_cand_row(file_id="1", cohort_id="c1"),
-            _cand_row(file_id="2", cohort_id="c2", dataset="meta_analysis_x")]  # excluded: MA product
+            _cand_row(file_id="2", cohort_id="c2", dataset="meta_analysis_x")]  # included: naming is not identity
     out = list_ma_candidates(_FakeEngine(rows), "PH", "EUR", "All")
-    assert [c["file_id"] for c in out] == ["1"]
+    assert [c["file_id"] for c in out] == ["1", "2"]
     assert out[0]["cohort"] == "CohortA" and "ignored" not in out[0]
 
 
@@ -284,7 +288,9 @@ def test_ignored_cohorts_keeps_legitimate_same_bucket_entry():
     assert out[0]["ancestry"] == "EUR" and out[0]["sex"] == "All"
 
 
-def test_ignored_cohorts_drops_preexisting_ma_product():
+def test_ignored_cohorts_reports_meta_analysis_named_uploads():
+    # An ignore-listed upload named meta_analysis_* is still a real candidate
+    # for the bucket, so its ignore entry must show in the run summary.
     rows = [_ignored_row(dataset="meta_analysis_ph_full", ancestry="Combined", sex="All")]
     out = ignored_cohorts(_FakeEngine(rows), "PH", "Combined", "All")
-    assert out == []
+    assert [r["dataset"] for r in out] == ["meta_analysis_ph_full"]
