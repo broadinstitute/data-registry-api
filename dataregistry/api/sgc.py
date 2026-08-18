@@ -50,6 +50,14 @@ def check_review_permissions(user: User):
     return user.permissions and "sgc-review-data" in user.permissions
 
 
+def check_ma_read_permissions(user: User):
+    """Read access to meta-analysis results. sgc-review-data is deliberately a
+    superset so reviewers keep working even before sgc-review-ma is attached to
+    their role in the user service."""
+    return user.permissions and ("sgc-review-ma" in user.permissions
+                                 or "sgc-review-data" in user.permissions)
+
+
 def check_add_user_permissions(user: User):
     return user.permissions and "sgc-add-user" in user.permissions
 
@@ -2656,44 +2664,44 @@ async def list_ma_candidates_endpoint(phenotype: str, ancestry: str, sex: str = 
 
 @router.get("/sgc/ma/results", response_model=list[SGCMAResult])
 async def list_sgc_ma_results(user: User = Depends(get_sgc_user)):
-    if not check_review_permissions(user):
+    if not check_ma_read_permissions(user):
         raise fastapi.HTTPException(status_code=403,
-            detail="You need sgc-review-data permission to view meta-analysis results")
+            detail="You need sgc-review-ma permission to view meta-analysis results")
     return query.get_sgc_ma_results(engine)
 
 
 @router.get("/sgc/ma/runs/{run_id}/manhattan")
 async def get_ma_manhattan(run_id: str, user: User = Depends(get_sgc_user)):
-    if not check_review_permissions(user):
+    if not check_ma_read_permissions(user):
         raise fastapi.HTTPException(status_code=403,
-            detail="You need sgc-review-data permission to view meta-analysis results")
+            detail="You need sgc-review-ma permission to view meta-analysis results")
     row = _ma_run_lookup(run_id)
     return {"url": _qc_plots_presign(row.get("manhattan_s3_key"))}
 
 
 @router.get("/sgc/ma/runs/{run_id}/qq")
 async def get_ma_qq(run_id: str, user: User = Depends(get_sgc_user)):
-    if not check_review_permissions(user):
+    if not check_ma_read_permissions(user):
         raise fastapi.HTTPException(status_code=403,
-            detail="You need sgc-review-data permission to view meta-analysis results")
+            detail="You need sgc-review-ma permission to view meta-analysis results")
     row = _ma_run_lookup(run_id)
     return {"url": _qc_plots_presign(row.get("qq_s3_key"))}
 
 
 @router.get("/sgc/ma/runs/{run_id}/meta")
 async def get_ma_meta(run_id: str, user: User = Depends(get_sgc_user)):
-    if not check_review_permissions(user):
+    if not check_ma_read_permissions(user):
         raise fastapi.HTTPException(status_code=403,
-            detail="You need sgc-review-data permission to view meta-analysis results")
+            detail="You need sgc-review-ma permission to view meta-analysis results")
     row = _ma_run_lookup(run_id)
     return {"url": _qc_plots_presign(row.get("meta_s3_key"))}
 
 
 @router.get("/sgc/ma/runs/{run_id}/summary")
 async def get_ma_summary(run_id: str, user: User = Depends(get_sgc_user)):
-    if not check_review_permissions(user):
+    if not check_ma_read_permissions(user):
         raise fastapi.HTTPException(status_code=403,
-            detail="You need sgc-review-data permission to view meta-analysis results")
+            detail="You need sgc-review-ma permission to view meta-analysis results")
     row = _ma_run_lookup(run_id)
     key = row.get("summary_json_s3_key")
     if not key:
@@ -2712,9 +2720,9 @@ async def get_ma_summary(run_id: str, user: User = Depends(get_sgc_user)):
 
 @router.get("/sgc/ma/runs/{run_id}/top-loci")
 async def get_ma_top_loci(run_id: str, user: User = Depends(get_sgc_user)):
-    if not check_review_permissions(user):
+    if not check_ma_read_permissions(user):
         raise fastapi.HTTPException(status_code=403,
-            detail="You need sgc-review-data permission to view meta-analysis results")
+            detail="You need sgc-review-ma permission to view meta-analysis results")
     row = _ma_run_lookup(run_id)
     key = row.get("top_loci_s3_key")
     if not key:

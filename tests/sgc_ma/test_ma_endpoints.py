@@ -17,7 +17,9 @@ from dataregistry.api import sgc, query
 from dataregistry.api.model import User
 
 
-def make_user(with_review_perm: bool = True) -> User:
+def make_user(with_review_perm: bool = True, permissions: list | None = None) -> User:
+    if permissions is None:
+        permissions = ["sgc-review-data"] if with_review_perm else []
     return User(
         user_name="reviewer" if with_review_perm else "uploader",
         first_name=None,
@@ -27,11 +29,16 @@ def make_user(with_review_perm: bool = True) -> User:
         is_active=True,
         roles=[],
         groups=None,
-        permissions=["sgc-review-data"] if with_review_perm else [],
+        permissions=permissions,
         is_internal=True,
         api_token=None,
         id=1,
     )
+
+
+def ma_read_only_user() -> User:
+    """A user with the read-only sgc-review-ma permission but NOT sgc-review-data."""
+    return make_user(permissions=["sgc-review-ma"])
 
 
 def run(coro):
@@ -158,6 +165,48 @@ def test_list_ma_candidates_endpoint_returns_rows(monkeypatch):
 def test_list_ma_candidates_endpoint_no_permission_403(monkeypatch):
     with pytest.raises(HTTPException) as e:
         run(sgc.list_ma_candidates_endpoint("PH", "EUR", user=make_user(with_review_perm=False)))
+    assert e.value.status_code == 403
+
+
+# --- sgc-review-ma read/launch permission split ------------------------------
+# Read routes accept sgc-review-ma (or sgc-review-data, a deliberate superset);
+# candidates/launch/delete stay sgc-review-data only.
+
+def test_ma_read_routes_allow_review_ma_only_user(monkeypatch):
+    monkeypatch.setattr(query, "get_sgc_ma_results", lambda engine: [MA_ROW])
+    monkeypatch.setattr(query, "get_sgc_ma_run", lambda engine, run_id: MA_ROW)
+    monkeypatch.setattr(sgc, "_qc_plots_presign", lambda s3_key: f"https://presigned/{s3_key}")
+    mock_s3 = type("S3", (), {})()
+    mock_s3.get_object = lambda Bucket, Key: {"Body": BytesIO(b"chrom\tpos\n1\t2\n")}
+    monkeypatch.setattr(sgc.boto3, "client", lambda *a, **kw: mock_s3)
+
+    user = ma_read_only_user()
+    assert run(sgc.list_sgc_ma_results(user=user)) == [MA_ROW]
+    assert run(sgc.get_ma_manhattan("run-abc", user=user))["url"].startswith("https://presigned/")
+    assert run(sgc.get_ma_qq("run-abc", user=user))["url"].startswith("https://presigned/")
+    assert run(sgc.get_ma_meta("run-abc", user=user))["url"].startswith("https://presigned/")
+    assert run(sgc.get_ma_summary("run-abc", user=user)).media_type == "application/json"
+    assert run(sgc.get_ma_top_loci("run-abc", user=user)) == [{"chrom": "1", "pos": "2"}]
+
+
+def test_ma_candidates_403_for_review_ma_only_user():
+    with pytest.raises(HTTPException) as e:
+        run(sgc.list_ma_candidates_endpoint("PH", "EUR", user=ma_read_only_user()))
+    assert e.value.status_code == 403
+
+
+def test_launch_sgc_ma_run_403_for_review_ma_only_user():
+    from dataregistry.api.model import MARunRequest
+    req = MARunRequest(phenotype="PH", ancestry="EUR", file_ids=["a", "b"])
+    with pytest.raises(HTTPException) as e:
+        run(sgc.launch_sgc_ma_run(req, user=ma_read_only_user()))
+    assert e.value.status_code == 403
+
+
+def test_delete_ma_run_403_for_review_ma_only_user(monkeypatch):
+    monkeypatch.setattr(query, "get_sgc_ma_run", lambda engine, run_id: MA_ROW)
+    with pytest.raises(HTTPException) as e:
+        run(sgc.delete_ma_run("run-abc", user=ma_read_only_user()))
     assert e.value.status_code == 403
 
 
