@@ -70,6 +70,7 @@ def test_get_info_returns_null_before_save_then_roundtrips():
     assert got['title'] == 'My GWAS: European ancestry'
     assert got['portals'] == ['md', 'a2f']
     assert got['dataset_id'] == ds['name']
+    assert got['experiment_summary'] == 'A GWAS of things.'
 
 
 @responses.activate
@@ -82,6 +83,8 @@ def test_post_validates_title_and_portals():
     assert client.post('/api/kp-dataset-info', json={**base, 'portals': []},
                        headers=AUTH).status_code == 422
     assert client.post('/api/kp-dataset-info', json={**base, 'portals': ['md', 'mskkp']},
+                       headers=AUTH).status_code == 422
+    assert client.post('/api/kp-dataset-info', json={**base, 'title': 'x' * 501},
                        headers=AUTH).status_code == 422
 
 

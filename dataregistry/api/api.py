@@ -23,7 +23,7 @@ from streaming_form_data import StreamingFormDataParser
 from streaming_form_data.targets import S3Target
 
 from dataregistry.api import query, s3, file_utils, ecs, bioidx, batch, liftover, portals, kp_datasets_query
-from dataregistry.api.kp_datasets_body import compose_body
+from dataregistry.api.kp_datasets_body import compose_body, parse_experiment_summary
 from dataregistry.api.mskkp import suggest_column_map
 from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api.google_oauth import get_google_user
@@ -442,7 +442,8 @@ async def get_kp_dataset_info(dataset_id: UUID, user: User = Depends(get_current
     if not row:
         return None
     return {'title': row['title'], 'body': row['body'], 'dataset_id': row['dataset_id'],
-            'portals': [p.strip() for p in row['portals'].split(',') if p.strip()]}
+            'portals': [p.strip() for p in row['portals'].split(',') if p.strip()],
+            'experiment_summary': parse_experiment_summary(row['body'])}
 
 
 @router.post('/kp-dataset-info', response_class=fastapi.responses.ORJSONResponse)
@@ -453,8 +454,10 @@ async def save_kp_dataset_info(req: KpDatasetInfo, user: User = Depends(get_curr
     valid = set(portals.get_portals())
     bad = [p for p in req.portals if p not in valid]
     if bad or not req.portals:
-        raise fastapi.HTTPException(status_code=422,
-                                    detail=f'invalid portals: {bad or "none selected"}')
+        raise fastapi.HTTPException(status_code=422, detail='invalid portals')
+    joined = ', '.join(req.portals)
+    if len(joined) > 500:
+        raise fastapi.HTTPException(status_code=422, detail='too many portals')
     try:
         ds = query.get_dataset(engine, req.dataset_id)
     except ValueError:
@@ -466,7 +469,7 @@ async def save_kp_dataset_info(req: KpDatasetInfo, user: User = Depends(get_curr
     try:
         row_id = kp_datasets_query.upsert_portal_info(
             engine, req.dataset_id.hex.encode(), ds.name, req.title.strip(),
-            ', '.join(req.portals), body)
+            joined, body)
     except sqlalchemy.exc.IntegrityError:
         raise fastapi.HTTPException(
             status_code=409,

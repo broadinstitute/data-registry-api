@@ -652,7 +652,7 @@ class HCMLiftoverJob(BaseModel):
 
 class KpDatasetInfo(BaseModel):
     dataset_id: UUID
-    title: str
+    title: str = Field(max_length=500)
     portals: List[str]
     experiment_summary: str
 

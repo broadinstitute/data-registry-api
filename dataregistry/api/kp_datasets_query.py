@@ -91,7 +91,7 @@ def upsert_portal_info(engine, registry_dataset_id, dataset_id, title, portals, 
             {'r': registry_dataset_id}).fetchone()
         if row is None:
             row = con.execute(text(
-                "SELECT id FROM kp_datasets WHERE dataset_id = :d "
+                "SELECT id FROM kp_datasets WHERE BINARY dataset_id = :d "
                 "AND registry_dataset_id IS NULL"), {'d': dataset_id}).fetchone()
         if row:
             con.execute(text("""

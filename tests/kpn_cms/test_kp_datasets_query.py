@@ -123,6 +123,20 @@ def test_upsert_portal_info_adopts_unlinked_migrated_row():
         assert con.execute(text("SELECT COUNT(*) FROM kp_datasets")).scalar() == 1
 
 
+def test_upsert_portal_info_does_not_adopt_case_variant_row():
+    _clean()
+    kq.upsert_kp_dataset(engine, _row(1705, dataset_id='KPTEST_case', title='migrated'))
+    rid = uuid.uuid4().hex.encode()
+    import sqlalchemy
+    import pytest
+    with pytest.raises(sqlalchemy.exc.IntegrityError):
+        # case-variant name must NOT adopt the migrated row; the INSERT then
+        # collides with the case-insensitive unique key and surfaces as a conflict
+        kq.upsert_portal_info(engine, rid, 'KPTEST_CASE', 'T', 'md', '<p>b</p>')
+    got = kq.get_by_dataset_id(engine, 'KPTEST_case', published_only=False)
+    assert got['title'] == 'migrated' and got['registry_dataset_id'] is None
+
+
 def test_upsert_portal_info_timestamps_are_naive_utc():
     _clean()
     rid = uuid.uuid4().hex.encode()

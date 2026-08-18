@@ -1,4 +1,4 @@
-from dataregistry.api.kp_datasets_body import compose_body
+from dataregistry.api.kp_datasets_body import compose_body, parse_experiment_summary
 
 
 def test_matches_drupal_section_pattern():
@@ -27,3 +27,11 @@ def test_user_text_is_escaped():
     assert 'T2D &amp; obesity' in body
     assert 'a &lt; b' in body
     assert '<2024>' not in body
+
+
+def test_parse_experiment_summary_round_trips_generated_body():
+    assert parse_experiment_summary(compose_body('P & Q', ['A'], 'a < b')) == 'a < b'
+
+
+def test_parse_experiment_summary_returns_none_for_non_generated_body():
+    assert parse_experiment_summary('<h3>Data Links</h3><p>x</p>') is None
