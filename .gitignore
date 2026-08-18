@@ -132,3 +132,6 @@ dmypy.json
 # Pyre type checker
 .pyre/
 .worktrees/
+
+# SGC/collaborator script credentials (username/password) — never commit
+.credentials
