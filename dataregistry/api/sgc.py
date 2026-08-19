@@ -51,9 +51,10 @@ def check_review_permissions(user: User):
 
 
 def check_ma_read_permissions(user: User):
-    """Read access to meta-analysis results. sgc-review-data is deliberately a
-    superset so reviewers keep working even before sgc-review-ma is attached to
-    their role in the user service."""
+    """Read access to meta-analysis results (list, plots, summary, top loci).
+    Downloading the full meta.tsv.gz stays sgc-review-data-only. sgc-review-data
+    is deliberately a superset so reviewers keep working even before
+    sgc-review-ma is attached to their role in the user service."""
     return user.permissions and ("sgc-review-ma" in user.permissions
                                  or "sgc-review-data" in user.permissions)
 
@@ -2690,9 +2691,9 @@ async def get_ma_qq(run_id: str, user: User = Depends(get_sgc_user)):
 
 @router.get("/sgc/ma/runs/{run_id}/meta")
 async def get_ma_meta(run_id: str, user: User = Depends(get_sgc_user)):
-    if not check_ma_read_permissions(user):
+    if not check_review_permissions(user):
         raise fastapi.HTTPException(status_code=403,
-            detail="You need sgc-review-ma permission to view meta-analysis results")
+            detail="You need sgc-review-data permission to download meta-analysis results")
     row = _ma_run_lookup(run_id)
     return {"url": _qc_plots_presign(row.get("meta_s3_key"))}
 

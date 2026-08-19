@@ -170,7 +170,7 @@ def test_list_ma_candidates_endpoint_no_permission_403(monkeypatch):
 
 # --- sgc-review-ma read/launch permission split ------------------------------
 # Read routes accept sgc-review-ma (or sgc-review-data, a deliberate superset);
-# candidates/launch/delete stay sgc-review-data only.
+# the meta.tsv.gz download and candidates/launch/delete stay sgc-review-data only.
 
 def test_ma_read_routes_allow_review_ma_only_user(monkeypatch):
     monkeypatch.setattr(query, "get_sgc_ma_results", lambda engine: [MA_ROW])
@@ -184,9 +184,15 @@ def test_ma_read_routes_allow_review_ma_only_user(monkeypatch):
     assert run(sgc.list_sgc_ma_results(user=user)) == [MA_ROW]
     assert run(sgc.get_ma_manhattan("run-abc", user=user))["url"].startswith("https://presigned/")
     assert run(sgc.get_ma_qq("run-abc", user=user))["url"].startswith("https://presigned/")
-    assert run(sgc.get_ma_meta("run-abc", user=user))["url"].startswith("https://presigned/")
     assert run(sgc.get_ma_summary("run-abc", user=user)).media_type == "application/json"
     assert run(sgc.get_ma_top_loci("run-abc", user=user)) == [{"chrom": "1", "pos": "2"}]
+
+
+def test_ma_meta_download_403_for_review_ma_only_user(monkeypatch):
+    monkeypatch.setattr(query, "get_sgc_ma_run", lambda engine, run_id: MA_ROW)
+    with pytest.raises(HTTPException) as e:
+        run(sgc.get_ma_meta("run-abc", user=ma_read_only_user()))
+    assert e.value.status_code == 403
 
 
 def test_ma_candidates_403_for_review_ma_only_user():
