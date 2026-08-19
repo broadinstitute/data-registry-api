@@ -13,7 +13,7 @@ AUTH = {'Authorization': f"Bearer {get_encoded_jwt_data(User(user_name='test', r
 def test_kp_portals_lists_bioindex_groups():
     from dataregistry.api import portals
     portals.get_portals.cache_clear()
-    responses.get('https://bioindex.hugeamp.org/api/portal/groups',
+    responses.get('http://bioindex-qa.hugeampkpnbi.org/main/api/portal/groups',
                   json={'data': [{'name': 'md'}, {'name': 'a2f'}, {'name': 'cvd'}]})
     resp = client.get('/api/kp-portals', headers=AUTH)
     assert resp.status_code == 200
@@ -46,9 +46,9 @@ def _mock_bioindex():
     from dataregistry.api import portals, phenotypes
     portals.get_portals.cache_clear()
     phenotypes.get_phenotypes.cache_clear()
-    responses.get('https://bioindex.hugeamp.org/api/portal/groups',
+    responses.get('http://bioindex-qa.hugeampkpnbi.org/main/api/portal/groups',
                   json={'data': [{'name': 'md'}, {'name': 'a2f'}]})
-    responses.get('https://bioindex.hugeamp.org/api/portal/phenotypes',
+    responses.get('http://bioindex-qa.hugeampkpnbi.org/main/api/portal/phenotypes',
                   json={'data': [{'name': 'T2D', 'description': 'Type 2 diabetes',
                                   'dichotomous': True}]})
 
