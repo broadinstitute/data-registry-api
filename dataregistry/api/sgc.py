@@ -2832,6 +2832,24 @@ async def list_sgc_ma_ignore(user: User = Depends(get_sgc_user)):
     return query.list_ma_ignore(engine)
 
 
+@router.get("/sgc/cohorts/{cohort_id}/ma-ignore", response_model=list[MAIgnoreEntry])
+async def list_sgc_cohort_ma_ignore(cohort_id: str, user: User = Depends(get_sgc_user)):
+    """
+    MA ignore entries (GWAS excluded from meta-analysis, with reasons) for one cohort.
+    - The cohort's uploader can see their own cohort's entries
+    - Users with sgc-review-data or sgc-review-ma can see any cohort's entries
+    """
+    cohort_data = query.get_sgc_cohort_by_id(engine, cohort_id)
+    if not cohort_data:
+        raise fastapi.HTTPException(status_code=404, detail="Cohort not found")
+    cohort_owner = cohort_data[0]['uploaded_by']
+    if not (cohort_owner == user.user_name or check_ma_read_permissions(user)):
+        raise fastapi.HTTPException(
+            status_code=403,
+            detail="You can only view meta-analysis exclusions for cohorts you uploaded")
+    return query.list_ma_ignore_for_cohort(engine, cohort_id)
+
+
 @router.post("/sgc/ma/ignore", response_model=MAIgnoreEntry)
 async def add_sgc_ma_ignore(req: MAIgnoreCreateRequest, user: User = Depends(get_sgc_user)):
     if not check_review_permissions(user):

@@ -64,6 +64,18 @@ def test_delete_all_on_empty_list_is_a_no_op(api_client):
     assert query.delete_all_ma_ignore(engine) == 0
 
 
+def test_list_for_cohort_filters_to_that_cohort(api_client):
+    engine = DataRegistryReadWriteDB().get_engine()
+    cohort_a, file_a = _make_cohort_and_file(engine, "CohortA")
+    cohort_b, file_b = _make_cohort_and_file(engine, "CohortB")
+    query.insert_ma_ignore(engine, file_a, "reason A", "rev1")
+    query.insert_ma_ignore(engine, file_b, "reason B", "rev1")
+    rows = query.list_ma_ignore_for_cohort(engine, cohort_a)
+    assert [r["file_id"] for r in rows] == [file_a]
+    assert rows[0]["cohort"] == "CohortA" and rows[0]["reason"] == "reason A"
+    assert query.list_ma_ignore_for_cohort(engine, "0" * 32) == []
+
+
 def test_models_construct():
     e = MAIgnoreEntry(id="a" * 32, file_id="b" * 32, reason="r", excluded_by="rev")
     assert e.file_id == "b" * 32 and e.cohort is None

@@ -16,12 +16,14 @@ IGNORE_ROW = {"id": "a" * 32, "file_id": "f" * 32, "cohort_id": "b" * 32, "cohor
               "reason": "Phenotyping error", "excluded_by": "rev1", "created_at": None}
 
 
-def make_user(with_review_perm: bool = True) -> User:
+def make_user(with_review_perm: bool = True, user_name: str | None = None,
+              permissions: list | None = None) -> User:
     return User(
-        user_name="reviewer" if with_review_perm else "uploader",
+        user_name=user_name or ("reviewer" if with_review_perm else "uploader"),
         first_name=None, last_name=None, email=None, avatar=None,
         is_active=True, roles=[], groups=None,
-        permissions=["sgc-review-data"] if with_review_perm else [],
+        permissions=permissions if permissions is not None
+        else (["sgc-review-data"] if with_review_perm else []),
         is_internal=True, api_token=None, id=1,
     )
 
@@ -80,4 +82,52 @@ def test_delete_ignore_missing_404(monkeypatch):
     monkeypatch.setattr(query, "delete_ma_ignore", lambda engine, ignore_id: False)
     with pytest.raises(HTTPException) as exc:
         run(sgc.delete_sgc_ma_ignore(ignore_id="a" * 32, user=make_user()))
+    assert exc.value.status_code == 404
+
+
+# --- GET /sgc/cohorts/{cohort_id}/ma-ignore (cohort-scoped, owner-visible) ---
+
+COHORT_ID = "b" * 32
+
+
+def _patch_cohort(monkeypatch, owner="uploader"):
+    monkeypatch.setattr(query, "get_sgc_cohort_by_id",
+                        lambda engine, cid: [{"id": cid, "uploaded_by": owner}])
+    monkeypatch.setattr(query, "list_ma_ignore_for_cohort",
+                        lambda engine, cid: [IGNORE_ROW], raising=False)
+
+
+def test_cohort_ignore_owner_sees_own_rows(monkeypatch):
+    _patch_cohort(monkeypatch, owner="uploader")
+    result = run(sgc.list_sgc_cohort_ma_ignore(
+        cohort_id=COHORT_ID, user=make_user(user_name="uploader", permissions=[])))
+    assert result == [IGNORE_ROW]
+
+
+def test_cohort_ignore_reviewer_sees_any_cohort(monkeypatch):
+    _patch_cohort(monkeypatch, owner="someone-else")
+    result = run(sgc.list_sgc_cohort_ma_ignore(
+        cohort_id=COHORT_ID, user=make_user(user_name="reviewer", permissions=["sgc-review-data"])))
+    assert result == [IGNORE_ROW]
+
+
+def test_cohort_ignore_ma_reviewer_sees_any_cohort(monkeypatch):
+    _patch_cohort(monkeypatch, owner="someone-else")
+    result = run(sgc.list_sgc_cohort_ma_ignore(
+        cohort_id=COHORT_ID, user=make_user(user_name="ma-rev", permissions=["sgc-review-ma"])))
+    assert result == [IGNORE_ROW]
+
+
+def test_cohort_ignore_non_owner_403(monkeypatch):
+    _patch_cohort(monkeypatch, owner="someone-else")
+    with pytest.raises(HTTPException) as exc:
+        run(sgc.list_sgc_cohort_ma_ignore(
+            cohort_id=COHORT_ID, user=make_user(user_name="uploader", permissions=[])))
+    assert exc.value.status_code == 403
+
+
+def test_cohort_ignore_unknown_cohort_404(monkeypatch):
+    monkeypatch.setattr(query, "get_sgc_cohort_by_id", lambda engine, cid: [])
+    with pytest.raises(HTTPException) as exc:
+        run(sgc.list_sgc_cohort_ma_ignore(cohort_id=COHORT_ID, user=make_user()))
     assert exc.value.status_code == 404

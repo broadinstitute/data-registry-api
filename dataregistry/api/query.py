@@ -2702,6 +2702,15 @@ def list_ma_ignore(engine) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def list_ma_ignore_for_cohort(engine, cohort_id: str) -> list[dict]:
+    """MA ignore entries for one cohort's files, most recently added first."""
+    with engine.connect() as conn:
+        rows = conn.execute(text(_MA_IGNORE_SELECT +
+                                 " WHERE f.cohort_id = :cohort_id ORDER BY mi.created_at DESC"),
+                            {'cohort_id': str(cohort_id).replace('-', '')}).mappings().all()
+    return [dict(r) for r in rows]
+
+
 def delete_all_ma_ignore(engine) -> int:
     """Delete every MA ignore entry. Returns the number of rows removed (0 if already empty)."""
     with engine.begin() as conn:
