@@ -3,7 +3,7 @@ from enum import Enum
 from typing import Union, List, Dict, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, Field, Extra
+from pydantic import BaseModel, EmailStr, Field
 
 
 class StartAggregatorRequest(BaseModel):
@@ -17,7 +17,7 @@ class MetaAnalysisRequest(BaseModel):
     datasets: List[UUID]
     name: str
     phenotype: str
-    created_by: Union[str, None]
+    created_by: Union[str, None] = None
 
 
 class SavedMetaAnalysisRequest(MetaAnalysisRequest):
@@ -25,7 +25,7 @@ class SavedMetaAnalysisRequest(MetaAnalysisRequest):
     created_at: datetime
     dataset_names: List[str]
     status: str
-    log: Union[str, None]
+    log: Union[str, None] = None
 
 
 class DataSourceType(str, Enum):
@@ -83,9 +83,9 @@ class Ancestry(str, Enum):
     na = "n/a"
 
 
-class Study(BaseModel, extra=Extra.forbid):
-    name: str = Field(example="Cade2021_SleepApnea_Mixed_Female", default='...')
-    institution: str = Field(example="Harvard University")
+class Study(BaseModel, extra='forbid'):
+    name: str = Field(examples=["Cade2021_SleepApnea_Mixed_Female"], default='...')
+    institution: str = Field(examples=["Harvard University"])
 
 
 class SavedStudy(Study):
@@ -93,24 +93,24 @@ class SavedStudy(Study):
     created_at: datetime
 
 
-class DataSet(BaseModel, extra=Extra.forbid):
-    name: str = Field(example="Cade2021_SleepApnea_Mixed_Female", default='...')
-    data_source_type: DataSourceType = Field(title="How the owner can transmit the data to the portal", example="file")
-    data_type: DataFormat = Field(example="wgs")
-    genome_build: GenomeBuild = Field(example="grch38")
+class DataSet(BaseModel, extra='forbid'):
+    name: str = Field(examples=["Cade2021_SleepApnea_Mixed_Female"], default='...')
+    data_source_type: DataSourceType = Field(title="How the owner can transmit the data to the portal", examples=["file"])
+    data_type: DataFormat = Field(examples=["wgs"])
+    genome_build: GenomeBuild = Field(examples=["grch38"])
     ancestry: Ancestry
-    data_submitter: str = Field(example="Frances Crick")
+    data_submitter: str = Field(examples=["Frances Crick"])
     data_submitter_email: EmailStr
-    data_contributor_email: Union[EmailStr, None]
-    data_contributor: Union[str, None]
+    data_contributor_email: Union[EmailStr, None] = None
+    data_contributor: Union[str, None] = None
     sex: Sex
     global_sample_size: int
     status: ResearchStatus = Field(title="Where the research is in the publication process")
-    description: str = Field(example="More descriptive text...")
+    description: str = Field(examples=["More descriptive text..."])
     study_id: str
-    pub_id: Union[str, None]
-    publication: Union[str, None]
-    publicly_available: Union[bool, None] = Field(title="Whether the data is publicly available")
+    pub_id: Union[str, None] = None
+    publication: Union[str, None] = None
+    publicly_available: Union[bool, None] = Field(None, title="Whether the data is publicly available")
 
     def __hash__(self) -> int:
         return hash(self.name)
@@ -176,19 +176,19 @@ class CsvBioIndexRequest(BaseModel):
     status: BioIndexCreationStatus
     already_sorted: bool
     s3_path: str
-    data_types: Union[dict, None]
-    created_at: Union[datetime, None]
+    data_types: Union[dict, None] = None
+    created_at: Union[datetime, None] = None
 
 
 class SavedCsvBioIndexRequest(CsvBioIndexRequest):
     name: UUID
-    ip_address: Union[str, None]
+    ip_address: Union[str, None] = None
 
 
 class SavedDataset(DataSet):
     id: UUID
-    user_id: Union[int, None]
-    created_at: Union[datetime, None]
+    user_id: Union[int, None] = None
+    created_at: Union[datetime, None] = None
 
 
 class SavedPhenotypeDataSet(BaseModel):
@@ -198,12 +198,12 @@ class SavedPhenotypeDataSet(BaseModel):
     dichotomous: bool
     file_name: str
     sample_size: int
-    cases: Union[int, None]
-    controls: Union[int, None]
+    cases: Union[int, None] = None
+    controls: Union[int, None] = None
     created_at: datetime
     s3_path: str
     file_size: int
-    short_id: Union[str, None]
+    short_id: Union[str, None] = None
 
     def __hash__(self) -> int:
         return hash((self.dataset_id, self.phenotype))
@@ -229,36 +229,36 @@ class SavedCredibleSet(BaseModel):
     s3_path: str
     created_at: datetime
     file_size: int
-    short_id: Union[str, None]
+    short_id: Union[str, None] = None
 
 
 class UserCredentials(BaseModel):
     user_name: str
-    password: Union[str, None]
+    password: Union[str, None] = None
 
 
 class HermesUser(BaseModel):
     id: int
     user_name: str
     created_at: datetime
-    last_login: Union[datetime, None]
+    last_login: Union[datetime, None] = None
     is_active: bool
-    role: Union[str, None]
+    role: Union[str, None] = None
 
 
 class User(BaseModel):
     user_name: str
-    first_name: Union[str, None]
-    last_name: Union[str, None]
-    email: Union[EmailStr, None]
-    avatar: Union[str, None]
-    is_active: Union[bool, None]
+    first_name: Union[str, None] = None
+    last_name: Union[str, None] = None
+    email: Union[EmailStr, None] = None
+    avatar: Union[str, None] = None
+    is_active: Union[bool, None] = None
     roles: List[str]
-    groups: Union[List[str], None]
-    permissions: Union[List[str], None]
-    is_internal: Union[bool, None]
-    api_token: Union[str, None]
-    id: Union[int, None]
+    groups: Union[List[str], None] = None
+    permissions: Union[List[str], None] = None
+    is_internal: Union[bool, None] = None
+    api_token: Union[str, None] = None
+    id: Union[int, None] = None
 
 
 class CreateBiondexRequest(BaseModel):
@@ -273,9 +273,9 @@ class BioIndex(BaseModel):
 
 class QCScriptOptions(BaseModel):
     fd: float
-    adj: Union[str, None]
-    noind: Union[bool, None]
-    it: Union[float, None]
+    adj: Union[str, None] = None
+    noind: Union[bool, None] = None
+    it: Union[float, None] = None
 
 class QCHermesFileRequest(BaseModel):
     file_name: str
@@ -371,16 +371,16 @@ class FileUpload(BaseModel):
     file_size: int
     uploaded_at: datetime
     uploaded_by: str
-    phenotype: Union[str, None]
-    ancestry: Union[str, None]
-    metadata: Union[dict, None]
+    phenotype: Union[str, None] = None
+    ancestry: Union[str, None] = None
+    metadata: Union[dict, None] = None
     genome_build: GenomeBuild = GenomeBuild.na
     qc_status: HermesFileStatus
-    s3_path: Union[str, None]
-    qc_log: Union[str, None]
-    qc_script_options: Union[dict, None]
-    qc_job_submitted_at: Union[datetime, None]
-    qc_job_completed_at: Union[datetime, None]
+    s3_path: Union[str, None] = None
+    qc_log: Union[str, None] = None
+    qc_script_options: Union[dict, None] = None
+    qc_job_submitted_at: Union[datetime, None] = None
+    qc_job_completed_at: Union[datetime, None] = None
 
     def dict(self, **kwargs):
         d = super().dict(**kwargs)
