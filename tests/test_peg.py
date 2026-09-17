@@ -173,3 +173,141 @@ def test_validate_files_rejects_bad_filename(api_client: TestClient):
 def test_validate_files_requires_auth(api_client: TestClient):
     resp = api_client.post("/api/peg/validate-files", files=helpers.as_multipart(helpers.valid_files()))
     assert resp.status_code == 401
+
+
+STUDY_BODY = {
+    "name": "Toy study",
+    "metadata": {
+        "study_author": "Toy Author",
+        "phenotype": "Toy phenotype",
+        "gwas_source": "GCST000001",
+        "gwas_source_type": "gwas_catalog",
+        "published": "yes",
+    },
+}
+
+
+def _create_study(api_client, user=PEG_USER):
+    _login(user)
+    try:
+        resp = api_client.post("/api/peg/studies", json=STUDY_BODY)
+    finally:
+        _logout()
+    assert resp.status_code == 200, resp.text
+    return resp.json()["id"]
+
+
+def _s3_keys():
+    s3 = boto3.client("s3", region_name="us-east-1")
+    objs = s3.list_objects_v2(Bucket="dig-data-registry").get("Contents", [])
+    return sorted(o["Key"] for o in objs)
+
+
+@mock_aws
+def test_store_files_rejects_broken_input_and_stores_nothing(api_client: TestClient):
+    _set_up_moto_bucket()
+    study_id = _create_study(api_client)
+    _login(PEG_USER)
+    try:
+        files = helpers.broken_matrix_row(helpers.valid_files())
+        resp = api_client.post(f"/api/peg/studies/{study_id}/files", files=helpers.as_multipart(files))
+    finally:
+        _logout()
+    assert resp.status_code == 422, resp.text
+    body = resp.json()
+    assert body["detail"] == "PEG files failed validation"
+    assert body["report"]["status"] == "error"
+    assert query.get_peg_files(peg.engine, study_id) == []
+    assert _s3_keys() == []
+
+
+@mock_aws
+def test_store_files_saves_three_records_and_objects(api_client: TestClient):
+    _set_up_moto_bucket()
+    study_id = _create_study(api_client)
+    _login(PEG_USER)
+    try:
+        resp = api_client.post(f"/api/peg/studies/{study_id}/files", files=helpers.as_multipart(helpers.valid_files()))
+    finally:
+        _logout()
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["report"]["status"] == "success"
+    assert sorted(f["file_type"] for f in body["files"]) == ["peg_list", "peg_matrix", "peg_metadata"]
+
+    rows = query.get_peg_files(peg.engine, study_id)
+    assert sorted(r["file_type"] for r in rows) == ["peg_list", "peg_matrix", "peg_metadata"]
+    assert _s3_keys() == sorted([
+        f"peg/{study_id}/peg_list/{helpers.LIST_NAME}",
+        f"peg/{study_id}/peg_matrix/{helpers.MATRIX_NAME}",
+        f"peg/{study_id}/peg_metadata/{helpers.METADATA_NAME}",
+    ])
+
+
+@mock_aws
+def test_store_files_replaces_previous_upload(api_client: TestClient):
+    _set_up_moto_bucket()
+    study_id = _create_study(api_client)
+    _login(PEG_USER)
+    try:
+        first = api_client.post(f"/api/peg/studies/{study_id}/files", files=helpers.as_multipart(helpers.valid_files()))
+        assert first.status_code == 200, first.text
+        renamed = helpers.valid_files()
+        renamed["list"] = ("list_v2.tsv", renamed["list"][1])
+        second = api_client.post(f"/api/peg/studies/{study_id}/files", files=helpers.as_multipart(renamed))
+    finally:
+        _logout()
+    assert second.status_code == 200, second.text
+    rows = query.get_peg_files(peg.engine, study_id)
+    assert len(rows) == 3
+    list_row = next(r for r in rows if r["file_type"] == "peg_list")
+    assert list_row["file_name"] == "list_v2.tsv"
+    assert f"peg/{study_id}/peg_list/{helpers.LIST_NAME}" not in _s3_keys()
+
+
+@mock_aws
+def test_store_files_forbidden_for_non_owner(api_client: TestClient):
+    _set_up_moto_bucket()
+    study_id = _create_study(api_client)
+    _login(OTHER_USER)
+    try:
+        resp = api_client.post(f"/api/peg/studies/{study_id}/files", files=helpers.as_multipart(helpers.valid_files()))
+    finally:
+        _logout()
+    assert resp.status_code == 403
+
+
+@mock_aws
+def test_store_files_allowed_for_reviewer(api_client: TestClient):
+    _set_up_moto_bucket()
+    study_id = _create_study(api_client)
+    _login(REVIEWER)
+    try:
+        resp = api_client.post(f"/api/peg/studies/{study_id}/files", files=helpers.as_multipart(helpers.valid_files()))
+    finally:
+        _logout()
+    assert resp.status_code == 200, resp.text
+
+
+def test_store_files_unknown_study_404(api_client: TestClient):
+    _login(PEG_USER)
+    try:
+        resp = api_client.post(
+            "/api/peg/studies/00000000-0000-0000-0000-000000000000/files",
+            files=helpers.as_multipart(helpers.valid_files()),
+        )
+    finally:
+        _logout()
+    assert resp.status_code == 404
+
+
+def test_per_file_upload_endpoints_are_gone(api_client: TestClient):
+    _login(PEG_USER)
+    try:
+        study_id = _create_study(api_client)
+        _login(PEG_USER)
+        for suffix in ("peg-list", "peg-matrix", "peg-metadata"):
+            resp = api_client.post(f"/api/peg/studies/{study_id}/{suffix}", files={"file": ("x.tsv", b"a\tb\n", "text/plain")})
+            assert resp.status_code in (404, 405), suffix
+    finally:
+        _logout()
