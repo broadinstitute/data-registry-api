@@ -172,6 +172,18 @@ def test_validate_files_rejects_bad_filename(api_client: TestClient):
     assert resp.status_code == 400
 
 
+def test_validate_files_rejects_long_filename(api_client: TestClient):
+    _login(PEG_USER)
+    try:
+        files = helpers.as_multipart(helpers.valid_files())
+        name, data, ct = files["peg_list"]
+        files["peg_list"] = ("a" * 296 + ".tsv", data, ct)
+        resp = api_client.post("/api/peg/validate-files", files=files)
+    finally:
+        _logout()
+    assert resp.status_code == 400
+
+
 def test_validate_files_requires_auth(api_client: TestClient):
     resp = api_client.post("/api/peg/validate-files", files=helpers.as_multipart(helpers.valid_files()))
     assert resp.status_code == 401
@@ -245,6 +257,12 @@ def test_store_files_saves_three_records_and_objects(api_client: TestClient):
         f"peg/{dashed}/peg_matrix/{helpers.MATRIX_NAME}",
         f"peg/{dashed}/peg_metadata/{helpers.METADATA_NAME}",
     ])
+
+    # body["files"] should match GET /peg/studies/{id}/files: dash-free study_id, uploaded_at present.
+    dashfree = dashed.replace('-', '')
+    assert sorted(f["id"] for f in body["files"]) == sorted(r["id"] for r in rows)
+    assert all(f["study_id"] == dashfree for f in body["files"])
+    assert all(f["uploaded_at"] for f in body["files"])
 
 
 @mock_aws

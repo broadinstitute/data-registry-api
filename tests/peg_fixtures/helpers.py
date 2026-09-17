@@ -29,6 +29,17 @@ def broken_list_header(files: dict) -> dict:
     return {**files, "list": (name, header + b"\n" + rest)}
 
 
+def broken_list_row_mismatch(files: dict) -> dict:
+    """Change the first data row's PrimaryVariantID so it no longer matches
+    any matrix row for that gene, triggering a cross-validation mismatch."""
+    name, data = files["list"]
+    lines = data.split(b"\n")
+    fields = lines[1].split(b"\t")
+    fields[0] = b"chr2:20000:A:G"
+    lines[1] = b"\t".join(fields)
+    return {**files, "list": (name, b"\n".join(lines))}
+
+
 def broken_matrix_row(files: dict) -> dict:
     name, data = files["matrix"]
     lines = data.split(b"\n")

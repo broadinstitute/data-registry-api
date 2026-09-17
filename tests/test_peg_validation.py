@@ -55,6 +55,13 @@ def test_garbage_metadata_does_not_raise():
     assert report["files"]["metadata"]["counts"]["errors"] >= 1
 
 
+def test_cross_validation_string_details_are_folded_into_message():
+    report = _run(helpers.broken_list_row_mismatch(helpers.valid_files()))
+    assert report["status"] == "error"
+    cross_errors = report["files"]["cross_validation"]["errors"]
+    assert any("chr2:20000:A:G" in e["message"] for e in cross_errors)
+
+
 def test_validator_exception_becomes_parse_error(monkeypatch):
     import dataregistry.api.peg_validation as pv
 

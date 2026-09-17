@@ -1,8 +1,9 @@
 """Run the PEGASUS toolkit's validators on an uploaded PEG submission.
 
-The toolkit works on files on disk and detects file type by name prefix, so
-the uploads are written to a temp directory under fixed names, validated, and
-the resulting UI report is returned with the original filenames restored.
+The toolkit's validators work on files on disk, so the uploads are written to
+a temp directory under fixed, deterministic names and the validators are
+called directly (by path, not by name-based discovery). The resulting UI
+report is returned with the original filenames restored.
 """
 import tempfile
 from pathlib import Path
@@ -35,6 +36,15 @@ def _has_errors(results: list) -> bool:
     return any(r.get("type") == "error" for r in results)
 
 
+def _fold_string_details(results: list) -> list:
+    """create_ui_response drops list-of-string details; keep them in the message."""
+    for entry in results:
+        details = entry.get("details")
+        if isinstance(details, list) and details and all(isinstance(d, str) for d in details):
+            entry["message"] = f"{entry['message']} " + " ".join(details)
+    return results
+
+
 def validate_peg_files(
     list_bytes: bytes, list_name: str,
     matrix_bytes: bytes, matrix_name: str,
@@ -62,6 +72,9 @@ def validate_peg_files(
                 "Cross-validation",
                 lambda: cross_validate_list_matrix(list_path, matrix_path, metadata_path),
             )
+
+        for key in results:
+            results[key] = _fold_string_details(results[key])
 
         report = create_ui_response(results, {
             "list": list_path, "matrix": matrix_path, "metadata": metadata_path, "cross_validation": None,

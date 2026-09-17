@@ -31,11 +31,17 @@ _SAFE_FILENAME = re.compile(r'^[\w\-\.]+$')
 
 
 def _validate_filename(filename: Optional[str]) -> None:
-    """Reject filenames that could escape the intended S3 prefix."""
+    """Reject filenames that could escape the intended S3 prefix or overflow
+    the peg_files.file_name column (varchar(255))."""
     if not filename or not _SAFE_FILENAME.match(filename) or '..' in filename:
         raise fastapi.HTTPException(
             status_code=400,
             detail="Invalid filename: must contain only alphanumeric characters, hyphens, underscores, or single dots"
+        )
+    if len(filename) > 255:
+        raise fastapi.HTTPException(
+            status_code=400,
+            detail="Invalid filename: must be 255 characters or fewer"
         )
 
 
@@ -450,10 +456,9 @@ async def upload_peg_files(
             except Exception:
                 pass  # best-effort cleanup; the DB row is already gone
 
-    saved = []
     for field_name, file_type in PEG_UPLOAD_FIELDS:
         filename, contents, _ = uploads[field_name]
-        file_id = query.create_peg_file(
+        query.create_peg_file(
             engine=engine,
             study_id=study_id,
             file_type=file_type,
@@ -461,15 +466,8 @@ async def upload_peg_files(
             file_path=f"{s3_prefix}{new_keys[field_name]}",
             file_size=len(contents),
         )
-        saved.append({
-            "id": file_id,
-            "study_id": str(study_id),
-            "file_type": file_type,
-            "file_name": filename,
-            "file_path": f"{s3_prefix}{new_keys[field_name]}",
-            "file_size": len(contents),
-        })
 
+    saved = query.get_peg_files(engine, study_id)
     return {"files": saved, "report": report}
 
 
