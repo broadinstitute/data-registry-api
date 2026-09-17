@@ -11,10 +11,12 @@ import fastapi
 import httpx
 import pandas as pd  # type: ignore[import]
 from fastapi import UploadFile, File, Depends, Header
-from fastapi.responses import StreamingResponse
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, EmailStr
 
 from dataregistry.api import query
+from dataregistry.api import peg_validation
 from dataregistry.api import s3
 from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api.model import User
@@ -82,6 +84,53 @@ async def get_peg_user(authorization: Optional[str] = Header(None)):
                 raise fastapi.HTTPException(status_code=401, detail='Invalid token')
     except httpx.RequestError:
         raise fastapi.HTTPException(status_code=503, detail='User service unavailable')
+
+
+PEG_UPLOAD_FIELDS = (
+    ("peg_list", "peg_list"),
+    ("peg_matrix", "peg_matrix"),
+    ("peg_metadata", "peg_metadata"),
+)
+
+DEFAULT_CONTENT_TYPES = {
+    "peg_list": "text/tab-separated-values",
+    "peg_matrix": "text/tab-separated-values",
+    "peg_metadata": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+}
+
+
+async def _read_peg_uploads(peg_list: UploadFile, peg_matrix: UploadFile, peg_metadata: UploadFile) -> dict:
+    """Validate filenames and read all three uploads into memory.
+
+    Returns {field_name: (filename, bytes, content_type)}.
+    """
+    uploads = {}
+    for field_name, upload in (("peg_list", peg_list), ("peg_matrix", peg_matrix), ("peg_metadata", peg_metadata)):
+        _validate_filename(upload.filename)
+        uploads[field_name] = (upload.filename, await upload.read(), upload.content_type)
+    return uploads
+
+
+async def _validate_uploads(uploads: dict) -> dict:
+    """Run the toolkit off the event loop; it takes a few seconds on real data."""
+    return await run_in_threadpool(
+        peg_validation.validate_peg_files,
+        uploads["peg_list"][1], uploads["peg_list"][0],
+        uploads["peg_matrix"][1], uploads["peg_matrix"][0],
+        uploads["peg_metadata"][1], uploads["peg_metadata"][0],
+    )
+
+
+@router.post("/peg/validate-files")
+async def validate_peg_files_dry_run(
+    peg_list: UploadFile = File(...),
+    peg_matrix: UploadFile = File(...),
+    peg_metadata: UploadFile = File(...),
+    user: User = Depends(get_peg_user),
+):
+    """Validate a PEG submission without storing anything. Always 200; see report.status."""
+    uploads = await _read_peg_uploads(peg_list, peg_matrix, peg_metadata)
+    return await _validate_uploads(uploads)
 
 
 class PEGStudyMetadata(BaseModel):
