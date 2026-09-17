@@ -12,7 +12,7 @@ import botocore.exceptions
 import fastapi
 import pandas as pd
 from fastapi import Request, Header, Body
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, field_validator
 from sqlalchemy.exc import IntegrityError
 
 from dataregistry.api import query
@@ -193,7 +193,8 @@ class MSKKPDatasetCreateRequest(BaseModel):
     genome_build: str
     column_map: Dict[str, str]
 
-    @validator('column_map')
+    @field_validator('column_map')
+    @classmethod
     def required_columns_present(cls, v):
         missing = REQUIRED_COLUMN_MAPPINGS - set(v.keys())
         if missing:

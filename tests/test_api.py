@@ -312,6 +312,85 @@ def test_upload_hermes_csv(mocker, api_client: TestClient):
 
 
 @mock_aws
+def test_upload_hermes_list_includes_status_and_log_keys(mocker, api_client: TestClient):
+    """GET /api/upload-hermes must retain the legacy status/log keys under pydantic 2."""
+    set_up_moto_bucket()
+    mocker.patch('dataregistry.api.batch.submit_and_await_job').return_value = None
+    mocker.patch('boto3.client').return_value.generate_presigned_url.return_value = 'http://mocked-presigned-url'
+    mock_aiohttp_put = mocker.patch('aiohttp.ClientSession.put')
+    mock_aiohttp_put.return_value.__aenter__.return_value.status = 200
+    with open('tests/test_csv_upload.csv', mode='rb') as f:
+        file_bytes = f.read()
+    mock_s3_get_object = mocker.patch('boto3.client').return_value.get_object
+    mock_s3_get_object.return_value = {
+        'Body': io.BytesIO(file_bytes),
+        'ContentLength': len(file_bytes)
+    }
+    res = api_client.post('api/validate-hermes', headers={AUTHORIZATION: auth_token}, json={'file_name': 'foo.csv',
+                                                         'dataset': 'unit-test-dataset',
+                                                         'metadata': {'b': 1, 'phenotype': 'T2D',
+                                                                                 'column_map': {"chromosome": "CHR",
+                                                                                                "position": "BP",
+                                                                                                "eaf": "EAF",
+                                                                                                "beta": "BETA",
+                                                                                                "se": "SE",
+                                                                                                "pValue": "P"}},
+                                                        'qc_script_options': {'fd': 0.2, 'noind': True}})
+    assert res.status_code == HTTP_200_OK
+
+    file_uploads = api_client.get('api/upload-hermes/', headers={AUTHORIZATION: auth_token}).json()
+    assert len(file_uploads) == 1
+    for item in file_uploads:
+        assert 'status' in item
+        assert 'log' in item
+        assert item['status'] == item['qc_status']
+        assert item['log'] == item['qc_log']
+
+
+@mock_aws
+def test_upload_hermes_single_missing_s3_object_includes_status_and_log_keys(mocker, api_client: TestClient):
+    """GET /api/upload-hermes/{id} must retain status/log keys on the except branch
+    (S3 object missing, the default under moto with no object uploaded) under pydantic 2."""
+    set_up_moto_bucket()
+    mocker.patch('dataregistry.api.batch.submit_and_await_job').return_value = None
+    mocker.patch('boto3.client').return_value.generate_presigned_url.return_value = 'http://mocked-presigned-url'
+    mock_aiohttp_put = mocker.patch('aiohttp.ClientSession.put')
+    mock_aiohttp_put.return_value.__aenter__.return_value.status = 200
+    with open('tests/test_csv_upload.csv', mode='rb') as f:
+        file_bytes = f.read()
+    mock_s3_get_object = mocker.patch('boto3.client').return_value.get_object
+    mock_s3_get_object.return_value = {
+        'Body': io.BytesIO(file_bytes),
+        'ContentLength': len(file_bytes)
+    }
+    res = api_client.post('api/validate-hermes', headers={AUTHORIZATION: auth_token}, json={'file_name': 'foo.csv',
+                                                         'dataset': 'unit-test-dataset',
+                                                         'metadata': {'b': 1, 'phenotype': 'T2D',
+                                                                                 'column_map': {"chromosome": "CHR",
+                                                                                                "position": "BP",
+                                                                                                "eaf": "EAF",
+                                                                                                "beta": "BETA",
+                                                                                                "se": "SE",
+                                                                                                "pValue": "P"}},
+                                                        'qc_script_options': {'fd': 0.2, 'noind': True}})
+    assert res.status_code == HTTP_200_OK
+    file_id = res.json()['file_id']
+
+    # Simulate the S3 object being missing (no object was ever uploaded to moto)
+    # so fetch_single_file_upload takes the except branch and returns the bare
+    # FileUpload model instead of the explicit .dict() call on the happy path.
+    mocker.patch('boto3.client').return_value.get_object.side_effect = Exception('missing object')
+
+    file_details = api_client.get(f'api/upload-hermes/{file_id}', headers={AUTHORIZATION: auth_token})
+    assert file_details.status_code == HTTP_200_OK
+    body = file_details.json()
+    assert 'status' in body
+    assert 'log' in body
+    assert body['status'] == body['qc_status']
+    assert body['log'] == body['qc_log']
+
+
+@mock_aws
 def test_upload_csv(api_client: TestClient):
     set_up_moto_bucket()
     with open('tests/test_csv_upload.csv', mode='rb') as f:

@@ -2,7 +2,8 @@ from datetime import datetime
 from typing import Dict, List, Optional, Union
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, Field, conlist
+from pydantic import BaseModel, EmailStr, Field
+from typing_extensions import Annotated
 
 
 class CalRNewUserRequest(BaseModel):
@@ -133,7 +134,7 @@ class CalRSession(BaseModel):
     subjects: List[Subject]
     light_cycle_start: int = Field(ge=0, le=23)
     dark_cycle_start: int = Field(ge=0, le=23)
-    hour_range: conlist(float, min_items=2, max_items=2)
+    hour_range: Annotated[List[float], Field(min_length=2, max_length=2)]
     food_cutoff: Optional[float] = None
     remove_outliers: bool = False
     group_colors: Optional[Dict[str, str]] = None
