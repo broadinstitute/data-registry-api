@@ -63,6 +63,8 @@ origins = [
     "http://hermes.local.kpndataregistry.org:3000",
     "https://kpndataregistry.org:8000",
     "https://a-shilin.github.io",
+    "https://dev.calrepo.org",
+    "https://calrepo.org"
 ]
 # enable cross-origin resource sharing
 app.add_middleware(
