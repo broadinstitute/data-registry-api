@@ -60,6 +60,8 @@ def before_each_test():
         con.execute(text("TRUNCATE TABLE hcm_gwas_ma_results"))
         con.execute(text("TRUNCATE TABLE hcm_liftover_jobs"))
         con.execute(text("TRUNCATE TABLE hcm_gwas_files"))
+        con.execute(text("TRUNCATE TABLE peg_files"))
+        con.execute(text("TRUNCATE TABLE peg_studies"))
         con.execute(text("INSERT INTO users (id, user_name, oauth_provider, created_at) "
                          "values (1, 'testuser@broadinstitute.org', 'google', NOW())"))
         con.execute(text("INSERT INTO roles (role) VALUES ('admin')"))

@@ -81,3 +81,8 @@ statsmodels==0.14.6
 pytz==2026.1.post1
 tzdata==2026.1
 openpyxl==3.1.5
+git+https://github.com/broadinstitute/PEGASUS_metadata_template.git@360b222ee51a0ef597808ffceef8a01879a04df2#egg=pegasus
+pandera==0.33.1
+petl==1.7.25
+xlsxwriter==3.2.9
+rich==15.0.0
