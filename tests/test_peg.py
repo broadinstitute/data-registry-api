@@ -1,3 +1,5 @@
+import uuid
+
 import boto3
 from fastapi.testclient import TestClient
 from moto import mock_aws
@@ -237,10 +239,11 @@ def test_store_files_saves_three_records_and_objects(api_client: TestClient):
 
     rows = query.get_peg_files(peg.engine, study_id)
     assert sorted(r["file_type"] for r in rows) == ["peg_list", "peg_matrix", "peg_metadata"]
+    dashed = str(uuid.UUID(study_id))
     assert _s3_keys() == sorted([
-        f"peg/{study_id}/peg_list/{helpers.LIST_NAME}",
-        f"peg/{study_id}/peg_matrix/{helpers.MATRIX_NAME}",
-        f"peg/{study_id}/peg_metadata/{helpers.METADATA_NAME}",
+        f"peg/{dashed}/peg_list/{helpers.LIST_NAME}",
+        f"peg/{dashed}/peg_matrix/{helpers.MATRIX_NAME}",
+        f"peg/{dashed}/peg_metadata/{helpers.METADATA_NAME}",
     ])
 
 
@@ -262,7 +265,8 @@ def test_store_files_replaces_previous_upload(api_client: TestClient):
     assert len(rows) == 3
     list_row = next(r for r in rows if r["file_type"] == "peg_list")
     assert list_row["file_name"] == "list_v2.tsv"
-    assert f"peg/{study_id}/peg_list/{helpers.LIST_NAME}" not in _s3_keys()
+    dashed = str(uuid.UUID(study_id))
+    assert f"peg/{dashed}/peg_list/{helpers.LIST_NAME}" not in _s3_keys()
 
 
 @mock_aws

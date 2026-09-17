@@ -428,15 +428,11 @@ async def upload_peg_files(
     s3_client = boto3.client('s3', region_name=s3.S3_REGION)
     s3_prefix = f"s3://{s3.BASE_BUCKET}/"
     previous = query.get_peg_files(engine, study_id)
-    # `study['id']` is the DB's canonical hex-without-dashes form (matches
-    # what callers see everywhere else in the API); the path param's UUID
-    # stringifies with dashes, which would fragment S3 keys from that form.
-    study_id_hex = study['id']
 
     new_keys = {}
     for field_name, file_type in PEG_UPLOAD_FIELDS:
         filename, contents, content_type = uploads[field_name]
-        key = f"peg/{study_id_hex}/{file_type}/{filename}"
+        key = f"peg/{study_id}/{file_type}/{filename}"
         s3_client.put_object(
             Bucket=s3.BASE_BUCKET,
             Key=key,
@@ -467,7 +463,7 @@ async def upload_peg_files(
         )
         saved.append({
             "id": file_id,
-            "study_id": study_id_hex,
+            "study_id": str(study_id),
             "file_type": file_type,
             "file_name": filename,
             "file_path": f"{s3_prefix}{new_keys[field_name]}",
