@@ -3,7 +3,7 @@ from enum import Enum
 from typing import Union, List, Dict, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, model_serializer
 
 
 class StartAggregatorRequest(BaseModel):
@@ -382,8 +382,9 @@ class FileUpload(BaseModel):
     qc_job_submitted_at: Union[datetime, None] = None
     qc_job_completed_at: Union[datetime, None] = None
 
-    def dict(self, **kwargs):
-        d = super().dict(**kwargs)
+    @model_serializer(mode='wrap')
+    def _with_legacy_status_keys(self, handler):
+        d = handler(self)
         d['status'] = d.get('qc_status', None)
         d['log'] = d.get('qc_log', None)
         return d
