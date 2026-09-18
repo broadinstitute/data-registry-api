@@ -9,12 +9,13 @@ from uuid import UUID
 import boto3
 import fastapi
 import httpx
-import pandas as pd  # type: ignore[import]
 from fastapi import UploadFile, File, Depends, Header
-from fastapi.responses import StreamingResponse
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, EmailStr
 
 from dataregistry.api import query
+from dataregistry.api import peg_validation
 from dataregistry.api import s3
 from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api.model import User
@@ -30,11 +31,17 @@ _SAFE_FILENAME = re.compile(r'^[\w\-\.]+$')
 
 
 def _validate_filename(filename: Optional[str]) -> None:
-    """Reject filenames that could escape the intended S3 prefix."""
+    """Reject filenames that could escape the intended S3 prefix or overflow
+    the peg_files.file_name column (varchar(255))."""
     if not filename or not _SAFE_FILENAME.match(filename) or '..' in filename:
         raise fastapi.HTTPException(
             status_code=400,
             detail="Invalid filename: must contain only alphanumeric characters, hyphens, underscores, or single dots"
+        )
+    if len(filename) > 255:
+        raise fastapi.HTTPException(
+            status_code=400,
+            detail="Invalid filename: must be 255 characters or fewer"
         )
 
 
@@ -82,6 +89,53 @@ async def get_peg_user(authorization: Optional[str] = Header(None)):
                 raise fastapi.HTTPException(status_code=401, detail='Invalid token')
     except httpx.RequestError:
         raise fastapi.HTTPException(status_code=503, detail='User service unavailable')
+
+
+PEG_UPLOAD_FIELDS = (
+    ("peg_list", "peg_list"),
+    ("peg_matrix", "peg_matrix"),
+    ("peg_metadata", "peg_metadata"),
+)
+
+DEFAULT_CONTENT_TYPES = {
+    "peg_list": "text/tab-separated-values",
+    "peg_matrix": "text/tab-separated-values",
+    "peg_metadata": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+}
+
+
+async def _read_peg_uploads(peg_list: UploadFile, peg_matrix: UploadFile, peg_metadata: UploadFile) -> dict:
+    """Validate filenames and read all three uploads into memory.
+
+    Returns {field_name: (filename, bytes, content_type)}.
+    """
+    uploads = {}
+    for field_name, upload in (("peg_list", peg_list), ("peg_matrix", peg_matrix), ("peg_metadata", peg_metadata)):
+        _validate_filename(upload.filename)
+        uploads[field_name] = (upload.filename, await upload.read(), upload.content_type)
+    return uploads
+
+
+async def _validate_uploads(uploads: dict) -> dict:
+    """Run the toolkit off the event loop; it takes a few seconds on real data."""
+    return await run_in_threadpool(
+        peg_validation.validate_peg_files,
+        uploads["peg_list"][1], uploads["peg_list"][0],
+        uploads["peg_matrix"][1], uploads["peg_matrix"][0],
+        uploads["peg_metadata"][1], uploads["peg_metadata"][0],
+    )
+
+
+@router.post("/peg/validate-files")
+async def validate_peg_files_dry_run(
+    peg_list: UploadFile = File(...),
+    peg_matrix: UploadFile = File(...),
+    peg_metadata: UploadFile = File(...),
+    user: User = Depends(get_peg_user),
+):
+    """Validate a PEG submission without storing anything. Always 200; see report.status."""
+    uploads = await _read_peg_uploads(peg_list, peg_matrix, peg_metadata)
+    return await _validate_uploads(uploads)
 
 
 class PEGStudyMetadata(BaseModel):
@@ -352,185 +406,69 @@ async def delete_peg_study(study_id: UUID, user: User = Depends(get_peg_user)):
         raise fastapi.HTTPException(status_code=500, detail=f"Error deleting study: {str(e)}")
 
 
-@router.post("/peg/studies/{study_id}/peg-list")
-async def upload_peg_list(study_id: UUID, file: UploadFile = File(...), user: User = Depends(get_peg_user)):
-    """Upload PEG list TSV file"""
-    # Verify study exists
+@router.post("/peg/studies/{study_id}/files")
+async def upload_peg_files(
+    study_id: UUID,
+    peg_list: UploadFile = File(...),
+    peg_matrix: UploadFile = File(...),
+    peg_metadata: UploadFile = File(...),
+    user: User = Depends(get_peg_user),
+):
+    """Validate and store a complete PEG submission (list, matrix, metadata).
+
+    Errors → 422 with the report, nothing stored. Success → all three files
+    replace any previous files on the study; the report is returned so
+    warnings still reach the user.
+    """
     study = query.get_peg_study(engine, study_id)
     if not study:
         raise fastapi.HTTPException(status_code=404, detail="Study not found")
-
     if not (study['created_by'] == user.user_name or check_review_permissions(user)):
         raise fastapi.HTTPException(status_code=403, detail="You can only upload files to studies you created")
 
-    _validate_filename(file.filename)
+    uploads = await _read_peg_uploads(peg_list, peg_matrix, peg_metadata)
+    report = await _validate_uploads(uploads)
+    if report["status"] == "error":
+        return JSONResponse(status_code=422, content={"detail": "PEG files failed validation", "report": report})
 
-    # Read and validate file
-    try:
-        contents = await file.read()
-        pd.read_csv(io.BytesIO(contents), sep='\t')
+    s3_client = boto3.client('s3', region_name=s3.S3_REGION)
+    s3_prefix = f"s3://{s3.BASE_BUCKET}/"
+    previous = query.get_peg_files(engine, study_id)
 
-        # Upload to S3 using boto3
-        s3_path = f"peg/{study_id}/peg_list/{file.filename}"
-        s3_client = boto3.client('s3', region_name=s3.S3_REGION)
-
+    new_keys = {}
+    for field_name, file_type in PEG_UPLOAD_FIELDS:
+        filename, contents, content_type = uploads[field_name]
+        key = f"peg/{study_id}/{file_type}/{filename}"
         s3_client.put_object(
             Bucket=s3.BASE_BUCKET,
-            Key=s3_path,
+            Key=key,
             Body=contents,
-            ContentType=file.content_type or 'application/octet-stream'
+            ContentType=content_type or DEFAULT_CONTENT_TYPES[file_type],
         )
+        new_keys[field_name] = key
 
-        # Save file record
-        file_id = query.create_peg_file(
+    for old in previous:
+        query.delete_peg_file(engine, old['id'])
+        old_key = old['file_path'][len(s3_prefix):] if old['file_path'].startswith(s3_prefix) else None
+        if old_key and old_key not in new_keys.values():
+            try:
+                s3_client.delete_object(Bucket=s3.BASE_BUCKET, Key=old_key)
+            except Exception:
+                pass  # best-effort cleanup; the DB row is already gone
+
+    for field_name, file_type in PEG_UPLOAD_FIELDS:
+        filename, contents, _ = uploads[field_name]
+        query.create_peg_file(
             engine=engine,
             study_id=study_id,
-            file_type="peg_list",
-            file_name=file.filename or '',
-            file_path=f"s3://{s3.BASE_BUCKET}/{s3_path}",
-            file_size=len(contents)
+            file_type=file_type,
+            file_name=filename or '',
+            file_path=f"{s3_prefix}{new_keys[field_name]}",
+            file_size=len(contents),
         )
 
-        return {"id": file_id, "message": "PEG list uploaded successfully"}
-
-    except pd.errors.ParserError:
-        raise fastapi.HTTPException(status_code=400, detail="Invalid TSV format")
-    except fastapi.HTTPException:
-        raise
-    except Exception as e:
-        raise fastapi.HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
-
-
-@router.post("/peg/studies/{study_id}/peg-matrix")
-async def upload_peg_matrix(study_id: UUID, file: UploadFile = File(...), user: User = Depends(get_peg_user)):
-    """Upload PEG matrix TSV file"""
-    # Verify study exists
-    study = query.get_peg_study(engine, study_id)
-    if not study:
-        raise fastapi.HTTPException(status_code=404, detail="Study not found")
-
-    if not (study['created_by'] == user.user_name or check_review_permissions(user)):
-        raise fastapi.HTTPException(status_code=403, detail="You can only upload files to studies you created")
-
-    _validate_filename(file.filename)
-
-    # Read and validate file
-    try:
-        contents = await file.read()
-        pd.read_csv(io.BytesIO(contents), sep='\t')
-
-        # Upload to S3 using boto3
-        s3_path = f"peg/{study_id}/peg_matrix/{file.filename}"
-        s3_client = boto3.client('s3', region_name=s3.S3_REGION)
-
-        s3_client.put_object(
-            Bucket=s3.BASE_BUCKET,
-            Key=s3_path,
-            Body=contents,
-            ContentType=file.content_type or 'application/octet-stream'
-        )
-
-        # Save file record
-        file_id = query.create_peg_file(
-            engine=engine,
-            study_id=study_id,
-            file_type="peg_matrix",
-            file_name=file.filename or '',
-            file_path=f"s3://{s3.BASE_BUCKET}/{s3_path}",
-            file_size=len(contents)
-        )
-
-        return {"id": file_id, "message": "PEG matrix uploaded successfully"}
-
-    except pd.errors.ParserError:
-        raise fastapi.HTTPException(status_code=400, detail="Invalid TSV format")
-    except fastapi.HTTPException:
-        raise
-    except Exception as e:
-        raise fastapi.HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
-
-
-@router.post("/peg/studies/{study_id}/peg-metadata")
-async def upload_peg_metadata(study_id: UUID, file: UploadFile = File(...), user: User = Depends(get_peg_user)):
-    """Upload PEG metadata XLSX file with multiple sheets"""
-    # Verify study exists
-    study = query.get_peg_study(engine, study_id)
-    if not study:
-        raise fastapi.HTTPException(status_code=404, detail="Study not found")
-
-    if not (study['created_by'] == user.user_name or check_review_permissions(user)):
-        raise fastapi.HTTPException(status_code=403, detail="You can only upload files to studies you created")
-
-    _validate_filename(file.filename)
-
-    # Read and validate file
-    try:
-        contents = await file.read()
-
-        # Only accept XLSX files
-        if not (file.filename or '').endswith('.xlsx'):
-            raise fastapi.HTTPException(
-                status_code=400, 
-                detail="Invalid file format. Please upload an .xlsx file."
-            )
-        
-        # Read the Excel file and check for required sheets
-        xl_file = pd.ExcelFile(io.BytesIO(contents))
-        
-        # Expected sheets from the template
-        expected_sheets = [
-            'Dataset_description',
-            'Genomic_identifier',
-            'Evidence',
-            'Integration',
-            'source',
-            'method'
-        ]
-        
-        # Check if all required sheets are present
-        missing_sheets = [sheet for sheet in expected_sheets if sheet not in xl_file.sheet_names]
-        if missing_sheets:
-            raise fastapi.HTTPException(
-                status_code=400,
-                detail=f"Missing required sheets: {', '.join(missing_sheets)}. Please use the provided template."
-            )
-        
-        # Basic validation: ensure sheets have data
-        for sheet_name in expected_sheets:
-            df = pd.read_excel(xl_file, sheet_name=sheet_name)
-            if len(df) == 0:
-                raise fastapi.HTTPException(
-                    status_code=400,
-                    detail=f"Sheet '{sheet_name}' is empty. Please provide data for all sheets."
-                )
-
-        # Upload to S3 using boto3
-        s3_path = f"peg/{study_id}/peg_metadata/{file.filename}"
-        s3_client = boto3.client('s3', region_name=s3.S3_REGION)
-
-        s3_client.put_object(
-            Bucket=s3.BASE_BUCKET,
-            Key=s3_path,
-            Body=contents,
-            ContentType=file.content_type or 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        )
-
-        # Save file record
-        file_id = query.create_peg_file(
-            engine=engine,
-            study_id=study_id,
-            file_type="peg_metadata",
-            file_name=file.filename or '',
-            file_path=f"s3://{s3.BASE_BUCKET}/{s3_path}",
-            file_size=len(contents)
-        )
-
-        return {"id": file_id, "message": "PEG metadata uploaded successfully"}
-
-    except fastapi.HTTPException:
-        raise
-    except Exception as e:
-        raise fastapi.HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+    saved = query.get_peg_files(engine, study_id)
+    return {"files": saved, "report": report}
 
 
 @router.get("/peg/studies/{study_id}/files")
