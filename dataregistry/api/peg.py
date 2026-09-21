@@ -325,6 +325,17 @@ async def list_peg_studies(user: User = Depends(get_peg_user)):
         raise fastapi.HTTPException(status_code=500, detail=f"Error retrieving studies: {str(e)}")
 
 
+@router.get("/peg/public/studies")
+async def list_public_peg_studies():
+    """List PEG studies whose metadata marks them as published.
+    No authentication required. The submitter's identity is not included.
+    """
+    try:
+        return query.get_public_peg_studies(engine)
+    except Exception as e:
+        raise fastapi.HTTPException(status_code=500, detail=f"Error retrieving public studies: {str(e)}")
+
+
 @router.get("/peg/studies/{study_id}")
 async def get_peg_study(study_id: UUID, user: User = Depends(get_peg_user)):
     """Get a specific PEG study.

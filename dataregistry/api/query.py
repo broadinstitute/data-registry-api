@@ -1693,6 +1693,21 @@ def get_peg_studies(engine, created_by: Optional[str] = None) -> list:
         return studies
 
 
+def get_public_peg_studies(engine) -> list:
+    """Get PEG studies whose metadata marks them as published.
+
+    Intended for unauthenticated listing, so the submitter's identity
+    (created_by) is stripped from each row.
+    """
+    studies = []
+    for study in get_peg_studies(engine, created_by=None):
+        if study['metadata'].get('published') != 'published':
+            continue
+        del study['created_by']
+        studies.append(study)
+    return studies
+
+
 def get_peg_study(engine, study_id: Union[str, uuid.UUID]) -> Optional[dict]:
     """Get a specific PEG study by ID."""
     with engine.connect() as conn:
