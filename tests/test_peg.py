@@ -333,3 +333,48 @@ def test_per_file_upload_endpoints_are_gone(api_client: TestClient):
             assert resp.status_code in (404, 405), suffix
     finally:
         _logout()
+
+
+def _create_study_with_published(api_client, published, name):
+    body = {**STUDY_BODY, "name": name, "metadata": {**STUDY_BODY["metadata"], "published": published}}
+    _login(PEG_USER)
+    try:
+        resp = api_client.post("/api/peg/studies", json=body)
+    finally:
+        _logout()
+    assert resp.status_code == 200, resp.text
+    return resp.json()["id"]
+
+
+def test_public_studies_lists_only_published_without_auth(api_client: TestClient):
+    published_id = _create_study_with_published(api_client, "published", "Published study")
+    _create_study_with_published(api_client, "pre-published", "Preprint study")
+    _create_study_with_published(api_client, "unpublished", "Unpublished study")
+
+    resp = api_client.get("/api/peg/public/studies")
+
+    assert resp.status_code == 200, resp.text
+    studies = resp.json()
+    assert [s["id"] for s in studies] == [published_id]
+    assert studies[0]["name"] == "Published study"
+    assert studies[0]["accession_id"].startswith("PEGSt")
+    assert studies[0]["metadata"]["published"] == "published"
+
+
+def test_public_studies_omits_submitter_identity(api_client: TestClient):
+    _create_study_with_published(api_client, "published", "Published study")
+
+    resp = api_client.get("/api/peg/public/studies")
+
+    assert resp.status_code == 200, resp.text
+    assert "created_by" not in resp.json()[0]
+    assert resp.json()[0]["metadata"]["study_author"] == "Toy Author"
+
+
+def test_public_studies_returns_empty_list_when_none_published(api_client: TestClient):
+    _create_study_with_published(api_client, "unpublished", "Unpublished study")
+
+    resp = api_client.get("/api/peg/public/studies")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == []
