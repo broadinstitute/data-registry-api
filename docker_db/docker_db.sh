@@ -9,8 +9,16 @@ start() {
     # start up mysql
     echo "starting up dataregistry mysql container..."
     BASEDIR=$(dirname "$0")
+    # This container is throwaway: `start` force-removes any previous one and
+    # `stop` removes it with its volumes, so nothing survives a restart anyway.
+    # Trade durability for speed: keep the data directory on tmpfs and turn off
+    # the binlog, doublewrite buffer, and per-commit redo-log fsync. The test
+    # suite's per-test TRUNCATE/DDL and alembic migrations are fsync-bound and
+    # run an order of magnitude faster this way.
     docker create --name $CONTAINER --health-cmd="mysqladmin ping" --health-start-period="2s" --health-interval="1s" \
-    -e MYSQL_ALLOW_EMPTY_PASSWORD=true -p $PORT:3306 mysql:$MYSQL_VERSION --local-infile=1
+    --tmpfs /var/lib/mysql:rw,size=2g \
+    -e MYSQL_ALLOW_EMPTY_PASSWORD=true -p $PORT:3306 mysql:$MYSQL_VERSION --local-infile=1 \
+    --skip-log-bin --innodb-doublewrite=0 --innodb-flush-log-at-trx-commit=0
     docker cp $BASEDIR/local-mysql-init.sql $CONTAINER:/docker-entrypoint-initdb.d/docker_mysql_init.sql
     docker start $CONTAINER
     # don't let this script finish until mysql is actually up and running aka the health check (mysqladmin ping) gives the ok
