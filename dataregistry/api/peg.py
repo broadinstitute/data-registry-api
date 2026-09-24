@@ -11,7 +11,7 @@ import fastapi
 import httpx
 from fastapi import UploadFile, File, Depends, Header
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, EmailStr
 
 from dataregistry.api import query
@@ -334,6 +334,21 @@ async def list_public_peg_studies():
         return query.get_public_peg_studies(engine)
     except Exception as e:
         raise fastapi.HTTPException(status_code=500, detail=f"Error retrieving public studies: {str(e)}")
+
+
+@router.get("/peg/public/files/{file_id}")
+async def download_public_peg_file(file_id: UUID):
+    """Redirect to a short-lived presigned S3 URL for a file in a published study.
+    No authentication required. Files of unpublished studies 404 so their
+    existence isn't revealed.
+    """
+    file_info = query.get_peg_file(engine, file_id)
+    study = query.get_peg_study(engine, file_info['study_id']) if file_info else None
+    if not study or not query.is_public_peg_study(study):
+        raise fastapi.HTTPException(status_code=404, detail="File not found")
+
+    s3_path = file_info['file_path'].replace(f"s3://{s3.BASE_BUCKET}/", "")
+    return RedirectResponse(s3.get_signed_url(s3.BASE_BUCKET, s3_path), status_code=302)
 
 
 @router.get("/peg/studies/{study_id}")

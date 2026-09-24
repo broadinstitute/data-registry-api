@@ -1693,17 +1693,32 @@ def get_peg_studies(engine, created_by: Optional[str] = None) -> list:
         return studies
 
 
+def is_public_peg_study(study: dict) -> bool:
+    """A PEG study is publicly visible once its metadata marks it as published."""
+    return study['metadata'].get('published') == 'published'
+
+
 def get_public_peg_studies(engine) -> list:
     """Get PEG studies whose metadata marks them as published.
 
     Intended for unauthenticated listing, so the submitter's identity
-    (created_by) is stripped from each row.
+    (created_by) is stripped from each row. Each study carries its files
+    with a public download URL in place of the internal S3 path.
     """
     studies = []
     for study in get_peg_studies(engine, created_by=None):
-        if study['metadata'].get('published') != 'published':
+        if not is_public_peg_study(study):
             continue
         del study['created_by']
+        study['files'] = [
+            {
+                'file_type': f['file_type'],
+                'file_name': f['file_name'],
+                'file_size': f['file_size'],
+                'download_url': f"/api/peg/public/files/{f['id']}",
+            }
+            for f in get_peg_files(engine, study['id'])
+        ]
         studies.append(study)
     return studies
 

@@ -378,3 +378,77 @@ def test_public_studies_returns_empty_list_when_none_published(api_client: TestC
 
     assert resp.status_code == 200, resp.text
     assert resp.json() == []
+
+
+def _upload_valid_files(api_client, study_id):
+    _login(PEG_USER)
+    try:
+        resp = api_client.post(f"/api/peg/studies/{study_id}/files", files=helpers.as_multipart(helpers.valid_files()))
+    finally:
+        _logout()
+    assert resp.status_code == 200, resp.text
+    return resp.json()["files"]
+
+
+@mock_aws
+def test_public_studies_include_file_download_urls(api_client: TestClient):
+    _set_up_moto_bucket()
+    study_id = _create_study_with_published(api_client, "published", "Published study")
+    uploaded = _upload_valid_files(api_client, study_id)
+
+    resp = api_client.get("/api/peg/public/studies")
+
+    assert resp.status_code == 200, resp.text
+    files = resp.json()[0]["files"]
+    assert sorted(f["file_type"] for f in files) == ["peg_list", "peg_matrix", "peg_metadata"]
+    by_type = {f["file_type"]: f for f in files}
+    assert by_type["peg_metadata"]["file_name"] == helpers.METADATA_NAME
+    assert by_type["peg_metadata"]["file_size"] > 0
+    ids_by_type = {f["file_type"]: f["id"] for f in uploaded}
+    for file_type, f in by_type.items():
+        assert f["download_url"] == f"/api/peg/public/files/{ids_by_type[file_type]}"
+        assert "file_path" not in f
+
+
+def test_public_studies_without_uploads_have_empty_files(api_client: TestClient):
+    _create_study_with_published(api_client, "published", "Published study")
+
+    resp = api_client.get("/api/peg/public/studies")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()[0]["files"] == []
+
+
+@mock_aws
+def test_public_file_download_redirects_to_presigned_url(api_client: TestClient):
+    _set_up_moto_bucket()
+    study_id = _create_study_with_published(api_client, "published", "Published study")
+    _upload_valid_files(api_client, study_id)
+    metadata_file = next(
+        f for f in api_client.get("/api/peg/public/studies").json()[0]["files"] if f["file_type"] == "peg_metadata"
+    )
+
+    resp = api_client.get(metadata_file["download_url"], follow_redirects=False)
+
+    assert resp.status_code == 302, resp.text
+    location = resp.headers["location"]
+    dashed = str(uuid.UUID(study_id))
+    assert f"peg/{dashed}/peg_metadata/{helpers.METADATA_NAME}" in location
+    assert "Signature" in location
+
+
+@mock_aws
+def test_public_file_download_404_for_unpublished_study(api_client: TestClient):
+    _set_up_moto_bucket()
+    study_id = _create_study_with_published(api_client, "unpublished", "Unpublished study")
+    uploaded = _upload_valid_files(api_client, study_id)
+
+    resp = api_client.get(f"/api/peg/public/files/{uploaded[0]['id']}", follow_redirects=False)
+
+    assert resp.status_code == 404
+
+
+def test_public_file_download_404_for_unknown_file(api_client: TestClient):
+    resp = api_client.get("/api/peg/public/files/00000000-0000-0000-0000-000000000000", follow_redirects=False)
+
+    assert resp.status_code == 404
