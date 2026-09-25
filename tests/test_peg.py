@@ -419,22 +419,41 @@ def test_public_studies_without_uploads_have_empty_files(api_client: TestClient)
     assert resp.json()[0]["files"] == []
 
 
+def _public_file_url(api_client, file_type):
+    files = api_client.get("/api/peg/public/studies").json()[0]["files"]
+    return next(f["download_url"] for f in files if f["file_type"] == file_type)
+
+
 @mock_aws
-def test_public_file_download_redirects_to_presigned_url(api_client: TestClient):
+def test_public_file_download_streams_file_contents(api_client: TestClient):
     _set_up_moto_bucket()
     study_id = _create_study_with_published(api_client, "published", "Published study")
     _upload_valid_files(api_client, study_id)
-    metadata_file = next(
-        f for f in api_client.get("/api/peg/public/studies").json()[0]["files"] if f["file_type"] == "peg_metadata"
+
+    resp = api_client.get(_public_file_url(api_client, "peg_metadata"), follow_redirects=False)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.content == helpers.valid_files()["metadata"][1]
+    assert resp.headers["content-type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    assert resp.headers["content-length"] == str(len(resp.content))
+    assert resp.headers["content-disposition"] == f'attachment; filename="{helpers.METADATA_NAME}"'
+
+
+@mock_aws
+def test_public_file_download_carries_cors_headers_for_portal_origin(api_client: TestClient):
+    _set_up_moto_bucket()
+    study_id = _create_study_with_published(api_client, "published", "Published study")
+    _upload_valid_files(api_client, study_id)
+
+    resp = api_client.get(
+        _public_file_url(api_client, "peg_list"),
+        headers={"Origin": "https://hugeamp.org"},
+        follow_redirects=False,
     )
 
-    resp = api_client.get(metadata_file["download_url"], follow_redirects=False)
-
-    assert resp.status_code == 302, resp.text
-    location = resp.headers["location"]
-    dashed = str(uuid.UUID(study_id))
-    assert f"peg/{dashed}/peg_metadata/{helpers.METADATA_NAME}" in location
-    assert "Signature" in location
+    assert resp.status_code == 200, resp.text
+    assert resp.headers["access-control-allow-origin"] == "https://hugeamp.org"
+    assert resp.content == helpers.valid_files()["list"][1]
 
 
 @mock_aws
