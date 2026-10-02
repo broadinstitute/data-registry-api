@@ -14,6 +14,7 @@ from dataregistry.api.model import SavedDataset, DataSet, Study, SavedStudy, Sav
     HermesMetaAnalysisStatus, SavedMetaAnalysisRequest, HermesPhenotype, SGCPhenotype, SGCGWASFile, \
     SGCGWASCohort, SGCGWASValidationJob, LiftoverJob, LiftoverJobStatus, GenomeBuild, QCRun, QCStepResult
 from dataregistry.id_shortener import shorten_uuid
+from dataregistry.api import peg_evidence
 from sgc_ma.select import normalize_build, classify_liftover_status
 
 
@@ -1631,6 +1632,11 @@ def get_sgc_phenotype_case_counts_by_sex(engine):
 # PEG (Prioritized Evidence Gene) Functions
 # ============================================================================
 
+def peg_accession_id(accession_number: int) -> str:
+    """Render a PEG study accession the way PEGASUS file names carry it (PEGSt000007)."""
+    return f"PEGSt{accession_number:06d}"
+
+
 def create_peg_study(engine, name: str, created_by: str, metadata: dict) -> dict:
     """Create a new PEG study. Returns a dict with study ID and accession_id."""
     with engine.connect() as conn:
@@ -1652,7 +1658,7 @@ def create_peg_study(engine, name: str, created_by: str, metadata: dict) -> dict
         """), {'id': study_id}).first()
         
         accession_number = result[0]
-        accession_id = f"PEGSt{accession_number:05d}"
+        accession_id = peg_accession_id(accession_number)
         
         return {
             'id': study_id,
@@ -1686,7 +1692,7 @@ def get_peg_studies(engine, created_by: Optional[str] = None) -> list:
         for row in results:
             study = dict(row)
             study['metadata'] = json.loads(row['metadata']) if row['metadata'] else {}
-            study['accession_id'] = f"PEGSt{row['accession_number']:05d}"
+            study['accession_id'] = peg_accession_id(row['accession_number'])
             del study['accession_number']  # Remove raw accession_number from response
             studies.append(study)
         
@@ -1703,13 +1709,15 @@ def get_public_peg_studies(engine) -> list:
 
     Intended for unauthenticated listing, so the submitter's identity
     (created_by) is stripped from each row. Each study carries its files
-    with a public download URL in place of the internal S3 path.
+    with a public download URL in place of the internal S3 path, plus an
+    evidence summary (category -> columns) read from its PEG list header.
     """
     studies = []
     for study in get_peg_studies(engine, created_by=None):
         if not is_public_peg_study(study):
             continue
         del study['created_by']
+        files = get_peg_files(engine, study['id'])
         study['files'] = [
             {
                 'file_type': f['file_type'],
@@ -1717,8 +1725,10 @@ def get_public_peg_studies(engine) -> list:
                 'file_size': f['file_size'],
                 'download_url': f"/api/peg/public/files/{f['id']}",
             }
-            for f in get_peg_files(engine, study['id'])
+            for f in files
         ]
+        study['evidence'] = peg_evidence.list_file_evidence(
+            next((f for f in files if f['file_type'] == 'peg_list'), None))
         studies.append(study)
     return studies
 
@@ -1735,7 +1745,7 @@ def get_peg_study(engine, study_id: Union[str, uuid.UUID]) -> Optional[dict]:
         if result:
             study = dict(result)
             study['metadata'] = json.loads(result['metadata']) if result['metadata'] else {}
-            study['accession_id'] = f"PEGSt{result['accession_number']:05d}"
+            study['accession_id'] = peg_accession_id(result['accession_number'])
             del study['accession_number']  # Remove raw accession_number from response
             return study
         return None

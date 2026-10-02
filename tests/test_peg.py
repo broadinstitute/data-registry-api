@@ -1,3 +1,4 @@
+import re
 import uuid
 
 import boto3
@@ -471,3 +472,63 @@ def test_public_file_download_404_for_unknown_file(api_client: TestClient):
     resp = api_client.get("/api/peg/public/files/00000000-0000-0000-0000-000000000000", follow_redirects=False)
 
     assert resp.status_code == 404
+
+
+def test_accession_id_uses_six_digits_like_pegasus_file_names(api_client: TestClient):
+    """PEGASUS file names carry PEGSt + 6 digits (e.g. list_x_PEGSt000007.tsv);
+    every endpoint must render the study's accession the same way."""
+    _login(PEG_USER)
+    try:
+        created = api_client.post("/api/peg/studies", json={**STUDY_BODY, "metadata": {**STUDY_BODY["metadata"], "published": "published"}})
+        assert created.status_code == 200, created.text
+        study_id = created.json()["id"]
+        accession_ids = [
+            created.json()["accession_id"],
+            api_client.get(f"/api/peg/studies/{study_id}").json()["accession_id"],
+            api_client.get("/api/peg/studies").json()[0]["accession_id"],
+        ]
+    finally:
+        _logout()
+    accession_ids.append(api_client.get("/api/peg/public/studies").json()[0]["accession_id"])
+
+    assert re.fullmatch(r"PEGSt\d{6}", accession_ids[0]), accession_ids[0]
+    assert len(set(accession_ids)) == 1, accession_ids
+
+
+TOY_EVIDENCE = {"GWAS": ["GWAS"], "FUNC": ["FUNC"], "QTL": ["QTL"], "EXP": ["EXP"], "PERTURB": ["PERTURB"]}
+
+
+@mock_aws
+def test_public_studies_include_evidence_summary_from_list_header(api_client: TestClient):
+    _set_up_moto_bucket()
+    study_id = _create_study_with_published(api_client, "published", "Published study")
+    _upload_valid_files(api_client, study_id)
+
+    resp = api_client.get("/api/peg/public/studies")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()[0]["evidence"] == TOY_EVIDENCE
+
+
+def test_public_studies_without_list_file_have_empty_evidence(api_client: TestClient):
+    _create_study_with_published(api_client, "published", "Published study")
+
+    resp = api_client.get("/api/peg/public/studies")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()[0]["evidence"] == {}
+
+
+@mock_aws
+def test_public_studies_evidence_is_null_when_list_file_unreadable(api_client: TestClient):
+    _set_up_moto_bucket()
+    study_id = _create_study_with_published(api_client, "published", "Published study")
+    _upload_valid_files(api_client, study_id)
+    dashed = str(uuid.UUID(study_id))
+    boto3.client("s3", region_name="us-east-1").delete_object(
+        Bucket="dig-data-registry", Key=f"peg/{dashed}/peg_list/{helpers.LIST_NAME}")
+
+    resp = api_client.get("/api/peg/public/studies")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()[0]["evidence"] is None
