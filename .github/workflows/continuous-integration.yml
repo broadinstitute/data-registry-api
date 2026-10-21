@@ -33,6 +33,12 @@ jobs:
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
+      - name: Install bcftools (sgc_munge tests)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bcftools
+          bcftools --version | head -1
+
       - name: Start MySQL
         run: |
           sh docker_db/docker_db.sh start
