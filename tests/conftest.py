@@ -53,6 +53,7 @@ def before_each_test():
         con.execute(text("TRUNCATE TABLE sgc_phenotypes"))
         con.execute(text("TRUNCATE TABLE liftover_jobs"))
         con.execute(text("TRUNCATE TABLE sgc_liftover_jobs"))
+        con.execute(text("TRUNCATE TABLE sgc_gwas_munge_results"))
         con.execute(text("TRUNCATE TABLE sgc_gwas_files"))
         con.execute(text("TRUNCATE TABLE portal_liftover_config"))
         con.execute(text("TRUNCATE TABLE qc_step_result"))

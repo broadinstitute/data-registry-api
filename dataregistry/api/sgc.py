@@ -20,7 +20,7 @@ from sqlalchemy.exc import IntegrityError
 
 from dataregistry.api import file_utils, s3, query
 from dataregistry.api.db import DataRegistryReadWriteDB
-from dataregistry.api.model import SGCPhenotype, SGCCohort, SGCCohortFile, SGCCasesControlsMetadata, SGCCoOccurrenceMetadata, SGCPhenotypeCaseTotals, SGCPhenotypeCaseCountsBySex, User, NewUserRequest, SGCGWASFile, SGCGWASCohort, SGCGWASValidationJob, SGCGWASPlotResult, SGCMAResult, MAIgnoreEntry, MAIgnoreCreateRequest, SGCLiftoverJob, MARunRequest
+from dataregistry.api.model import SGCPhenotype, SGCCohort, SGCCohortFile, SGCCasesControlsMetadata, SGCCoOccurrenceMetadata, SGCPhenotypeCaseTotals, SGCPhenotypeCaseCountsBySex, User, NewUserRequest, SGCGWASFile, SGCGWASCohort, SGCGWASValidationJob, SGCGWASPlotResult, SGCMAResult, SGCMungeResult, MAIgnoreEntry, MAIgnoreCreateRequest, SGCLiftoverJob, MARunRequest
 from dataregistry.api.api import get_current_user
 from dataregistry.api.user_service_auth import auth_failure_exception
 
@@ -2640,6 +2640,31 @@ async def get_qc_json(file_id: str, user: User = Depends(get_sgc_user)):
         raise
     return fastapi.responses.Response(content=obj["Body"].read(),
                                       media_type="application/json")
+
+
+@router.get("/sgc/munge/{file_id}", response_model=SGCMungeResult)
+async def get_sgc_munge_result(file_id: str, user: User = Depends(get_sgc_user)):
+    if not check_review_permissions(user):
+        raise fastapi.HTTPException(status_code=403,
+            detail="You need sgc-review-data permission to view munge results")
+    row = query.get_sgc_munge_result(engine, file_id)
+    if row is None:
+        raise fastapi.HTTPException(status_code=404,
+                                    detail="No munge result for that file id")
+    fields = {k: row.get(k) for k in SGCMungeResult.model_fields if k in row}
+    for flag in ("has_eaf", "has_info"):
+        if fields.get(flag) is not None:
+            fields[flag] = bool(fields[flag])
+
+    def _url(key):
+        return _qc_plots_presign(key) if key else None
+
+    return SGCMungeResult(
+        **fields,
+        standardised_url=_url(row.get("standardised_s3_key")),
+        munge_json_url=_url(row.get("munge_json_s3_key")),
+        ref_mismatch_url=_url(row.get("ref_mismatch_s3_key")),
+    )
 
 
 # ---------------------------------------------------------------------------

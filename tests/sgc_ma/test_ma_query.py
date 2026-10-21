@@ -56,3 +56,12 @@ def test_update_sgc_ma_result_targets_run_id(engine):
 
 def test_get_sgc_ma_run_missing_returns_none(engine):
     assert query.get_sgc_ma_run(engine, "0" * 32) is None
+
+
+def test_query_reexports_ma_helpers():
+    # The METAL worker imports the light module directly; API/driver callers and the
+    # monkeypatching tests still go through query.*. Both must be the same objects.
+    from dataregistry.api import sgc_ma_results as ma_db
+    for name in ("_MA_SELECT_COLS", "MA_LIST_SQL", "_format_sgc_ma_row", "insert_sgc_ma_run",
+                 "get_sgc_ma_run", "update_sgc_ma_result", "get_sgc_ma_results", "delete_sgc_ma_run"):
+        assert getattr(query, name) is getattr(ma_db, name), name
