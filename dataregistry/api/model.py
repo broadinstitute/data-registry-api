@@ -516,6 +516,33 @@ class SGCGWASPlotResult(BaseModel):
     cohort_id: Optional[str] = None
 
 
+class SGCMungeResult(BaseModel):
+    id: str
+    file_id: str
+    status: str
+    batch_job_id: Optional[str] = None
+    n_in: Optional[int] = None
+    n_out: Optional[int] = None
+    n_with_rsid: Optional[int] = None
+    n_swapped: Optional[int] = None
+    n_dropped: Optional[dict] = None
+    has_eaf: Optional[bool] = None
+    has_info: Optional[bool] = None
+    maf_min: Optional[float] = None
+    info_min: Optional[float] = None
+    ref_version: Optional[str] = None
+    engine: Optional[str] = None
+    standardised_s3_key: Optional[str] = None
+    munge_json_s3_key: Optional[str] = None
+    ref_mismatch_s3_key: Optional[str] = None
+    error_message: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    standardised_url: Optional[str] = None
+    munge_json_url: Optional[str] = None
+    ref_mismatch_url: Optional[str] = None
+
+
 class SGCMAResult(BaseModel):
     id: str
     phenotype: str

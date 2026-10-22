@@ -191,7 +191,8 @@ class _FakeEngine:
 def _cand_row(**kw):
     base = dict(file_id="1", dataset="A", s3_path="p", column_mapping="{}", cases=1, controls=1,
                 cohort_id="c1", cohort="CohortA", ignore_reason=None, ancestry="EUR",
-                sex="All", genome_build="GRCh38")
+                sex="All", genome_build="GRCh38",
+                munge_s3_key="sgc/munge/1/standardised.tsv.gz")
     base.update(kw); return base
 
 
@@ -294,3 +295,89 @@ def test_ignored_cohorts_reports_meta_analysis_named_uploads():
     rows = [_ignored_row(dataset="meta_analysis_ph_full", ancestry="Combined", sex="All")]
     out = ignored_cohorts(_FakeEngine(rows), "PH", "Combined", "All")
     assert [r["dataset"] for r in out] == ["meta_analysis_ph_full"]
+
+
+def test_selection_sql_joins_succeeded_munge():
+    from sgc_ma.select import _SQL, _SQL_BY_IDS
+    for s in (_SQL, _SQL_BY_IDS):
+        assert "LEFT JOIN sgc_gwas_munge_results mu ON mu.file_id = f.id AND mu.status = 'SUCCEEDED'" in s
+        assert "mu.standardised_s3_key AS munge_s3_key" in s and "mu.n_out AS munge_n_out" in s
+        assert "mu.has_eaf AS munge_has_eaf" in s
+        assert "mu.maf_min AS munge_maf_min" in s and "mu.info_min AS munge_info_min" in s
+
+
+def test_is_munged():
+    from sgc_ma.select import is_munged
+    assert is_munged({"munge_s3_key": "sgc/munge/x/standardised.tsv.gz"}) and not is_munged({"munge_s3_key": None}) and not is_munged({})
+
+
+@pytest.fixture
+def no_munge_env(monkeypatch):
+    monkeypatch.delenv("SGC_MA_REQUIRE_MUNGE", raising=False)
+    monkeypatch.delenv("SGC_MA_JOB_DEFINITION", raising=False)
+    return monkeypatch
+
+
+@pytest.fixture
+def metal_env(no_munge_env):
+    no_munge_env.setenv("SGC_MA_JOB_DEFINITION", "sgc-gwas-metal-job")
+    return no_munge_env
+
+
+def test_munge_required_default_off(no_munge_env):
+    from sgc_ma.select import munge_required
+    assert munge_required() is False  # prod: old worker, no munge results yet
+    no_munge_env.setenv("SGC_MA_JOB_DEFINITION", "sgc-gwas-ma-job")
+    assert munge_required() is False
+
+
+def test_munge_required_follows_metal_job_definition(metal_env):
+    from sgc_ma.select import munge_required
+    assert munge_required() is True
+
+
+@pytest.mark.parametrize("value, expected", [("1", True), ("true", True), ("YES", True), ("0", False),
+                                             ("false", False), ("", False), ("no", False)])
+def test_munge_required_env_override(metal_env, value, expected):
+    from sgc_ma.select import munge_required
+    metal_env.setenv("SGC_MA_REQUIRE_MUNGE", value)  # set: wins over the job definition either way
+    assert munge_required() is expected
+    metal_env.setenv("SGC_MA_JOB_DEFINITION", "sgc-gwas-ma-job")
+    assert munge_required() is expected
+
+
+def _munge_rows():
+    return [_cand_row(file_id="1", cohort_id="c1", munge_s3_key=None),
+            _cand_row(file_id="2", cohort_id="c2", munge_s3_key="sgc/munge/2/standardised.tsv.gz")]
+
+
+def test_select_cohorts_keeps_unmunged_by_default(no_munge_env):
+    out = select_cohorts(_FakeEngine(_munge_rows()), "PH", "EUR", "All")
+    assert [r["file_id"] for r in out] == ["1", "2"]
+
+
+def test_select_cohorts_drops_unmunged_for_metal(metal_env):
+    out = select_cohorts(_FakeEngine(_munge_rows()), "PH", "EUR", "All")
+    assert [r["file_id"] for r in out] == ["2"]
+
+
+def test_select_cohorts_require_munge_override(no_munge_env):
+    no_munge_env.setenv("SGC_MA_REQUIRE_MUNGE", "1")
+    out = select_cohorts(_FakeEngine(_munge_rows()), "PH", "EUR", "All")
+    assert [r["file_id"] for r in out] == ["2"]
+
+
+def test_list_ma_candidates_keeps_unmunged_by_default_and_flags(no_munge_env):
+    out = list_ma_candidates(_FakeEngine(_munge_rows()), "PH", "EUR", "All")
+    assert [(c["file_id"], c["munged"]) for c in out] == [("1", False), ("2", True)]
+
+
+def test_list_ma_candidates_drops_unmunged_for_metal_and_flags(metal_env):
+    out = list_ma_candidates(_FakeEngine(_munge_rows()), "PH", "EUR", "All")
+    assert [(c["file_id"], c["munged"]) for c in out] == [("2", True)]
+
+
+def test_select_cohorts_by_file_ids_does_not_filter_unmunged(metal_env):
+    rows = [_cand_row(file_id="1", munge_s3_key=None)]
+    out = select_cohorts_by_file_ids(_FakeEngine(rows), ["1"])
+    assert [r["file_id"] for r in out] == ["1"]

@@ -1,5 +1,6 @@
 """Select the per-cohort GWAS to meta-analyze for a (phenotype, ancestry)."""
 import json
+import os
 from typing import Optional
 
 from sqlalchemy import text, bindparam
@@ -56,6 +57,35 @@ def not_ignored(row: dict) -> bool:
     return row.get("ignore_reason") is None
 
 
+def is_munged(row: dict) -> bool:
+    """True iff the file has a SUCCEEDED munge result (surfaced as
+    `munge_s3_key` from the sgc_gwas_munge_results join). METAL consumes the
+    standardised output, so un-munged files are not MA candidates for it."""
+    return bool(row.get("munge_s3_key"))
+
+
+METAL_JOB_DEFINITION = "sgc-gwas-metal-job"
+_TRUTHY = ("1", "true", "yes")
+
+
+def munge_required() -> bool:
+    """Whether MA candidates must be munged. SGC_MA_REQUIRE_MUNGE, when set, decides
+    ("1"/"true"/"yes" = on); otherwise on iff MA jobs go to the METAL worker, i.e. the
+    same SGC_MA_JOB_DEFINITION switch submit_ma_batch reads (default sgc-gwas-ma-job:
+    the old worker reads raw files, so prod selection is unchanged until the cut-over)."""
+    override = os.getenv("SGC_MA_REQUIRE_MUNGE")
+    if override is not None:
+        return override.strip().lower() in _TRUTHY
+    return os.getenv("SGC_MA_JOB_DEFINITION", "sgc-gwas-ma-job") == METAL_JOB_DEFINITION
+
+
+def _eligible(rows) -> list[dict]:
+    """include_file + ignore-list, plus is_munged when munge_required()."""
+    need_munge = munge_required()
+    return [r for r in rows if include_file(r) and r.get("ignore_reason") is None
+            and (not need_munge or is_munged(r))]
+
+
 def _pick_one_per_cohort(rows, prefer_combined):
     """One row per cohort. When prefer_combined, use the cohort's ancestry='Combined' row
     if present; otherwise its sole remaining row. Cohorts with >1 eligible row and no
@@ -102,6 +132,9 @@ _SQL = """
            f.cases, f.controls,
            CAST(f.cohort_id AS CHAR) AS cohort_id, sc.name AS cohort,
            f.ancestry AS ancestry,
+           mu.standardised_s3_key AS munge_s3_key, mu.n_in AS munge_n_in, mu.n_out AS munge_n_out,
+           mu.n_with_rsid AS munge_n_with_rsid, mu.ref_version AS munge_ref_version,
+           mu.has_eaf AS munge_has_eaf, mu.maf_min AS munge_maf_min, mu.info_min AS munge_info_min,
            mi.reason AS ignore_reason,
            JSON_UNQUOTE(JSON_EXTRACT(f.metadata, '$.sex')) AS sex,
            COALESCE(JSON_UNQUOTE(JSON_EXTRACT(f.metadata, '$.genome_build')), JSON_UNQUOTE(JSON_EXTRACT(gc.metadata, '$.genome_build'))) AS genome_build
@@ -110,6 +143,7 @@ _SQL = """
     LEFT JOIN sgc_gwas_cohorts gc ON gc.cohort_id = f.cohort_id
     LEFT JOIN sgc_cohorts sc ON sc.id = f.cohort_id
     LEFT JOIN sgc_ma_ignore mi ON mi.file_id = f.id
+    LEFT JOIN sgc_gwas_munge_results mu ON mu.file_id = f.id AND mu.status = 'SUCCEEDED'
     WHERE f.phenotype = :phenotype
     ORDER BY f.dataset
 """
@@ -126,11 +160,11 @@ def _coerce_map(raw) -> dict:
 
 
 def select_cohorts(engine, phenotype: str, target_ancestry: str, target_sex: str = "All") -> list[dict]:
-    """Resolved MA inputs for one target; files on the ignore-list are dropped."""
+    """Resolved MA inputs for one target; files on the ignore-list are dropped, and so are
+    un-munged files when munge_required()."""
     with engine.connect() as c:
         rows = [dict(r._mapping) for r in c.execute(text(_SQL), {"phenotype": phenotype})]
-    eligible = [r for r in rows if include_file(r) and r.get("ignore_reason") is None]
-    selected, _ = resolve_target(eligible, target_ancestry, target_sex)
+    selected, _ = resolve_target(_eligible(rows), target_ancestry, target_sex)
     out = []
     for r in selected:
         r["column_mapping"] = _coerce_map(r["column_mapping"])
@@ -144,12 +178,16 @@ _SQL_BY_IDS = """
            f.cases, f.controls,
            CAST(f.cohort_id AS CHAR) AS cohort_id, sc.name AS cohort,
            f.ancestry AS ancestry,
+           mu.standardised_s3_key AS munge_s3_key, mu.n_in AS munge_n_in, mu.n_out AS munge_n_out,
+           mu.n_with_rsid AS munge_n_with_rsid, mu.ref_version AS munge_ref_version,
+           mu.has_eaf AS munge_has_eaf, mu.maf_min AS munge_maf_min, mu.info_min AS munge_info_min,
            JSON_UNQUOTE(JSON_EXTRACT(f.metadata, '$.sex')) AS sex,
            COALESCE(JSON_UNQUOTE(JSON_EXTRACT(f.metadata, '$.genome_build')), JSON_UNQUOTE(JSON_EXTRACT(gc.metadata, '$.genome_build'))) AS genome_build
     FROM sgc_gwas_files f
     JOIN sgc_gwas_plot_results p ON p.file_id = f.id AND p.status = 'SUCCEEDED'
     LEFT JOIN sgc_gwas_cohorts gc ON gc.cohort_id = f.cohort_id
     LEFT JOIN sgc_cohorts sc ON sc.id = f.cohort_id
+    LEFT JOIN sgc_gwas_munge_results mu ON mu.file_id = f.id AND mu.status = 'SUCCEEDED'
     WHERE f.id IN :file_ids
     ORDER BY f.dataset
 """
@@ -161,13 +199,13 @@ def list_ma_candidates(engine, phenotype: str, target_ancestry: str, target_sex:
     preview == auto."""
     with engine.connect() as c:
         rows = [dict(r._mapping) for r in c.execute(text(_SQL), {"phenotype": phenotype})]
-    eligible = [r for r in rows if include_file(r) and r.get("ignore_reason") is None]
-    selected, _ = resolve_target(eligible, target_ancestry, target_sex)
+    selected, _ = resolve_target(_eligible(rows), target_ancestry, target_sex)
     return [{
         "file_id": r["file_id"], "cohort": r["cohort"], "dataset": r["dataset"],
         "ancestry": r.get("ancestry"), "sex": r.get("sex"),
         "cases": r["cases"], "controls": r["controls"],
         "genome_build": normalize_build(r["genome_build"]),
+        "munged": is_munged(r),
     } for r in selected]
 
 
