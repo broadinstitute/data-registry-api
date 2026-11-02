@@ -226,6 +226,7 @@ async def replace_calr_standard_file(
 
         return {
             "submission_id": submission_id,
+            "calr_id": existing['calr_id'],
             "file_id": file_id,
             "file_name": standard_file.filename,
             "uploaded_by": user.user_name,
@@ -337,6 +338,7 @@ async def get_calr_file_info(file_id: str):
         return {
             'id': file_info['id'],
             'submission_id': file_info['submission_id'],
+            'calr_id': file_info['calr_id'],
             'file_type': file_info['file_type'],
             'file_name': file_info['file_name'],
             'file_size': file_info['file_size'],

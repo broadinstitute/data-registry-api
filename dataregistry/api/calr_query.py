@@ -12,6 +12,25 @@ from dataregistry.api.calr_model import CALRFile, CalRSession, CALRSubmission
 # attempts would only mask a real problem (a corrupt alphabet, a stuck RNG).
 CALR_ID_ATTEMPTS = 3
 
+# MySQL error number for a duplicate-key violation, and the name of the unique key
+# on calr_submissions.calr_id (see the add_calr_submission_calr_id migration).
+MYSQL_DUPLICATE_ENTRY = 1062
+CALR_ID_UNIQUE_KEY = 'calr_submissions_calr_id_uniq'
+
+
+def _is_calr_id_collision(exc: IntegrityError) -> bool:
+    """True if `exc` is a duplicate-key error on the calr_id unique key.
+
+    Any other integrity error (a clashing submission id, a NOT NULL violation) is
+    not fixed by trying another calr_id. MySQL 8 reports the key as
+    "<table>.<key>", so the key name is matched as a substring of the message.
+    """
+    args = getattr(exc.orig, 'args', ())
+    if len(args) < 2:
+        return False
+    errno, message = args[0], args[1]
+    return errno == MYSQL_DUPLICATE_ENTRY and CALR_ID_UNIQUE_KEY in str(message)
+
 
 # =============================================================================
 # Submissions and files
@@ -40,11 +59,12 @@ def insert_calr_submission(engine, submission: CALRSubmission) -> tuple:
                     'public': 1 if submission.public else 0,
                     'uploaded_by': submission.uploaded_by,
                 })
-            except IntegrityError:
-                # Only a calr_id collision is retryable; the submission id is a
-                # fresh uuid, so a clash there means something else is wrong.
+            except IntegrityError as exc:
                 conn.rollback()
-                if attempt == CALR_ID_ATTEMPTS - 1:
+                # Retry with a fresh calr_id only on a calr_id collision, and only
+                # up to CALR_ID_ATTEMPTS; any other integrity error is re-raised
+                # immediately.
+                if not _is_calr_id_collision(exc) or attempt == CALR_ID_ATTEMPTS - 1:
                     raise
                 continue
 
@@ -166,7 +186,7 @@ def get_calr_file_by_id(engine, file_id: str):
         result = conn.execute(text("""
             SELECT f.id, f.submission_id, f.file_type, f.file_name, f.file_size,
                    f.s3_path, f.uploaded_at,
-                   s.public, s.shared, s.uploaded_by
+                   s.calr_id, s.public, s.shared, s.uploaded_by
             FROM calr_files f
             JOIN calr_submissions s ON s.id = f.submission_id
             WHERE f.id = :file_id
@@ -180,7 +200,7 @@ def get_calr_files_by_submission(engine, submission_id: str):
     with engine.connect() as conn:
         result = conn.execute(text("""
             SELECT f.id, f.file_type, f.file_name, f.file_size, f.s3_path,
-                   s.uploaded_by
+                   s.calr_id, s.uploaded_by
             FROM calr_files f
             JOIN calr_submissions s ON s.id = f.submission_id
             WHERE f.submission_id = :submission_id

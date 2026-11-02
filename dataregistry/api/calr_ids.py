@@ -2,8 +2,8 @@
 
 A submission's primary key stays an opaque 32-char uuid hex (it is a binary(32)
 column and is embedded in S3 object keys). The CalR id is a second, shorter
-identifier that users actually see and paste: it appears in share links, in
-/analysis/<calr_id> URLs, and in downloaded file names.
+identifier that users actually see and paste: it appears in share links and in
+/analysis/<calr_id> URLs.
 
 The alphabet is base58 — 0/O/I/l are omitted — so an id read off a screen or
 dictated over a phone has no ambiguous characters. Mixed case is deliberate: it

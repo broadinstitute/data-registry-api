@@ -3,9 +3,11 @@ import pytest
 from fastapi.testclient import TestClient
 from moto import mock_aws
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 from dataregistry.server import app
 from dataregistry.api import calr_query
+from dataregistry.api.calr_model import CALRSubmission
 from dataregistry.api.calr import _can_read, get_calr_user, get_calr_user_optional
 from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api.model import User
@@ -299,3 +301,128 @@ def test_patch_can_set_both_flags_false(api_client: TestClient):
     assert resp.status_code == 200, resp.text
     assert resp.json()["public"] is False
     assert resp.json()["shared"] is False
+
+
+def _scripted_calr_ids(monkeypatch, ids):
+    """Make generate_calr_id return `ids` in order, then fresh ids; returns the call log.
+
+    The fresh-id fallback means a retry the code should not make shows up as a wrong
+    call count, not as an IndexError from an exhausted script.
+    """
+    remaining = list(ids)
+    calls = []
+
+    def fake_generate():
+        calls.append(1)
+        return remaining.pop(0) if remaining else f"CalRfresh{len(calls):03d}"
+
+    monkeypatch.setattr("dataregistry.api.calr_query.generate_calr_id", fake_generate)
+    return calls
+
+
+def _new_submission(name="Experiment", **kwargs):
+    return CALRSubmission(name=name, uploaded_by=CALR_USER.user_name, **kwargs)
+
+
+def test_insert_retries_on_calr_id_collision(monkeypatch):
+    calls = _scripted_calr_ids(monkeypatch, ["CalRaaaaaaaa", "CalRaaaaaaaa", "CalRbbbbbbbb"])
+    _, first_calr_id = calr_query.insert_calr_submission(engine, _new_submission("First"))
+    assert first_calr_id == "CalRaaaaaaaa"
+    del calls[:]
+
+    sub_id, calr_id = calr_query.insert_calr_submission(engine, _new_submission("Second"))
+
+    assert calr_id == "CalRbbbbbbbb"
+    assert len(calls) == 2  # the colliding id, then one fresh id
+    with engine.connect() as conn:
+        stored = conn.execute(text("SELECT calr_id FROM calr_submissions WHERE id = :id"), {"id": sub_id}).scalar()
+    assert stored == "CalRbbbbbbbb"
+
+
+def test_insert_gives_up_after_three_calr_id_collisions(monkeypatch):
+    calls = _scripted_calr_ids(
+        monkeypatch,
+        ["CalRaaaaaaaa", "CalRaaaaaaaa", "CalRaaaaaaaa", "CalRaaaaaaaa"],
+    )
+    calr_query.insert_calr_submission(engine, _new_submission("First"))
+    del calls[:]
+
+    with pytest.raises(IntegrityError):
+        calr_query.insert_calr_submission(engine, _new_submission("Second"))
+
+    assert len(calls) == calr_query.CALR_ID_ATTEMPTS == 3
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT COUNT(*) FROM calr_submissions")).scalar() == 1
+
+
+def test_insert_does_not_retry_other_integrity_errors(monkeypatch):
+    calls = _scripted_calr_ids(monkeypatch, ["CalRaaaaaaaa", "CalRbbbbbbbb"])
+    existing_id = calr_query.insert_calr_submission(engine, _new_submission("First"))[0]
+    del calls[:]
+
+    # Re-using a submission id is a primary-key clash, not a calr_id collision:
+    # fresh calr_ids cannot fix it, so retrying would only burn attempts.
+    duplicate = _new_submission("Second", id=existing_id)
+    with pytest.raises(IntegrityError):
+        calr_query.insert_calr_submission(engine, duplicate)
+
+    assert len(calls) == 1
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT COUNT(*) FROM calr_submissions")).scalar() == 1
+
+
+def test_is_calr_id_collision_requires_duplicate_errno_and_calr_id_key():
+    key = "calr_submissions.calr_submissions_calr_id_uniq"
+    collision = IntegrityError("INSERT", {}, Exception(1062, f"Duplicate entry 'CalRx' for key '{key}'"))
+    other_key = IntegrityError("INSERT", {}, Exception(1062, "Duplicate entry 'x' for key 'calr_submissions.PRIMARY'"))
+    other_errno = IntegrityError("INSERT", {}, Exception(1048, f"Column 'calr_id' cannot be null ({key})"))
+    no_args = IntegrityError("INSERT", {}, Exception())
+
+    assert calr_query._is_calr_id_collision(collision) is True
+    assert calr_query._is_calr_id_collision(other_key) is False
+    assert calr_query._is_calr_id_collision(other_errno) is False
+    assert calr_query._is_calr_id_collision(no_args) is False
+
+
+def test_calr_ids_differing_only_by_case_are_distinct(api_client: TestClient, monkeypatch):
+    _scripted_calr_ids(monkeypatch, ["CalRabcdefgh", "CalRABCDEFGH"])
+    lower_sub = calr_query.insert_calr_submission(engine, _new_submission("Lower"))[0]
+    upper_sub = calr_query.insert_calr_submission(engine, _new_submission("Upper"))[0]
+    calr_query.set_calr_submission_public(engine, lower_sub, True)
+    calr_query.set_calr_submission_public(engine, upper_sub, True)
+
+    lower = api_client.get("/api/calr/shared/CalRabcdefgh")
+    upper = api_client.get("/api/calr/shared/CalRABCDEFGH")
+
+    assert lower.status_code == 200, lower.text
+    assert upper.status_code == 200, upper.text
+    assert lower.json()["id"] == lower_sub
+    assert upper.json()["id"] == upper_sub
+    # a third casing is neither id
+    assert api_client.get("/api/calr/shared/CALRABCDEFGH").status_code == 404
+
+
+@mock_aws
+def test_file_info_includes_calr_id(api_client: TestClient):
+    set_up_moto_bucket()
+    created = _upload_standard(api_client)
+    calr_query.set_calr_submission_shared(engine, created["submission_id"], True)
+
+    resp = api_client.get(f"/api/calr/files/{created['file_id']}/info")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["calr_id"] == created["calr_id"]
+
+
+@mock_aws
+def test_replace_response_includes_calr_id(api_client: TestClient):
+    set_up_moto_bucket()
+    created = _upload_standard(api_client)
+
+    resp = api_client.put(
+        f"/api/calr/files/{created['submission_id']}",
+        files={"standard_file": ("replacement.csv", b"col1,col2\n3,4\n", "text/csv")},
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["calr_id"] == created["calr_id"]
