@@ -154,7 +154,7 @@ async def upload_calr_files(
             public=public,
             uploaded_by=user.user_name
         )
-        saved_sub_id = calr_query.insert_calr_submission(engine, submission)
+        saved_sub_id, calr_id = calr_query.insert_calr_submission(engine, submission)
 
         content = await standard_file.read()
         s3_key = f"calr/{user.user_name}/{saved_sub_id}/standard/{standard_file.filename}"
@@ -171,6 +171,7 @@ async def upload_calr_files(
 
         return {
             "submission_id": saved_sub_id,
+            "calr_id": calr_id,
             "file_id": file_id,
             "name": name,
             "public": public,
@@ -263,13 +264,17 @@ async def list_public_calr_submissions():
 @router.get("/calr/shared/{submission_id}")
 async def get_calr_shared_submission(submission_id: str):
     """
-    Unauthenticated entry point for a link-shared submission. Returns the submission
-    bundle (no s3_path) only if it is marked shared; otherwise 404 so a non-shared id
-    is not confirmed to exist.
+    Unauthenticated entry point for a submission addressed by a link. `submission_id`
+    is either the public-facing calr_id or the legacy submission uuid, so share links
+    already in circulation keep working.
+
+    Returns the submission bundle (no s3_path) if the experiment is public or has link
+    sharing enabled; otherwise 404. The 404 is deliberately the same whether the id is
+    private or does not exist, so the id space cannot be enumerated.
     """
-    submission = calr_query.get_shared_calr_submission(engine, submission_id)
+    submission = calr_query.get_viewable_calr_submission(engine, submission_id)
     if not submission:
-        raise fastapi.HTTPException(status_code=404, detail="Shared submission not found")
+        raise fastapi.HTTPException(status_code=404, detail="Experiment not found")
     return submission
 
 

@@ -20,7 +20,10 @@ class CalRSubmissionMetadata(BaseModel):
     bedding: Optional[str] = None
     ee_calc: Optional[str] = None
     enrich: Optional[str] = None
-    experiment_id: Optional[str] = None
+    # No experiment_id: the public-facing identifier is calr_submissions.calr_id,
+    # generated at creation and never writable. Pydantic drops the key if a
+    # client still sends it, so an old frontend cannot reintroduce a second,
+    # conflicting value into the metadata blob.
     age: Optional[float] = None
     strain: Optional[str] = None
     genetic_background: Optional[str] = None

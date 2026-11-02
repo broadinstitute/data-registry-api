@@ -197,6 +197,86 @@ def test_shared_endpoint_404_unknown_id(api_client: TestClient):
 
 
 @mock_aws
+def test_upload_assigns_calr_id(api_client: TestClient):
+    set_up_moto_bucket()
+    created = _upload_standard(api_client)
+    calr_id = created["calr_id"]
+
+    assert calr_id.startswith("CalR")
+    assert len(calr_id) == len("CalR") + 8
+    # base58: no 0/O/I/l, so a dictated or re-typed id cannot be ambiguous
+    assert not set(calr_id[len("CalR"):]) & set("0OIl")
+
+    # and it comes back on the listing, not just the create response
+    assert api_client.get("/api/calr/files").json()[0]["calr_id"] == calr_id
+
+
+@mock_aws
+def test_calr_ids_are_distinct_across_submissions(api_client: TestClient):
+    set_up_moto_bucket()
+    first = _upload_standard(api_client, name="Experiment A")
+    second = _upload_standard(api_client, name="Experiment B")
+    assert first["calr_id"] != second["calr_id"]
+
+
+@mock_aws
+def test_shared_endpoint_resolves_by_calr_id(api_client: TestClient):
+    set_up_moto_bucket()
+    created = _upload_standard(api_client)
+    api_client.patch(f"/api/calr/files/{created['submission_id']}?shared=true")
+
+    resp = api_client.get(f"/api/calr/shared/{created['calr_id']}")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["id"] == created["submission_id"]
+    assert body["calr_id"] == created["calr_id"]
+
+
+@mock_aws
+def test_shared_endpoint_resolves_public_experiment_without_share_flag(api_client: TestClient):
+    """A public experiment is addressable by link even with sharing off — that is
+    what /analysis/<calr_id> relies on for published datasets."""
+    set_up_moto_bucket()
+    created = _upload_standard(api_client)
+    api_client.patch(f"/api/calr/files/{created['submission_id']}?public=true")
+
+    resp = api_client.get(f"/api/calr/shared/{created['calr_id']}")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["public"] is True
+
+
+@mock_aws
+def test_shared_endpoint_404_for_private_calr_id(api_client: TestClient):
+    """Private and nonexistent must look identical, or the id space is enumerable."""
+    set_up_moto_bucket()
+    created = _upload_standard(api_client)
+    private = api_client.get(f"/api/calr/shared/{created['calr_id']}")
+    unknown = api_client.get("/api/calr/shared/CalRzzzzzzzz")
+    assert private.status_code == 404
+    assert unknown.status_code == 404
+    assert private.json() == unknown.json()
+
+
+@mock_aws
+def test_metadata_patch_cannot_set_experiment_id(api_client: TestClient):
+    """experiment_id is no longer a writable field; calr_id replaces it."""
+    set_up_moto_bucket()
+    created = _upload_standard(api_client)
+    sid = created["submission_id"]
+
+    resp = api_client.patch(
+        f"/api/calr/submissions/{sid}/metadata",
+        json={"experiment_id": "CalRhandtyped", "strain": "C57BL/6J"},
+    )
+    assert resp.status_code == 200, resp.text
+
+    sub = api_client.get("/api/calr/files").json()[0]
+    assert sub["metadata"].get("strain") == "C57BL/6J"
+    assert "experiment_id" not in sub["metadata"]
+    assert sub["calr_id"] == created["calr_id"]
+
+
+@mock_aws
 def test_owner_can_read_own_private_file(api_client: TestClient):
     set_up_moto_bucket()
     created = _upload_standard(api_client)  # private by default
