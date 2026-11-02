@@ -8,7 +8,7 @@ from typing import List, Optional
 import fastapi
 import httpx
 import boto3
-from fastapi import UploadFile, Form, Depends, Header
+from fastapi import UploadFile, Form, Depends, Header, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import StreamingResponse
 
@@ -17,6 +17,7 @@ from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api.model import User
 from dataregistry.api.calr_model import CALRFile, CALRSubmission, CalRSession, CalRSessionUpdate, CalRNewUserRequest, CalRSubmissionMetadata, AncovaTableRequest, PowerCalcRequest, QualityControlRequest
 from dataregistry.api import calr_query
+from dataregistry.api.rate_limit import FailedLookupLimiter
 
 # Import CalR conversion functions
 import sys
@@ -34,6 +35,10 @@ USER_SERVICE_URL = os.getenv('USER_SERVICE_URL', 'https://users.kpndataregistry.
 CALR_USER_TOKEN = os.getenv('CALR_USER_TOKEN')
 
 http_bearer = HTTPBearer(auto_error=False)
+
+# Caps failed lookups on the unauthenticated /calr/shared/{key} endpoint, so a short
+# calr_id cannot be brute-forced. See rate_limit.py for how clients are keyed.
+shared_lookup_limiter = FailedLookupLimiter()
 
 
 async def _verify_calr_token(token: str) -> User:
@@ -263,7 +268,7 @@ async def list_public_calr_submissions():
 
 
 @router.get("/calr/shared/{submission_id}")
-async def get_calr_shared_submission(submission_id: str):
+async def get_calr_shared_submission(submission_id: str, request: Request):
     """
     Unauthenticated entry point for a submission addressed by a link. `submission_id`
     is either the public-facing calr_id or the legacy submission uuid, so share links
@@ -272,9 +277,23 @@ async def get_calr_shared_submission(submission_id: str):
     Returns the submission bundle (no s3_path) if the experiment is public or has link
     sharing enabled; otherwise 404. The 404 is deliberately the same whether the id is
     private or does not exist, so the id space cannot be enumerated.
+
+    Failed lookups are limited per client address: once a client has missed too many
+    times it gets 429 with Retry-After, even for an id that would have resolved.
+    Successful lookups are never counted.
     """
+    client = request.client.host if request.client else 'unknown'
+    retry_after = shared_lookup_limiter.retry_after(client)
+    if retry_after:
+        raise fastapi.HTTPException(
+            status_code=429,
+            detail="Too many failed lookups. Try again later.",
+            headers={"Retry-After": str(retry_after)},
+        )
+
     submission = calr_query.get_viewable_calr_submission(engine, submission_id)
     if not submission:
+        shared_lookup_limiter.record_failure(client)
         raise fastapi.HTTPException(status_code=404, detail="Experiment not found")
     return submission
 

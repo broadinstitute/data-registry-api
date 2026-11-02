@@ -6,11 +6,12 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from dataregistry.server import app
-from dataregistry.api import calr_query
+from dataregistry.api import calr, calr_query
 from dataregistry.api.calr_model import CALRSubmission
 from dataregistry.api.calr import _can_read, get_calr_user, get_calr_user_optional
 from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api.model import User
+from dataregistry.api.rate_limit import FailedLookupLimiter
 
 CALR_USER = User(user_name='calruser', roles=[])
 OTHER_USER = User(user_name='otheruser', roles=[])
@@ -34,6 +35,14 @@ def calr_setup(api_client):
     app.dependency_overrides[get_calr_user] = lambda: CALR_USER
     yield
     app.dependency_overrides.pop(get_calr_user, None)
+
+
+@pytest.fixture(autouse=True)
+def reset_shared_lookup_limiter():
+    """The limiter is process-global; keep one test's 404s from counting against the next."""
+    calr.shared_lookup_limiter.reset()
+    yield
+    calr.shared_lookup_limiter.reset()
 
 
 def _upload_standard(api_client, name="Experiment A", filename="original.csv", body=b"col1,col2\n1,2\n"):
@@ -426,3 +435,102 @@ def test_replace_response_includes_calr_id(api_client: TestClient):
 
     assert resp.status_code == 200, resp.text
     assert resp.json()["calr_id"] == created["calr_id"]
+
+
+def _install_limiter(monkeypatch, max_failures=3, window_seconds=60.0):
+    """Swap in a limiter on a settable clock; returns (limiter, clock) where
+    clock.advance(seconds) moves time forward."""
+    class Clock:
+        now = 1000.0
+
+        def __call__(self):
+            return self.now
+
+        def advance(self, seconds):
+            self.now += seconds
+
+    clock = Clock()
+    limiter = FailedLookupLimiter(max_failures=max_failures, window_seconds=window_seconds, clock=clock)
+    monkeypatch.setattr(calr, 'shared_lookup_limiter', limiter)
+    return limiter, clock
+
+
+def test_shared_lookup_blocks_after_repeated_failed_lookups(api_client: TestClient, monkeypatch):
+    _install_limiter(monkeypatch, max_failures=3)
+
+    for i in range(3):
+        assert api_client.get(f"/api/calr/shared/CalRmissing{i}").status_code == 404
+
+    blocked = api_client.get("/api/calr/shared/CalRmissing3")
+    assert blocked.status_code == 429
+    assert blocked.headers["Retry-After"] == "60"
+    assert blocked.json()["detail"] == "Too many failed lookups. Try again later."
+
+
+def test_shared_lookup_unblocks_after_the_window(api_client: TestClient, monkeypatch):
+    _, clock = _install_limiter(monkeypatch, max_failures=3, window_seconds=60.0)
+    for i in range(3):
+        api_client.get(f"/api/calr/shared/CalRmissing{i}")
+    assert api_client.get("/api/calr/shared/CalRmissing3").status_code == 429
+
+    clock.advance(60)
+
+    assert api_client.get("/api/calr/shared/CalRmissing4").status_code == 404
+
+
+def test_rejected_requests_do_not_extend_the_block(api_client: TestClient, monkeypatch):
+    _, clock = _install_limiter(monkeypatch, max_failures=3, window_seconds=60.0)
+    for i in range(3):
+        api_client.get(f"/api/calr/shared/CalRmissing{i}")
+
+    clock.advance(30)
+    rejected = api_client.get("/api/calr/shared/CalRmissing3")
+    assert rejected.status_code == 429
+    assert rejected.headers["Retry-After"] == "30"
+
+    clock.advance(30)   # 60s after the real failures, 30s after the rejected request
+    assert api_client.get("/api/calr/shared/CalRmissing4").status_code == 404
+
+
+@mock_aws
+def test_successful_lookups_are_never_rate_limited(api_client: TestClient, monkeypatch):
+    _install_limiter(monkeypatch, max_failures=3)
+    set_up_moto_bucket()
+    created = _upload_standard(api_client)
+    calr_query.set_calr_submission_shared(engine, created["submission_id"], True)
+
+    for _ in range(10):
+        resp = api_client.get(f"/api/calr/shared/{created['calr_id']}")
+        assert resp.status_code == 200, resp.text
+
+    # none of that counted: a full allowance of failures is still available
+    for i in range(3):
+        assert api_client.get(f"/api/calr/shared/CalRmissing{i}").status_code == 404
+
+
+@mock_aws
+def test_blocked_client_is_refused_even_for_a_valid_key(api_client: TestClient, monkeypatch):
+    _install_limiter(monkeypatch, max_failures=3)
+    set_up_moto_bucket()
+    created = _upload_standard(api_client)
+    calr_query.set_calr_submission_shared(engine, created["submission_id"], True)
+    for i in range(3):
+        api_client.get(f"/api/calr/shared/CalRmissing{i}")
+
+    resp = api_client.get(f"/api/calr/shared/{created['calr_id']}")
+
+    assert resp.status_code == 429
+    assert "Retry-After" in resp.headers
+
+
+def test_shared_lookup_limit_ignores_x_forwarded_for(api_client: TestClient, monkeypatch):
+    """There is no proxy in front of the API, so X-Forwarded-For is attacker-controlled:
+    rotating it must not dodge the limit."""
+    _install_limiter(monkeypatch, max_failures=3)
+    for i in range(3):
+        resp = api_client.get(f"/api/calr/shared/CalRmissing{i}", headers={"X-Forwarded-For": f"203.0.113.{i}"})
+        assert resp.status_code == 404
+
+    resp = api_client.get("/api/calr/shared/CalRmissing3", headers={"X-Forwarded-For": "198.51.100.7"})
+
+    assert resp.status_code == 429
