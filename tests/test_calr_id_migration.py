@@ -54,10 +54,12 @@ def pre_calr_id_schema():
     """Yield an alembic Config with calr_submissions empty and at the schema
     that has no calr_id, and always leave the database at head."""
     cfg = Config("./alembic.ini")
-    command.downgrade(cfg, PRE_CALR_ID_REVISION)
-    _drop_calr_id_leftovers()
-    _truncate_submissions()
+    # Setup is inside the try so a failure after the downgrade still reaches the
+    # upgrade below; if the downgrade did nothing, upgrading to head is a no-op.
     try:
+        command.downgrade(cfg, PRE_CALR_ID_REVISION)
+        _drop_calr_id_leftovers()
+        _truncate_submissions()
         yield cfg
     finally:
         command.upgrade(cfg, "head")
