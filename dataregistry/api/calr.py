@@ -8,7 +8,7 @@ from typing import List, Optional
 import fastapi
 import httpx
 import boto3
-from fastapi import UploadFile, Form, Depends, Header
+from fastapi import UploadFile, Form, Depends, Header, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import StreamingResponse
 
@@ -17,6 +17,7 @@ from dataregistry.api.db import DataRegistryReadWriteDB
 from dataregistry.api.model import User
 from dataregistry.api.calr_model import CALRFile, CALRSubmission, CalRSession, CalRSessionUpdate, CalRNewUserRequest, CalRSubmissionMetadata, AncovaTableRequest, PowerCalcRequest, QualityControlRequest
 from dataregistry.api import calr_query
+from dataregistry.api.rate_limit import FailedLookupLimiter
 
 # Import CalR conversion functions
 import sys
@@ -34,6 +35,10 @@ USER_SERVICE_URL = os.getenv('USER_SERVICE_URL', 'https://users.kpndataregistry.
 CALR_USER_TOKEN = os.getenv('CALR_USER_TOKEN')
 
 http_bearer = HTTPBearer(auto_error=False)
+
+# Caps failed lookups on the unauthenticated /calr/shared/{key} endpoint, so a short
+# calr_id cannot be brute-forced. See rate_limit.py for how clients are keyed.
+shared_lookup_limiter = FailedLookupLimiter()
 
 
 async def _verify_calr_token(token: str) -> User:
@@ -154,7 +159,7 @@ async def upload_calr_files(
             public=public,
             uploaded_by=user.user_name
         )
-        saved_sub_id = calr_query.insert_calr_submission(engine, submission)
+        saved_sub_id, calr_id = calr_query.insert_calr_submission(engine, submission)
 
         content = await standard_file.read()
         s3_key = f"calr/{user.user_name}/{saved_sub_id}/standard/{standard_file.filename}"
@@ -171,6 +176,7 @@ async def upload_calr_files(
 
         return {
             "submission_id": saved_sub_id,
+            "calr_id": calr_id,
             "file_id": file_id,
             "name": name,
             "public": public,
@@ -225,6 +231,7 @@ async def replace_calr_standard_file(
 
         return {
             "submission_id": submission_id,
+            "calr_id": existing['calr_id'],
             "file_id": file_id,
             "file_name": standard_file.filename,
             "uploaded_by": user.user_name,
@@ -261,15 +268,33 @@ async def list_public_calr_submissions():
 
 
 @router.get("/calr/shared/{submission_id}")
-async def get_calr_shared_submission(submission_id: str):
+async def get_calr_shared_submission(submission_id: str, request: Request):
     """
-    Unauthenticated entry point for a link-shared submission. Returns the submission
-    bundle (no s3_path) only if it is marked shared; otherwise 404 so a non-shared id
-    is not confirmed to exist.
+    Unauthenticated entry point for a submission addressed by a link. `submission_id`
+    is either the public-facing calr_id or the legacy submission uuid, so share links
+    already in circulation keep working.
+
+    Returns the submission bundle (no s3_path) if the experiment is public or has link
+    sharing enabled; otherwise 404. The 404 is deliberately the same whether the id is
+    private or does not exist, so the id space cannot be enumerated.
+
+    Failed lookups are limited per client address: once a client has missed too many
+    times it gets 429 with Retry-After, even for an id that would have resolved.
+    Successful lookups are never counted.
     """
-    submission = calr_query.get_shared_calr_submission(engine, submission_id)
+    client = request.client.host if request.client else 'unknown'
+    retry_after = shared_lookup_limiter.retry_after(client)
+    if retry_after:
+        raise fastapi.HTTPException(
+            status_code=429,
+            detail="Too many failed lookups. Try again later.",
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    submission = calr_query.get_viewable_calr_submission(engine, submission_id)
     if not submission:
-        raise fastapi.HTTPException(status_code=404, detail="Shared submission not found")
+        shared_lookup_limiter.record_failure(client)
+        raise fastapi.HTTPException(status_code=404, detail="Experiment not found")
     return submission
 
 
@@ -332,6 +357,7 @@ async def get_calr_file_info(file_id: str):
         return {
             'id': file_info['id'],
             'submission_id': file_info['submission_id'],
+            'calr_id': file_info['calr_id'],
             'file_type': file_info['file_type'],
             'file_name': file_info['file_name'],
             'file_size': file_info['file_size'],

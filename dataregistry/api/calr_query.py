@@ -3,31 +3,73 @@ import uuid
 from typing import Optional
 
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
+from dataregistry.api.calr_ids import generate_calr_id
 from dataregistry.api.calr_model import CALRFile, CalRSession, CALRSubmission
+
+# Random ids collide rarely enough that a couple of retries is plenty; more
+# attempts would only mask a real problem (a corrupt alphabet, a stuck RNG).
+CALR_ID_ATTEMPTS = 3
+
+# MySQL error number for a duplicate-key violation, and the name of the unique key
+# on calr_submissions.calr_id (see the add_calr_submission_calr_id migration).
+MYSQL_DUPLICATE_ENTRY = 1062
+CALR_ID_UNIQUE_KEY = 'calr_submissions_calr_id_uniq'
+
+
+def _is_calr_id_collision(exc: IntegrityError) -> bool:
+    """True if `exc` is a duplicate-key error on the calr_id unique key.
+
+    Any other integrity error (a clashing submission id, a NOT NULL violation) is
+    not fixed by trying another calr_id. MySQL 8 reports the key as
+    "<table>.<key>", so the key name is matched as a substring of the message.
+    """
+    args = getattr(exc.orig, 'args', ())
+    if len(args) < 2:
+        return False
+    errno, message = args[0], args[1]
+    return errno == MYSQL_DUPLICATE_ENTRY and CALR_ID_UNIQUE_KEY in str(message)
 
 
 # =============================================================================
 # Submissions and files
 # =============================================================================
 
-def insert_calr_submission(engine, submission: CALRSubmission) -> str:
-    """Insert a new CALR submission record. Returns the submission ID."""
+def insert_calr_submission(engine, submission: CALRSubmission) -> tuple:
+    """Insert a new CALR submission record. Returns (submission_id, calr_id).
+
+    Every submission gets a public-facing calr_id at creation, draft or not, so
+    the id is stable and visible from the moment the experiment exists.
+    """
     with engine.connect() as conn:
         sub_id = str(submission.id).replace('-', '') if submission.id else str(uuid.uuid4()).replace('-', '')
 
-        conn.execute(text("""
-            INSERT INTO calr_submissions (id, name, description, public, uploaded_by)
-            VALUES (:id, :name, :description, :public, :uploaded_by)
-        """), {
-            'id': sub_id,
-            'name': submission.name,
-            'description': submission.description,
-            'public': 1 if submission.public else 0,
-            'uploaded_by': submission.uploaded_by,
-        })
-        conn.commit()
-        return sub_id
+        for attempt in range(CALR_ID_ATTEMPTS):
+            calr_id = generate_calr_id()
+            try:
+                conn.execute(text("""
+                    INSERT INTO calr_submissions (id, calr_id, name, description, public, uploaded_by)
+                    VALUES (:id, :calr_id, :name, :description, :public, :uploaded_by)
+                """), {
+                    'id': sub_id,
+                    'calr_id': calr_id,
+                    'name': submission.name,
+                    'description': submission.description,
+                    'public': 1 if submission.public else 0,
+                    'uploaded_by': submission.uploaded_by,
+                })
+            except IntegrityError as exc:
+                conn.rollback()
+                # Retry with a fresh calr_id only on a calr_id collision, and only
+                # up to CALR_ID_ATTEMPTS; any other integrity error is re-raised
+                # immediately.
+                if not _is_calr_id_collision(exc) or attempt == CALR_ID_ATTEMPTS - 1:
+                    raise
+                continue
+
+            conn.commit()
+            return sub_id, calr_id
 
 
 def insert_calr_file(engine, calr_file: CALRFile) -> str:
@@ -54,7 +96,7 @@ def get_calr_submissions_by_user(engine, uploaded_by: str):
     """Get all CALR submissions for a user, with their associated files."""
     with engine.connect() as conn:
         rows = conn.execute(text("""
-            SELECT s.id AS submission_id, s.name, s.description, s.public, s.shared,
+            SELECT s.id AS submission_id, s.calr_id, s.name, s.description, s.public, s.shared,
                    s.uploaded_by, s.uploaded_at, s.metadata,
                    f.id AS file_id, f.file_type, f.file_name, f.file_size
             FROM calr_submissions s
@@ -70,7 +112,7 @@ def get_public_calr_submissions(engine):
     """Get all public CALR submissions with their associated files."""
     with engine.connect() as conn:
         rows = conn.execute(text("""
-            SELECT s.id AS submission_id, s.name, s.description, s.public, s.shared,
+            SELECT s.id AS submission_id, s.calr_id, s.name, s.description, s.public, s.shared,
                    s.uploaded_by, s.uploaded_at, s.metadata,
                    f.id AS file_id, f.file_type, f.file_name, f.file_size
             FROM calr_submissions s
@@ -82,19 +124,28 @@ def get_public_calr_submissions(engine):
         return _group_calr_submissions(rows)
 
 
-def get_shared_calr_submission(engine, submission_id: str):
-    """Return a single shared submission bundle (submission + files), or None if it
-    does not exist or is not shared. Excludes s3_path (via _group_calr_submissions)."""
+def get_viewable_calr_submission(engine, key: str):
+    """Return a submission bundle addressable by a link, or None.
+
+    `key` is either the public-facing calr_id or the legacy submission uuid, so
+    share links already in circulation keep resolving. A submission is viewable
+    when it is public or has link sharing enabled; callers should not
+    distinguish "private" from "missing" in what they return to the client,
+    since that difference lets an id space be enumerated.
+
+    Excludes s3_path (via _group_calr_submissions).
+    """
     with engine.connect() as conn:
         rows = conn.execute(text("""
-            SELECT s.id AS submission_id, s.name, s.description, s.public, s.shared,
+            SELECT s.id AS submission_id, s.calr_id, s.name, s.description, s.public, s.shared,
                    s.uploaded_by, s.uploaded_at, s.metadata,
                    f.id AS file_id, f.file_type, f.file_name, f.file_size
             FROM calr_submissions s
             LEFT JOIN calr_files f ON f.submission_id = s.id
-            WHERE s.id = :submission_id AND s.shared = 1
+            WHERE (s.calr_id = :key OR s.id = :key)
+              AND (s.public = 1 OR s.shared = 1)
             ORDER BY f.file_type
-        """), {'submission_id': submission_id}).mappings().all()
+        """), {'key': key}).mappings().all()
         grouped = _group_calr_submissions(rows)
         return grouped[0] if grouped else None
 
@@ -109,6 +160,7 @@ def _group_calr_submissions(rows):
             raw_metadata = row['metadata']
             submissions[sub_id] = {
                 'id': sub_id,
+                'calr_id': row['calr_id'],
                 'name': row['name'],
                 'description': row['description'],
                 'public': bool(row['public']),
@@ -134,7 +186,7 @@ def get_calr_file_by_id(engine, file_id: str):
         result = conn.execute(text("""
             SELECT f.id, f.submission_id, f.file_type, f.file_name, f.file_size,
                    f.s3_path, f.uploaded_at,
-                   s.public, s.shared, s.uploaded_by
+                   s.calr_id, s.public, s.shared, s.uploaded_by
             FROM calr_files f
             JOIN calr_submissions s ON s.id = f.submission_id
             WHERE f.id = :file_id
@@ -148,7 +200,7 @@ def get_calr_files_by_submission(engine, submission_id: str):
     with engine.connect() as conn:
         result = conn.execute(text("""
             SELECT f.id, f.file_type, f.file_name, f.file_size, f.s3_path,
-                   s.uploaded_by
+                   s.calr_id, s.uploaded_by
             FROM calr_files f
             JOIN calr_submissions s ON s.id = f.submission_id
             WHERE f.submission_id = :submission_id
