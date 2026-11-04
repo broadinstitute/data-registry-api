@@ -21,11 +21,11 @@ jobs:
         python-version: ["3.12"]
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.head_ref || github.ref }}
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
@@ -79,7 +79,7 @@ jobs:
     name: Deploy to QA
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/deploy
         with:
           python-version: '3.12'
@@ -93,7 +93,7 @@ jobs:
     name: Deploy to Prod
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/deploy
         with:
           python-version: '3.12'
