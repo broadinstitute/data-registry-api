@@ -1704,6 +1704,22 @@ def is_public_peg_study(study: dict) -> bool:
     return study['metadata'].get('published') == 'published'
 
 
+def get_peg_gwas_catalog_accessions(engine) -> List[Tuple[str, str]]:
+    """(GWAS Catalog accession, PEGASUS accession) for every PEG study whose GWAS
+    source was entered as a GWAS Catalog ID, in PEGASUS accession order."""
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT accession_number, metadata FROM peg_studies ORDER BY accession_number
+        """)).mappings().all()
+    pairs = []
+    for row in rows:
+        metadata = json.loads(row['metadata']) if row['metadata'] else {}
+        gwas_catalog_id = (metadata.get('gwas_source') or '').strip()
+        if metadata.get('gwas_source_type') == 'catalog' and gwas_catalog_id:
+            pairs.append((gwas_catalog_id, peg_accession_id(row['accession_number'])))
+    return pairs
+
+
 def get_public_peg_studies(engine) -> list:
     """Get PEG studies whose metadata marks them as published.
 

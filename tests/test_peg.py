@@ -1,3 +1,5 @@
+import csv
+import io
 import re
 import uuid
 
@@ -532,3 +534,72 @@ def test_public_studies_evidence_is_null_when_list_file_unreadable(api_client: T
 
     assert resp.status_code == 200, resp.text
     assert resp.json()[0]["evidence"] is None
+
+
+def _create_study_with_gwas_source(api_client, gwas_source_type, gwas_source):
+    body = {**STUDY_BODY, "name": f"Study {uuid.uuid4()}",
+            "metadata": {**STUDY_BODY["metadata"], "gwas_source_type": gwas_source_type, "gwas_source": gwas_source}}
+    _login(PEG_USER)
+    try:
+        resp = api_client.post("/api/peg/studies", json=body)
+    finally:
+        _logout()
+    assert resp.status_code == 200, resp.text
+    return resp.json()["accession_id"]
+
+
+ACCESSION_IDS_HEADER = "gwas_catalog_accession_id\tpegasus_accession_id"
+
+
+def test_accession_ids_lists_gwas_catalog_pairs_as_tsv_without_auth(api_client: TestClient):
+    first = _create_study_with_gwas_source(api_client, "catalog", "GCST90132314")
+    second = _create_study_with_gwas_source(api_client, "catalog", "GCST90002409")
+
+    resp = api_client.get("/api/peg/public/accession-ids")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.headers["content-type"].startswith("text/tab-separated-values")
+    assert resp.text.splitlines() == [
+        ACCESSION_IDS_HEADER,
+        f"GCST90132314\t{first}",
+        f"GCST90002409\t{second}",
+    ]
+
+
+def test_accession_ids_skips_studies_without_a_gwas_catalog_id(api_client: TestClient):
+    _create_study_with_gwas_source(api_client, "portal", "https://biobank.ndph.ox.ac.uk/")
+    _create_study_with_gwas_source(api_client, "same_as_pgs", "12345678")
+    _create_study_with_gwas_source(api_client, "published", "12345678")
+    _create_study_with_gwas_source(api_client, "catalog", "   ")
+    kept = _create_study_with_gwas_source(api_client, "catalog", "GCST90132314")
+
+    resp = api_client.get("/api/peg/public/accession-ids")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.text.splitlines() == [ACCESSION_IDS_HEADER, f"GCST90132314\t{kept}"]
+
+
+def test_accession_ids_trims_whitespace_around_gwas_catalog_id(api_client: TestClient):
+    accession = _create_study_with_gwas_source(api_client, "catalog", "  GCST90132314 ")
+
+    resp = api_client.get("/api/peg/public/accession-ids")
+
+    assert resp.text.splitlines() == [ACCESSION_IDS_HEADER, f"GCST90132314\t{accession}"]
+
+
+def test_accession_ids_returns_header_only_when_no_pairs(api_client: TestClient):
+    _create_study_with_gwas_source(api_client, "published", "12345678")
+
+    resp = api_client.get("/api/peg/public/accession-ids")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.text.splitlines() == [ACCESSION_IDS_HEADER]
+
+
+def test_accession_ids_keeps_two_columns_when_id_contains_a_tab(api_client: TestClient):
+    accession = _create_study_with_gwas_source(api_client, "catalog", "GCST1\tGCST2")
+
+    resp = api_client.get("/api/peg/public/accession-ids")
+
+    rows = list(csv.reader(io.StringIO(resp.text), delimiter="\t"))
+    assert rows[1] == ["GCST1\tGCST2", accession]
