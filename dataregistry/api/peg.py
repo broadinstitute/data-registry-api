@@ -1,3 +1,4 @@
+import csv
 import io
 import os
 import re
@@ -11,7 +12,7 @@ import fastapi
 import httpx
 from fastapi import UploadFile, File, Depends, Header
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, EmailStr
 
 from dataregistry.api import query
@@ -358,6 +359,17 @@ async def download_public_peg_file(file_id: UUID):
             "Content-Disposition": f'attachment; filename="{file_info["file_name"]}"',
         },
     )
+
+
+@router.get("/peg/public/accession-ids")
+async def list_peg_accession_ids():
+    """TSV of GWAS Catalog accession -> PEGASUS accession for every PEG study whose
+    GWAS source is a GWAS Catalog ID. No authentication required."""
+    out = io.StringIO()
+    writer = csv.writer(out, delimiter='\t', lineterminator='\n')
+    writer.writerow(['gwas_catalog_accession_id', 'pegasus_accession_id'])
+    writer.writerows(query.get_peg_gwas_catalog_accessions(engine))
+    return Response(out.getvalue(), media_type="text/tab-separated-values")
 
 
 @router.get("/peg/studies/{study_id}")
