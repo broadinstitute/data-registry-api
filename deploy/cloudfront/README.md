@@ -18,7 +18,9 @@ New distribution (comment `data-registry-downloads (stream_file)`), WAF web ACL,
 key, origin access control, Secrets Manager secret, log bucket `dig-data-registry-cf-logs`, a new bucket policy on
 `dig-data-registry` (read for this distribution, plus a CloudFront-wide Deny of the private prefixes `hermes sgc hcm
 peg qc mskkp calr kpn-cms-assets`), an inline policy on role `dig-data-registry-permissions`, four SSM parameters
-(prd/dev config and percent, percents at `0`), and a FREE plan covering the distribution and web ACL.
+(prd/dev config and percent, percents at `0`), and a PRO plan covering the distribution and web ACL (FREE was
+refused). Setup creates the plan with manual approval and never approves it: it is not billed until a person runs
+`approve_paid_subscription`, and a paid plan holds to the end of the billing cycle.
 
 ## Rollback
     aws ssm put-parameter --name /data-registry/prd/cloudfront-downloads-percent --type String --value 0 --overwrite

@@ -25,6 +25,11 @@ def test_parameter_names_match_the_api():
         assert setup.parameter_names(env) == api_cloudfront.parameter_names(env)
 
 
+def test_the_apps_s3_only_prefixes_equal_the_bucket_policys_denied_prefixes():
+    # The app cannot import deploy, so it keeps its own copy; this keeps the two from drifting apart.
+    assert api_cloudfront.S3_ONLY_PREFIXES == cdn_config.PRIVATE_PREFIXES
+
+
 @pytest.mark.parametrize("module", [setup, teardown, check_filename_function])
 def test_help_makes_no_aws_calls(module, monkeypatch, capsys):
     if hasattr(module, "make_clients"):
@@ -648,3 +653,82 @@ def test_setup_goes_ahead_when_the_live_prd_config_would_not_change(monkeypatch)
 
     with pytest.raises(Reached):
         setup.run(run_clients({PRD_CONFIG: NEW_CONFIG, PRD_PERCENT: "25"}, distribution=True, public_key=True))
+
+
+# --- the subscription step: PRO, never approved by the script ------------------------------------------
+
+SUB_ARN = "arn:aws:pricing-plan-manager::005901288866:subscription/sub-1"
+
+
+def plan_client(*subscriptions: dict) -> MagicMock:
+    plans = pagers(list_subscriptions={"subscriptionSummaries": list(subscriptions)})
+    plans.create_subscription.return_value = {"subscription": {
+        "arn": SUB_ARN, "planTier": "PRO", "status": "PENDING_APPROVAL"}}
+    return plans
+
+
+def subscription(status: str, resource_arns=(DIST_ARN, WEB_ACL_ARN), **more) -> dict:
+    return {"arn": SUB_ARN, "planTier": "PRO", "status": status, "resourceArns": list(resource_arns), **more}
+
+
+def approval_lines(out: str) -> list[str]:
+    return [line for line in out.splitlines() if "approve_paid_subscription" in line]
+
+
+def test_with_no_subscription_setup_creates_a_pro_plan_awaiting_approval_and_never_approves(capsys):
+    plans = plan_client(subscription("ACTIVE", resource_arns=["arn:aws:cloudfront::005901288866:distribution/OTHER"]))
+
+    arn = setup.ensure_subscription(plans, DIST_ARN, WEB_ACL_ARN)
+
+    assert arn == SUB_ARN
+    plans.create_subscription.assert_called_once_with(
+        planFamily="CloudFront", planTier="PRO", approvalMode="MANUAL", resourceArns=[DIST_ARN, WEB_ACL_ARN])
+    plans.approve_paid_subscription.assert_not_called()
+    out = capsys.readouterr().out
+    assert "12. subscription: created (PRO, PENDING_APPROVAL)" in out
+    (line,) = approval_lines(out)
+    assert "not billed" in line and "end of the billing cycle" in line
+
+
+def test_an_active_subscription_covering_the_distribution_is_reused(capsys):
+    plans = plan_client(subscription("ACTIVE"))
+
+    assert setup.ensure_subscription(plans, DIST_ARN, WEB_ACL_ARN) == SUB_ARN
+
+    assert [name for name, _, _ in plans.method_calls] == ["get_paginator"]  # no create, no approve
+    out = capsys.readouterr().out
+    assert "12. subscription: exists (PRO, ACTIVE)" in out
+    assert approval_lines(out) == []
+
+
+def test_a_pending_subscription_is_reported_with_the_approval_note_not_treated_as_an_error(capsys):
+    plans = plan_client(subscription("PENDING_APPROVAL"))
+
+    assert setup.ensure_subscription(plans, DIST_ARN, WEB_ACL_ARN) == SUB_ARN
+
+    assert [name for name, _, _ in plans.method_calls] == ["get_paginator"]
+    out = capsys.readouterr().out
+    assert "12. subscription: exists (PRO, PENDING_APPROVAL)" in out
+    (line,) = approval_lines(out)
+    assert "not billed" in line and "end of the billing cycle" in line
+
+
+def test_a_failed_subscription_covering_the_distribution_is_an_error():
+    plans = plan_client(subscription("FAILED", statusReason="card declined"))
+
+    with pytest.raises(setup.ScriptError, match="FAILED.*card declined"):
+        setup.ensure_subscription(plans, DIST_ARN, WEB_ACL_ARN)
+
+    assert [name for name, _, _ in plans.method_calls] == ["get_paginator"]
+
+
+def test_a_refused_pro_plan_is_reported_and_nothing_is_worked_around():
+    plans = plan_client()
+    plans.create_subscription.side_effect = client_error("ValidationException", "CreateSubscription")
+
+    with pytest.raises(setup.ScriptError) as raised:
+        setup.ensure_subscription(plans, DIST_ARN, WEB_ACL_ARN)
+
+    assert "create_subscription (PRO) was refused: ValidationException: x" in str(raised.value)
+    assert "No settings were changed to chase eligibility; report this to the user." in str(raised.value)
+    plans.approve_paid_subscription.assert_not_called()

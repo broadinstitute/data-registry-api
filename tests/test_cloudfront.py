@@ -330,6 +330,34 @@ def test_download_url_falls_back_when_signing_fails(monkeypatch, s3_stub, caplog
     assert "cloudfront signing failed; using S3 link" in caplog.text
 
 
+PRIVATE_PREFIXES = ("hermes", "sgc", "hcm", "peg", "qc", "mskkp", "calr", "kpn-cms-assets")
+
+
+@pytest.mark.parametrize("prefix", PRIVATE_PREFIXES)
+def test_download_url_keeps_keys_under_a_denied_prefix_on_s3(monkeypatch, s3_stub, prefix):
+    # The bucket policy denies CloudFront reads there, so a CloudFront link would 403 with no fallback.
+    use_settings(monkeypatch, make_settings(100))
+    assert cloudfront.download_url("dig-data-registry", f"{prefix}/x.gz", rand=lambda: 0.0) == \
+        f"https://s3.example/dig-data-registry/{prefix}/x.gz"
+
+
+@pytest.mark.parametrize("key", ["hcm2/x", "HCM/x", "x/hcm/y", "hcm", "hcm.gz", "hermes-x/y"])
+def test_download_url_only_a_whole_first_segment_with_a_slash_after_it_is_guarded(monkeypatch, s3_stub, key):
+    use_settings(monkeypatch, make_settings(100))
+    url = cloudfront.download_url("dig-data-registry", key, rand=lambda: 0.0)
+    assert url.startswith(f"https://dtest.cloudfront.net/{key}?")
+    assert_valid_canned_signature(url)
+
+
+def test_the_sign_cli_does_not_apply_the_guard(monkeypatch, capsys):
+    # Operators use it to prove the bucket policy's Deny works, so it must sign a denied key.
+    monkeypatch.setattr(cloudfront, "fetch_settings", lambda env: make_settings(0))
+    cloudfront.main(["sign", "hermes/x", "--env", "prd"])
+    out = capsys.readouterr().out.strip()
+    assert out.startswith("https://dtest.cloudfront.net/hermes/x?Expires=")
+    assert_valid_canned_signature(out)
+
+
 def test_download_url_expiry_is_two_hours(monkeypatch, s3_stub):
     use_settings(monkeypatch, make_settings(100))
     url = cloudfront.download_url("dig-data-registry", "x.gz", rand=lambda: 0.0)

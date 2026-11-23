@@ -6,7 +6,8 @@ Run from the repo root with the infra venv (pricing-plan-manager exists only in 
 
 Every step looks its resource up by name and reuses it, printing "exists" or "created", so the
 script can be re-run after any failure. It prints DISTRIBUTION_ID=, DISTRIBUTION_ARN=, DOMAIN=,
-KEY_PAIR_ID=, WEB_ACL_ARN= and SUBSCRIPTION_ARN= lines for the later rollout tasks.
+KEY_PAIR_ID=, WEB_ACL_ARN= and SUBSCRIPTION_ARN= lines for the later rollout tasks. The plan it creates is PRO,
+awaiting manual approval; the script never approves it (approving starts the billing).
 
 The signing key is generated in memory and goes only into Secrets Manager. It is never written
 to disk or printed. The values pinned for each resource live in cdn_config.py.
@@ -600,8 +601,16 @@ def ensure_parameters(ssm: Any, domain: str, key_pair_id: str) -> None:
         say(10, percent_name, state)
 
 
+_APPROVAL_NOTE = ("not billed until approved with approve_paid_subscription (this script never calls it); "
+                  "a paid plan holds to the end of the billing cycle")
+
+
 def ensure_subscription(plans: Any, distribution_arn: str, web_acl_arn: str) -> str:
-    """Step 12. A FREE plan if nothing covers the distribution. Any refusal is reported, not worked around."""
+    """Step 12. A PRO plan, awaiting manual approval, if nothing covers the distribution.
+
+    Approving starts the billing, so a person does it, never this script. Any refusal is reported, not
+    worked around.
+    """
     for page in plans.get_paginator("list_subscriptions").paginate():
         for sub in page["subscriptionSummaries"]:
             if distribution_arn not in sub["resourceArns"]:
@@ -612,16 +621,18 @@ def ensure_subscription(plans: Any, distribution_arn: str, web_acl_arn: str) -> 
             pending = sub.get("scheduledChange", {}).get("changeType")
             say(12, "subscription", f"exists ({sub['planTier']}, {sub['status']}"
                                     + (f", {pending} scheduled" if pending else "") + ")")
+            if sub["status"] == "PENDING_APPROVAL":
+                print(f"    {_APPROVAL_NOTE}", flush=True)
             return sub["arn"]
     try:
-        created = plans.create_subscription(planFamily="CloudFront", planTier="FREE", approvalMode="IMMEDIATE",
+        created = plans.create_subscription(planFamily="CloudFront", planTier="PRO", approvalMode="MANUAL",
                                             resourceArns=[distribution_arn, web_acl_arn])
     except ClientError as e:
-        raise ScriptError(f"create_subscription (FREE) was refused: {error_text(e)}\n"
-                          "No settings were changed to chase eligibility; report this to the user. "
-                          "If it is a limit on Free plans, Task 6 creates PRO directly.") from None
+        raise ScriptError(f"create_subscription (PRO) was refused: {error_text(e)}\n"
+                          "No settings were changed to chase eligibility; report this to the user.") from None
     sub = created["subscription"]
     say(12, "subscription", f"created ({sub['planTier']}, {sub['status']})")
+    print(f"    {_APPROVAL_NOTE}", flush=True)
     return sub["arn"]
 
 

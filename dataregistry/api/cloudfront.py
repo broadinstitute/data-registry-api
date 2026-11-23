@@ -14,7 +14,8 @@ or an AWS outage degrades to the S3 link instead of failing downloads. The calle
 turns None, and any exception from signed_url, into the S3 link.
 
 download_url() is what stream_file calls: it picks CloudFront for the configured share of
-downloads from the configured bucket, and the S3 link for everything else.
+downloads from the configured bucket, and the S3 link for everything else, including keys under
+S3_ONLY_PREFIXES (the bucket policy denies CloudFront those, so a CloudFront link would be a 403).
 
 The cache is module level and unlocked: stream_file is async, so calls arrive on a
 single event-loop thread. The private key is never logged.
@@ -48,6 +49,9 @@ logger = logging.getLogger(__name__)
 
 LINK_LIFETIME_SECONDS: int = 7200
 SETTINGS_TTL_SECONDS: float = 60.0
+# Top-level prefixes of the bucket that its policy denies to CloudFront, so a key under one gets the S3 link.
+# Kept equal to deploy/cloudfront/cdn_config.py PRIVATE_PREFIXES by a test; the app does not import deploy.
+S3_ONLY_PREFIXES: tuple[str, ...] = ("hermes", "sgc", "hcm", "peg", "qc", "mskkp", "calr", "kpn-cms-assets")
 
 _REGION = "us-east-1"
 # One try per AWS call, each with 1 s connect and read timeouts (about 2 s per call at worst; a refresh
@@ -191,9 +195,12 @@ def signed_url(settings: CloudFrontSettings, key: str, expires_at: datetime) -> 
 def download_url(bucket: str, key: str, rand: Callable[[], float] = random.random) -> str:
     """The link a download should redirect to: CloudFront for the configured share of
     downloads from the configured bucket, otherwise (and on any CloudFront error) the S3 link.
+    Keys under S3_ONLY_PREFIXES (the policy's `prefix/*`) always get the S3 link.
     """
     settings = load_settings()
-    if settings is not None and bucket == settings.bucket and rand() * 100 < settings.percent:
+    first_segment, slash, _ = key.partition("/")
+    s3_only = bool(slash) and first_segment in S3_ONLY_PREFIXES
+    if settings is not None and bucket == settings.bucket and not s3_only and rand() * 100 < settings.percent:
         try:
             return signed_url(settings, key, datetime.now(timezone.utc) + timedelta(seconds=LINK_LIFETIME_SECONDS))
         except Exception:
