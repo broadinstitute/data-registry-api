@@ -22,7 +22,7 @@ from starlette.responses import StreamingResponse, Response, RedirectResponse
 from streaming_form_data import StreamingFormDataParser
 from streaming_form_data.targets import S3Target
 
-from dataregistry.api import query, s3, file_utils, ecs, bioidx, batch, liftover, portals, kp_datasets_query
+from dataregistry.api import query, s3, file_utils, ecs, bioidx, batch, liftover, portals, kp_datasets_query, cloudfront
 from dataregistry.api.kp_datasets_body import compose_body, parse_experiment_summary
 from dataregistry.api.mskkp import suggest_column_map
 from dataregistry.api.db import DataRegistryReadWriteDB
@@ -865,7 +865,7 @@ async def stream_file(file_id: str, ft: FileType):
     split = s3_path[5:].split('/')
     bucket = split[0]
     path = '/'.join(split[1:])
-    return RedirectResponse(s3.get_signed_url(bucket, path))
+    return RedirectResponse(cloudfront.download_url(bucket, path))
 
 @router.get("/hermes/download/{file_id}")
 async def download_hermes_file(file_id: UUID, user: User = Depends(get_current_user)):
